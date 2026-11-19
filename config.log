@@ -52,33 +52,33 @@ configure:2112:  trying ./
 configure:2141:   ./compile found
 configure:2141:   ./missing found
 configure:2123:   ./install-sh found
-configure:2273: checking for a BSD-compatible install
-configure:2346: result: /usr/bin/install -c
-configure:2357: checking whether build environment is sane
-configure:2412: result: yes
-configure:2571: checking for a race-free mkdir -p
-configure:2615: result: /usr/bin/mkdir -p
-configure:2622: checking for gawk
-configure:2657: result: no
-configure:2622: checking for mawk
-configure:2643: found /usr/bin/mawk
-configure:2654: result: mawk
-configure:2665: checking whether make sets $(MAKE)
-configure:2688: result: yes
-configure:2718: checking whether make supports nested variables
-configure:2736: result: yes
-configure:2935: checking for gcc
-configure:2956: found /usr/bin/gcc
-configure:2967: result: gcc
-configure:3320: checking for C compiler version
-configure:3329: gcc --version >&5
+configure:2276: checking for a BSD-compatible install
+configure:2349: result: /usr/bin/install -c
+configure:2360: checking whether build environment is sane
+configure:2415: result: yes
+configure:2574: checking for a race-free mkdir -p
+configure:2618: result: /usr/bin/mkdir -p
+configure:2625: checking for gawk
+configure:2660: result: no
+configure:2625: checking for mawk
+configure:2646: found /usr/bin/mawk
+configure:2657: result: mawk
+configure:2668: checking whether make sets $(MAKE)
+configure:2691: result: yes
+configure:2721: checking whether make supports nested variables
+configure:2739: result: yes
+configure:2938: checking for gcc
+configure:2959: found /usr/bin/gcc
+configure:2970: result: gcc
+configure:3323: checking for C compiler version
+configure:3332: gcc --version >&5
 gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0
 Copyright (C) 2023 Free Software Foundation, Inc.
 This is free software; see the source for copying conditions.  There is NO
 warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
 
-configure:3340: $? = 0
-configure:3329: gcc -v >&5
+configure:3343: $? = 0
+configure:3332: gcc -v >&5
 Using built-in specs.
 COLLECT_GCC=gcc
 COLLECT_LTO_WRAPPER=/usr/libexec/gcc/x86_64-linux-gnu/13/lto-wrapper
@@ -90,70 +90,70 @@ Thread model: posix
 Supported LTO compression algorithms: zlib zstd
 gcc version 13.3.0 (Ubuntu 13.3.0-6ubuntu2~24.04.1) 
 ... rest of stderr output deleted ...
-configure:3340: $? = 0
-configure:3329: gcc -V >&5
+configure:3343: $? = 0
+configure:3332: gcc -V >&5
 gcc: error: unrecognized command-line option '-V'
 gcc: fatal error: no input files
 compilation terminated.
-configure:3340: $? = 1
-configure:3329: gcc -qversion >&5
+configure:3343: $? = 1
+configure:3332: gcc -qversion >&5
 gcc: error: unrecognized command-line option '-qversion'; did you mean '--version'?
 gcc: fatal error: no input files
 compilation terminated.
-configure:3340: $? = 1
-configure:3329: gcc -version >&5
+configure:3343: $? = 1
+configure:3332: gcc -version >&5
 gcc: error: unrecognized command-line option '-version'
 gcc: fatal error: no input files
 compilation terminated.
-configure:3340: $? = 1
-configure:3360: checking whether the C compiler works
-configure:3382: gcc    conftest.c  >&5
-configure:3386: $? = 0
-configure:3436: result: yes
-configure:3439: checking for C compiler default output file name
-configure:3441: result: a.out
-configure:3447: checking for suffix of executables
-configure:3454: gcc -o conftest    conftest.c  >&5
-configure:3458: $? = 0
-configure:3481: result: 
-configure:3503: checking whether we are cross compiling
-configure:3511: gcc -o conftest    conftest.c  >&5
-configure:3515: $? = 0
-configure:3522: ./conftest
-configure:3526: $? = 0
-configure:3541: result: no
-configure:3546: checking for suffix of object files
-configure:3569: gcc -c   conftest.c >&5
-configure:3573: $? = 0
-configure:3595: result: o
-configure:3599: checking whether the compiler supports GNU C
-configure:3619: gcc -c   conftest.c >&5
-configure:3619: $? = 0
-configure:3629: result: yes
-configure:3640: checking whether gcc accepts -g
-configure:3661: gcc -c -g  conftest.c >&5
-configure:3661: $? = 0
-configure:3705: result: yes
-configure:3725: checking for gcc option to enable C11 features
-configure:3740: gcc  -c -g -O2  conftest.c >&5
-configure:3740: $? = 0
-configure:3758: result: none needed
-configure:3874: checking whether gcc understands -c and -o together
-configure:3897: gcc -c conftest.c -o conftest2.o
-configure:3900: $? = 0
-configure:3897: gcc -c conftest.c -o conftest2.o
-configure:3900: $? = 0
-configure:3912: result: yes
-configure:3932: checking whether make supports the include directive
-configure:3947: make -f confmf.GNU && cat confinc.out
+configure:3343: $? = 1
+configure:3363: checking whether the C compiler works
+configure:3385: gcc    conftest.c  >&5
+configure:3389: $? = 0
+configure:3439: result: yes
+configure:3442: checking for C compiler default output file name
+configure:3444: result: a.out
+configure:3450: checking for suffix of executables
+configure:3457: gcc -o conftest    conftest.c  >&5
+configure:3461: $? = 0
+configure:3484: result: 
+configure:3506: checking whether we are cross compiling
+configure:3514: gcc -o conftest    conftest.c  >&5
+configure:3518: $? = 0
+configure:3525: ./conftest
+configure:3529: $? = 0
+configure:3544: result: no
+configure:3549: checking for suffix of object files
+configure:3572: gcc -c   conftest.c >&5
+configure:3576: $? = 0
+configure:3598: result: o
+configure:3602: checking whether the compiler supports GNU C
+configure:3622: gcc -c   conftest.c >&5
+configure:3622: $? = 0
+configure:3632: result: yes
+configure:3643: checking whether gcc accepts -g
+configure:3664: gcc -c -g  conftest.c >&5
+configure:3664: $? = 0
+configure:3708: result: yes
+configure:3728: checking for gcc option to enable C11 features
+configure:3743: gcc  -c -g -O2  conftest.c >&5
+configure:3743: $? = 0
+configure:3761: result: none needed
+configure:3877: checking whether gcc understands -c and -o together
+configure:3900: gcc -c conftest.c -o conftest2.o
+configure:3903: $? = 0
+configure:3900: gcc -c conftest.c -o conftest2.o
+configure:3903: $? = 0
+configure:3915: result: yes
+configure:3935: checking whether make supports the include directive
+configure:3950: make -f confmf.GNU && cat confinc.out
 this is the am__doit target
-configure:3950: $? = 0
-configure:3969: result: yes (GNU style)
-configure:3995: checking dependency style of gcc
-configure:4107: result: gcc3
-configure:4227: checking that generated files are newer than configure
-configure:4233: result: done
-configure:4256: creating ./config.status
+configure:3953: $? = 0
+configure:3972: result: yes (GNU style)
+configure:3998: checking dependency style of gcc
+configure:4110: result: gcc3
+configure:4235: checking that generated files are newer than configure
+configure:4241: result: done
+configure:4264: creating ./config.status
 
 ## ---------------------- ##
 ## Running config.status. ##
@@ -173,8 +173,10 @@ on vincenzo-p6-2302el
 config.status:837: creating Makefile
 config.status:837: creating src/Makefile
 config.status:837: creating config.h
+config.status:1018: config.h is unchanged
 config.status:1066: executing depfiles commands
 config.status:1143: cd src       && sed -e '/# am--include-marker/d' Makefile         | make -f - am--depfiles
+make: Nothing to be done for 'am--depfiles'.
 config.status:1148: $? = 0
 
 ## ---------------- ##
@@ -230,7 +232,7 @@ AUTOMAKE='${SHELL} '\''/home/vincenzo/AAA_DATI_21042026/MyGit/myMiniCompilerJvmT
 AWK='mawk'
 CC='gcc'
 CCDEPMODE='depmode=gcc3'
-CFLAGS='-g -O2'
+CFLAGS='-g -O2 -Wall -Wextra -pedantic'
 CPPFLAGS=''
 CSCOPE='cscope'
 CTAGS='ctags'

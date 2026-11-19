@@ -171,7 +171,7 @@ AUTOMAKE = ${SHELL} '/home/vincenzo/AAA_DATI_21042026/MyGit/myMiniCompilerJvmTac
 AWK = mawk
 CC = gcc
 CCDEPMODE = depmode=gcc3
-CFLAGS = -g -O2
+CFLAGS = -g -O2 -Wall -Wextra -pedantic
 CPPFLAGS = 
 CSCOPE = cscope
 CTAGS = ctags

@@ -153,7 +153,7 @@ am__define_uniq_tagged_files = \
   done | $(am__uniquify_input)`
 DIST_SUBDIRS = $(SUBDIRS)
 am__DIST_COMMON = $(srcdir)/Makefile.in $(srcdir)/config.h.in \
-	README.md compile install-sh missing
+	README.md compile depcomp install-sh missing
 DISTFILES = $(DIST_COMMON) $(DIST_SOURCES) $(TEXINFOS) $(EXTRA_DIST)
 distdir = $(PACKAGE)-$(VERSION)
 top_distdir = $(distdir)
@@ -207,7 +207,7 @@ AUTOMAKE = ${SHELL} '/home/vincenzo/AAA_DATI_21042026/MyGit/myMiniCompilerJvmTac
 AWK = mawk
 CC = gcc
 CCDEPMODE = depmode=gcc3
-CFLAGS = -g -O2
+CFLAGS = -g -O2 -Wall -Wextra -pedantic
 CPPFLAGS = 
 CSCOPE = cscope
 CTAGS = ctags

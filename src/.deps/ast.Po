@@ -1,4 +1,4 @@
-ast.o: ast.c /usr/include/stdc-predef.h /usr/include/stdio.h \
+ast.o: ast.c /usr/include/stdc-predef.h ../config.h /usr/include/stdio.h \
  /usr/include/x86_64-linux-gnu/bits/libc-header-start.h \
  /usr/include/features.h /usr/include/features-time64.h \
  /usr/include/x86_64-linux-gnu/bits/wordsize.h \
@@ -60,6 +60,7 @@ ast.o: ast.c /usr/include/stdc-predef.h /usr/include/stdio.h \
  /usr/include/x86_64-linux-gnu/bits/strings_fortified.h \
  /usr/include/x86_64-linux-gnu/bits/string_fortified.h ast.h symtab.h
 /usr/include/stdc-predef.h:
+../config.h:
 /usr/include/stdio.h:
 /usr/include/x86_64-linux-gnu/bits/libc-header-start.h:
 /usr/include/features.h:

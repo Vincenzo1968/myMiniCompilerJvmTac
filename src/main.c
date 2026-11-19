@@ -1022,6 +1022,12 @@ int main(int argc, char **argv)
 		return -1;
 	}
 	
+	if (argc == 2 && strcmp(argv[1], "--version") == 0)
+	{	
+		printf("%s %s\n", PACKAGE_NAME, PACKAGE_VERSION);
+		return 0;
+	}
+	
 	for (i = 2; i < argc; i++)
 	{
 		if (strcmp(argv[i], "tac") == 0)

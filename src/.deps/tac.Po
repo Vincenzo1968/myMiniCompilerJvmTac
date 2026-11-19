@@ -1,4 +1,4 @@
-tac.o: tac.c /usr/include/stdc-predef.h /usr/include/stdio.h \
+tac.o: tac.c /usr/include/stdc-predef.h ../config.h /usr/include/stdio.h \
  /usr/include/x86_64-linux-gnu/bits/libc-header-start.h \
  /usr/include/features.h /usr/include/features-time64.h \
  /usr/include/x86_64-linux-gnu/bits/wordsize.h \
@@ -61,6 +61,7 @@ tac.o: tac.c /usr/include/stdc-predef.h /usr/include/stdio.h \
  /usr/include/x86_64-linux-gnu/bits/string_fortified.h tac.h ast.h \
  symtab.h scanner.h
 /usr/include/stdc-predef.h:
+../config.h:
 /usr/include/stdio.h:
 /usr/include/x86_64-linux-gnu/bits/libc-header-start.h:
 /usr/include/features.h:

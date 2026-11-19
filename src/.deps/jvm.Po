@@ -1,4 +1,4 @@
-jvm.o: jvm.c /usr/include/stdc-predef.h /usr/include/stdio.h \
+jvm.o: jvm.c /usr/include/stdc-predef.h ../config.h /usr/include/stdio.h \
  /usr/include/x86_64-linux-gnu/bits/libc-header-start.h \
  /usr/include/features.h /usr/include/features-time64.h \
  /usr/include/x86_64-linux-gnu/bits/wordsize.h \
@@ -46,6 +46,7 @@ jvm.o: jvm.c /usr/include/stdc-predef.h /usr/include/stdio.h \
  /usr/include/x86_64-linux-gnu/bits/stdint-uintn.h \
  /usr/include/x86_64-linux-gnu/bits/stdint-least.h jvm.h symtab.h ast.h
 /usr/include/stdc-predef.h:
+../config.h:
 /usr/include/stdio.h:
 /usr/include/x86_64-linux-gnu/bits/libc-header-start.h:
 /usr/include/features.h:

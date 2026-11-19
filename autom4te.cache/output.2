@@ -2250,7 +2250,10 @@ ac_compiler_gnu=$ac_cv_c_compiler_gnu
 
 
 
+
+
 ac_config_headers="$ac_config_headers config.h"
+
 
 am__api_version='1.16'
 
@@ -4120,8 +4123,13 @@ fi
 
 
 
+# Warning utili (equivalente moderno di -Wall -W -pedantic)
+CFLAGS="$CFLAGS -Wall -Wextra -pedantic"
+
+
 
 ac_config_files="$ac_config_files Makefile src/Makefile"
+
 
 cat >confcache <<\_ACEOF
 # This file is a shell script that caches the results of configure

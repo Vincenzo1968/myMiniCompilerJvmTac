@@ -1,5 +1,38 @@
-myCompiler
+# File generati da Autotools
+/configure
+/Makefile
+/Makefile.in
+/aclocal.m4
+/autom4te.cache/
+/compile
+/config.h
+/config.h.in
+/config.log
+/config.status
+/depcomp
+/install-sh
+/missing
+/stamp-h1
+/ar-lib
+/test-driver
+
+# File generati nella sottocartella src
+/src/Makefile
+/src/Makefile.in
+/src/.deps/
+/src/*.o
+/src/myCompiler
+
+# Oggetti e binari vari
 *.o
+*.a
+*.so
+
+# Editor
+*.swp
+*~
+
+# File generati dal backend JVM e crash dump
 *.class
 core
 vgcore.*
