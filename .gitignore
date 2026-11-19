@@ -1,0 +1,5 @@
+myCompiler
+*.o
+*.class
+core
+vgcore.*
