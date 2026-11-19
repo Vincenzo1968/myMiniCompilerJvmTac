@@ -1060,7 +1060,7 @@ int main(int argc, char **argv)
 	
 	scopeInit(&g_Scope);
 
-	printf("\n");
+	//printf("\n");
 	ret = Parse(argv[1], &pTree, genTAC, genJVM);
 	printf("\n");
 	
@@ -1081,7 +1081,7 @@ int main(int argc, char **argv)
 		}
 	}
 
-	printf("\n");
+	//printf("\n");
 
 	scopeFree(&g_Scope);
 	freeNode(pTree);
