@@ -2281,6 +2281,113 @@ static int tacTryUnrollFirstLoop(TACList *tac)
     return 0;
 }
 
+static int tacLinearIVSR(TACList *tac)
+{
+    int i, j, k, changed = 0;
+    for (i = 0; i < tac->count; i++) {
+        if (tac->items[i].dead || tac->items[i].op != TAC_LABEL) continue;
+
+        /* 1. Trova la fine del loop (il goto che punta alla label) */
+        int end = -1;
+        for (j = i + 1; j < tac->count; j++) {
+            if (tac->items[j].dead) continue;
+            if (tac->items[j].op == TAC_GOTO && tac->items[j].res && strcmp(tac->items[j].res, tac->items[i].res) == 0) {
+                end = j;
+                break;
+            }
+        }
+        if (end == -1) continue;
+
+        /* 2. Trova la variabile di induzione (BIV), es: t7 = i + 1; i = t7 */
+        char *biv = NULL;
+        int step = 0;
+        int biv_update_idx = -1;
+        for (k = i + 1; k < end; k++) {
+            TACInstr *in = &tac->items[k];
+            if (in->dead) continue;
+            if (in->op == TAC_ADD && in->arg1 && in->arg2) {
+                double d; int isInt;
+                if (isNumericLit(in->arg2, &d, &isInt)) {
+                    /* Verifica se l'istruzione successiva è: i = t7 */
+                    if (k + 1 < end && tac->items[k+1].op == TAC_ASSIGN && 
+                        tac->items[k+1].arg1 && strcmp(tac->items[k+1].arg1, in->res) == 0 && 
+                        tac->items[k+1].res && strcmp(tac->items[k+1].res, in->arg1) == 0) {
+                        biv = tacStrdup(in->arg1);
+                        step = (int)d;
+                        biv_update_idx = k + 1;
+                        break;
+                    }
+                }
+            }
+        }
+
+        if (biv) {
+            /* 3. Trova un uso del tipo t = i * c o t = i + i */
+            for (k = i + 1; k < end; k++) {
+                TACInstr *in = &tac->items[k];
+                if (in->dead) continue;
+                int match = 0;
+                double c = 0;
+
+                if (in->op == TAC_MUL && in->arg1 && in->arg2) {
+                    double d; int isInt;
+                    if (strcmp(in->arg1, biv) == 0 && isNumericLit(in->arg2, &d, &isInt)) { match = 1; c = d; }
+                    else if (strcmp(in->arg2, biv) == 0 && isNumericLit(in->arg1, &d, &isInt)) { match = 1; c = d; }
+                } else if (in->op == TAC_ADD && in->arg1 && in->arg2) {
+                    if (strcmp(in->arg1, biv) == 0 && strcmp(in->arg2, biv) == 0) {
+                        match = 1; c = 2; /* i + i equivale a i * 2 */
+                    }
+                }
+
+                if (match) {
+                    char *acc = newTemp();
+                    char buf[64];
+                    TACInstr init, update;
+
+                    /* A. Inizializza acc prima del loop: acc = biv * c */
+                    init.op = TAC_MUL;
+                    init.arg1 = biv;
+                    sprintf(buf, "%g", c);
+                    init.arg2 = buf;
+                    init.res = acc;
+                    init.type1 = T_INTEGER;
+                    tacInsertInstructions(tac, i, &init, 1);
+
+                    /* Aggiorna gli indici per l'inserimento */
+                    i++; end++; k++; biv_update_idx++;
+
+                    /* B. Sostituisci t = biv * c con t = acc */
+                    in = &tac->items[k]; /* BUGFIX: RIFETCH FONDAMENTALE DOPO REALLOC! */
+                    free(in->arg1); free(in->arg2);
+                    in->op = TAC_ASSIGN;
+                    in->arg1 = tacStrdup(acc);
+                    in->arg2 = NULL;
+
+                    /* C. Aggiorna acc dopo l'incremento del BIV: acc = acc + step * c */
+                    update.op = (step >= 0) ? TAC_ADD : TAC_SUB;
+                    update.arg1 = acc;
+
+					int delta = step * (int)c;
+					if (delta < 0)
+						delta = -delta;
+					sprintf(buf, "%d", delta);
+
+                    update.arg2 = buf;
+                    update.res = acc;
+                    update.type1 = T_INTEGER;
+                    tacInsertInstructions(tac, biv_update_idx + 1, &update, 1);
+
+                    free(acc);
+                    changed = 1;
+                    break; /* Una sola ottimizzazione per loop per semplicità */
+                }
+            }
+        }
+        free(biv);
+    }
+    return changed;
+}
+
 void tacOptimizeO3(TACList *tac)
 {
     int changed;
@@ -2296,6 +2403,13 @@ void tacOptimizeO3(TACList *tac)
         tacCompact(tac);
         if (tac->count == 0) break;
 
+        /* NOVITÀ: Induction Variable Strength Reduction */
+        if (tacLinearIVSR(tac)) {
+            stepChanged = 1;
+            tacOptimizeO1(tac);
+            tacCompact(tac);
+        }
+
         cfgBuild(tac, &cfg);
         if (cfgJumpThreading(tac, &cfg)) stepChanged = 1;
         if (cfgLICM(tac, &cfg))          stepChanged = 1;
@@ -2309,7 +2423,6 @@ void tacOptimizeO3(TACList *tac)
         changed = stepChanged;
     } while (changed);
 
-	tacOptimizeO1(tac);
-	
+    tacOptimizeO1(tac);
     tacCompact(tac);
 }
