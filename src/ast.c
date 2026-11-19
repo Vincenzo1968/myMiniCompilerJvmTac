@@ -98,7 +98,10 @@ nodeType *opr(int oper, int nops, ...)
 		printf("Errore: memoria insufficiente.\n");
 		return NULL;
 	}
-
+	
+	p->type0 = 0;
+	p->type1 = 0;
+	p->type2 = 0;
     p->type = typeOperator;
     p->opr.oper = oper;
     p->opr.nops = nops;
@@ -122,13 +125,34 @@ void freeNode(nodeType *p)
             freeNode(p->opr.op[i]);
     }
 
-	if ( p->type == typeId && p->type0 == T_ARRAY )
+	if ( p->type == typeId )
 	{
-		if ( p->id.value.pArrayDef->indexes != NULL )
+		// name e uniqueName sono malloc'ate in id() (ast.c):
+		// appartengono al nodo AST, quindi le libera freeNode. 
+		free(p->id.name);
+		free(p->id.uniqueName);
+
+		if ( p->type0 == T_ARRAY && p->id.value.pArrayDef != NULL )
 		{
-			free(p->id.value.pArrayDef->indexes);
-			p->id.value.pArrayDef->indexes = NULL;
+			if ( p->id.value.pArrayDef->indexes != NULL )
+			{
+				for ( i = 0; i < p->id.value.pArrayDef->countIndexes; i++ )
+				{
+					freeNode(p->id.value.pArrayDef->indexes[i]);
+				}
+				free(p->id.value.pArrayDef->indexes);
+				p->id.value.pArrayDef->indexes = NULL;
+			}
+			free(p->id.value.pArrayDef);
+			p->id.value.pArrayDef = NULL;
 		}
+	}
+
+	if ( p->type == typeConst && p->type1 == T_STRING )
+	{
+		// strVal della costante stringa e' malloc'ata in expr4():
+		// appartiene all'AST. free(NULL) e' comunque sicuro.
+		free(p->con.value.strVal);
 	}
 
     free (p);

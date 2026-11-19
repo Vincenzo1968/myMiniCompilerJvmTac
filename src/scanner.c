@@ -107,6 +107,24 @@ void FreeInputbuffer()
 	}
 }
 
+// True se il token possiede una Value.vString allocata con malloc.
+// Nota: anche le keyword (T_KW_*) passano dallo stato S1 e allocano vString.
+static int tokenOwnsString(TokenTypeEnum t)
+{
+    switch (t)
+    {
+        case T_ID:
+        case T_STRING_LITERAL:
+        case T_KW_IF: case T_KW_ELSE: case T_KW_WHILE: case T_KW_DO:
+        case T_KW_BEGIN: case T_KW_END: case T_KW_ARRAY: case T_KW_OF:
+        case T_KW_STRING: case T_KW_INT: case T_KW_REAL: case T_KW_BOOL:
+        case T_KW_FALSE: case T_KW_TRUE: case T_KW_PRINT: case T_KW_READ:
+            return 1;
+        default:
+            return 0;   /* T_INT_LITERAL, T_REAL_LITERAL, T_UNKNOWN, T_EOF, ... */
+    }
+}
+
 void GetNextToken(Token *pToken)
 {
 	States state = S0;
@@ -121,7 +139,9 @@ void GetNextToken(Token *pToken)
 		return;
 	}
 
-	pToken->Value.vString = NULL;
+	if ( tokenOwnsString(pToken->Type) && pToken->Value.vString != NULL )
+		free(pToken->Value.vString);
+	pToken->Value.vString = NULL;   // azzera sempre la union prima di riempirla 
 
 	c = *(g_szInput + g_pos);
 

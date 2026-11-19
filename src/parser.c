@@ -107,67 +107,62 @@ void Panic()
 
 int Parse(char *szFileName, nodeType **pTree, int genTAC, int genJVM)
 {
-	int ret;
+    int ret;
 
-	g_genTAC = genTAC;
-	g_genJVM = genJVM;
+    g_genTAC = genTAC;
+    g_genJVM = genJVM;
+    g_Token.Value.vString = NULL;
 
-	g_Token.Value.vString = NULL;
+    if ( !LeggiFile(szFileName) )
+        return 0;
 
-	if ( !LeggiFile(szFileName) )
-		return 0;
+    GetNextToken(&g_Token);
 
-	GetNextToken(&g_Token);
+    /* Un programma = dichiarazioni + un solo blocco begin...end. */
+    ret = program();
 
-	while ( g_Token.Type != T_EOF )
-	{
-		if ( !g_isCodeBlock )
-			ret = program();
-		else
-			ret = code_block();
-			//ret = stmt_list();
-		if ( !ret )
-			Panic();
-	}
+    /* Parsing riuscito ma token residui: codice fuori dal programma. */
+    if ( ret && g_Token.Type != T_EOF )
+    {
+        printf("Linea %d Colonna %d: Errore. Token inattesi dopo la fine del programma.\n",
+               g_Token.line, g_Token.column);
+        g_numErrors++;
+        ret = 0;
+    }
 
-	FreeInputbuffer();
+    /* Svuota il buffer fino a EOF (mai oltre: dopo EOF lo scanner
+       restituirebbe T_ERROR all'infinito). */
+    while ( g_Token.Type != T_EOF )
+        GetNextToken(&g_Token);
 
-	ret = g_numErrors ? 0 : 1;
+    FreeInputbuffer();
 
-	if ( g_numErrors || g_numWarnings )
-		printf("Errori: %d\nWarnings: %d\n", g_numErrors, g_numWarnings);
+    /* Se program() ha fallito, garantisce almeno un errore conteggiato:
+       evita ret=1 con stack vuoto (lettura di g_stack[-1]). */
+    if ( !ret && g_numErrors == 0 )
+        g_numErrors++;
 
-	if ( !ret )
-	{
-		(*pTree) = NULL;
-		while ( g_top >= 0 )
-		{
-			if ( g_stack[g_top] != NULL )
-				freeNode(g_stack[g_top--]);
-		}
-	}
-	else
-	{
-		(*pTree) = g_stack[g_top];
-	}
+    ret = g_numErrors ? 0 : 1;
 
-	return ret;
+    if ( g_numErrors || g_numWarnings )
+        printf("Errori: %d\nWarnings: %d\n", g_numErrors, g_numWarnings);
+
+    if ( !ret )
+    {
+        (*pTree) = NULL;
+        while ( g_top >= 0 )
+        {
+            freeNode(g_stack[g_top]);   // freeNode(NULL) e' sicuro 
+            g_top--;                    // decremento SEMPRE, anche se NULL 
+        }
+    }
+    else
+    {
+        (*pTree) = g_stack[g_top];
+    }
+    
+    return ret;
 }
-
-/*
-int Parse()
-{
-	GetNextToken(&g_Token);
-
-	return syntax();
-
-	//if ( g_Token.Type != T_EOF )
-	//{
-	//	printf("Errore\n");
-	//	return;
-	//}
-}
-*/
 
 int match(TokenTypeEnum ExpectedToken)
 {
@@ -373,11 +368,12 @@ int decl()
 		Valore value;
 		Token token;
 		HashTable hashTable;
+
+		char szIdName[256] = "";
+
 		int indici[89];
 		int currIndex = 0;
 		int array_size = 0;
-
-		//int *pTemp;
 
 		value.pArrayDef = (ArrayDef*)malloc(sizeof(ArrayDef));
 		if ( !value.pArrayDef )
@@ -387,12 +383,16 @@ int decl()
 		}
 
 		value.pArrayDef->countIndexes = 0;
+		value.pArrayDef->pArray = NULL;
+		value.pArrayDef->sizes = NULL;
+		value.pArrayDef->indexes = NULL;
 
-		//if ( !match(T_KW_ARRAY) )
-		//	return 0;
 		GetNextToken(&g_Token);
 
 		token = g_Token;
+		if ( g_Token.Type == T_ID )
+			strcpy(szIdName, g_Token.Value.vString);
+		token.Value.vString = szIdName;   // nome in buffer locale: sicuro dopo match()
 
 		if ( !match(T_ID) )
 		{
@@ -403,7 +403,7 @@ int decl()
 			value.pArrayDef = NULL;
 			return 0;
 		}
-		if ( scopeFind(&g_Scope,token.Value.vString, &hashTable) )
+		if ( scopeFind(&g_Scope, token.Value.vString, &hashTable) )
 		{
 			printf("Linea %d Colonna %d: Errore var_list. Identificatore '%s' già dichiarato.\n",
 					token.line,
@@ -495,11 +495,15 @@ int decl()
 			return 0;
 		}
 		if ( !type() )
+		{
+			free(value.pArrayDef);
+			value.pArrayDef = NULL;
 			return 0;
+		}
 
 		if ( g_currType == T_INTEGER || g_currType == T_BOOLEAN )
 		{
-			value.pArrayDef->pArray = (int*)malloc(sizeof(int)*array_size);
+			value.pArrayDef->pArray = (int*)calloc((size_t)array_size, sizeof(int));
 			if ( !value.pArrayDef->pArray )
 			{
 				printf("Errore pArrayDef->pArray: memoria insufficiente.\n");
@@ -510,7 +514,7 @@ int decl()
 		}
 		else if ( g_currType == T_REAL )
 		{
-			value.pArrayDef->pArray = (double*)malloc(sizeof(double)*array_size);
+			value.pArrayDef->pArray = (double*)calloc((size_t)array_size, sizeof(double));
 			if ( !value.pArrayDef->pArray )
 			{
 				printf("Errore pArrayDef->pArray: memoria insufficiente.\n");
@@ -521,7 +525,7 @@ int decl()
 		}
 		else if ( g_currType == T_STRING )
 		{
-			value.pArrayDef->pArray = (char**)malloc(sizeof(char*)*array_size);
+			value.pArrayDef->pArray = (char**)calloc((size_t)array_size, sizeof(char*));
 			if ( !value.pArrayDef->pArray )
 			{
 				printf("Errore pArrayDef->pArray: memoria insufficiente.\n");
@@ -530,7 +534,6 @@ int decl()
 				return 0;
 			}
 		}
-		memset(value.pArrayDef->pArray, 0, (size_t)array_size);
 
 		if ( !match(T_SEMICOLON) )
 		{
@@ -544,32 +547,19 @@ int decl()
 			return 0;
 		}
 
-		value.pArrayDef->sizes = (int*)malloc(sizeof(int)*value.pArrayDef->countIndexes);
+		value.pArrayDef->sizes = (int*)calloc((size_t)value.pArrayDef->countIndexes, sizeof(int));
 		if ( !value.pArrayDef->sizes )
 		{
-			printf("Errore pArrayDef->indexes: memoria insufficiente.\n");
+			printf("Errore pArrayDef->sizes: memoria insufficiente.\n");
 			free(value.pArrayDef->pArray);
 			value.pArrayDef->pArray = NULL;
 			free(value.pArrayDef);
 			value.pArrayDef = NULL;
 			return 0;
 		}
-		memset(value.pArrayDef->sizes, 0, (size_t)value.pArrayDef->countIndexes);
 
 		for ( currIndex = 0; currIndex < value.pArrayDef->countIndexes; currIndex++ )
 			value.pArrayDef->sizes[currIndex] = indici[currIndex];
-
-		/*
-		pTemp = (int*)value.pArrayDef->pArray;
-		pTemp[0] = 1;
-		printf("%s -> [0] : %d\n", token.Value.vString, pTemp[0]);
-		pTemp[1] = 2;
-		printf("%s -> [1] : %d\n", token.Value.vString, pTemp[1]);
-		pTemp[2] = 3;
-		printf("%s -> [2] : %d\n", token.Value.vString, pTemp[2]);
-		pTemp[3] = 4;
-		printf("%s -> [3] : %d\n", token.Value.vString, pTemp[3]);
-		*/
 
 		value.pArrayDef->indexes = NULL;
 		scopeInsert(&g_Scope, token.Value.vString, T_ARRAY, g_currType, T_VAR, value, 0, g_NextFrameIndex);
@@ -634,13 +624,14 @@ int var_list()
 	Token token = g_Token;
 	Valore value;
 	HashTable hashTable;
-	char szVarName[256];
-	char szLexeme[256];
+    char szVarName[256] = "";
+    char szLexeme[256];
 
-	if ( g_Token.Type == T_ID )
-		strcpy(szVarName, g_Token.Value.vString);
+    if ( g_Token.Type == T_ID )
+        strcpy(szVarName, g_Token.Value.vString);
+    token.Value.vString = szVarName;   // nome in buffer locale: sicuro dopo match() 
 
-	if ( !match(T_ID) )
+    if ( !match(T_ID) )
 	{
 		printf("Linea %d Colonna %d: Errore var_list. Atteso identificatore.\n",
 				g_Token.line,
@@ -727,13 +718,14 @@ int var_list()
 		//	return 0;
 		GetNextToken(&g_Token);
 
-		token = g_Token;
+        token = g_Token;
 
-		if ( g_Token.Type == T_ID )
-			strcpy(szVarName, g_Token.Value.vString);
+        if ( g_Token.Type == T_ID )
+            strcpy(szVarName, g_Token.Value.vString);
+        token.Value.vString = szVarName;   // nome in buffer locale: sicuro dopo match() 
 
-		if ( !match(T_ID) )
-		{
+        if ( !match(T_ID) )
+        {
 			printf("Linea %d Colonna %d: Errore var_list. Atteso identificatore.\n",
 				g_Token.line,
 				g_Token.column);
@@ -812,69 +804,104 @@ int var_list()
 //code_block : T_KW_BEGIN stmt_list T_KW_END;
 int code_block()
 {
-	nodeType *left = NULL;
+    nodeType *left = NULL;
 
-	g_isCodeBlock = 1;
+    g_isCodeBlock = 1;
 
-	if ( !match(T_KW_BEGIN) && !g_isStmtList )
-	{
-		printf("Linea %d Colonna %d: Errore decl. Attesa keyword 'begin'.\n",
-				g_Token.line,
-				g_Token.column);
-		return 0;
-	}
-	if ( !stmt_list() )
-	{
-		return 0;
-	}
-	if ( !match(T_KW_END) )
-	{
-		printf("Linea %d Colonna %d: Errore decl. Attesa keyword 'end'.\n",
-				g_Token.line,
-				g_Token.column);
-		return 0;
-	}
+    if ( !match(T_KW_BEGIN) )
+    {
+        printf("Linea %d Colonna %d: Errore decl. Attesa keyword 'begin'.\n",
+               g_Token.line, g_Token.column);
+        g_numErrors++;
+        return 0;
+    }
 
-	left = g_stack[g_top--];
-	g_stack[++g_top] = opr(T_CODE_BLOCK, 1, left);
+    stmt_list();   /* gestisce i propri errori e ritorna sempre 1 */
 
-	return 1;
+    if ( !match(T_KW_END) )
+    {
+        printf("Linea %d Colonna %d: Errore decl. Attesa keyword 'end'.\n",
+               g_Token.line, g_Token.column);
+        g_numErrors++;
+        return 0;
+    }
+
+    left = g_stack[g_top--];
+    g_stack[++g_top] = opr(T_CODE_BLOCK, 1, left);
+
+    return 1;
+}
+
+// Token che possono iniziare una istruzione (FIRST(stmt)). 
+static int isStmtStart(int t)
+{
+    return t == T_KW_PRINT || t == T_KW_READ || t == T_KW_WHILE ||
+           t == T_KW_DO    || t == T_KW_IF   || t == T_KW_BEGIN ||
+           t == T_ID;
 }
 
 //stmt_list : {stmt};
 int stmt_list()
 {
-	nodeType *left, *right, *root;
+    nodeType *left = NULL, *right = NULL, *root = NULL;
+    int listDepth;
+    int startLine, startColumn;
 
-	left = right = root = NULL;
+    g_isStmtList = 1;
 
-	g_isStmtList = 1;
+    root = opr(T_STMT_LIST, 2, NULL, NULL);
+    g_stack[++g_top] = root;
+    listDepth = g_top;   /* profondita' attesa: la radice della lista */
 
-	root = opr(T_STMT_LIST, 2, NULL, NULL);
-	g_stack[++g_top] = root;
+    while ( isStmtStart(g_Token.Type) )
+    {
+        startLine   = g_Token.line;
+        startColumn = g_Token.column;
 
-	while ( g_Token.Type == T_KW_PRINT ||
-		g_Token.Type == T_KW_READ ||
-		g_Token.Type == T_KW_WHILE ||
-		g_Token.Type == T_KW_DO ||
-		g_Token.Type == T_KW_IF ||
-		g_Token.Type == T_KW_BEGIN ||
-		g_Token.Type == T_ID )
-	{
-		if ( !stmt() )
-		{
-			//g_isStmtList = 0;
-			return 0;
-		}
+        if ( !stmt() )
+        {
+            g_numErrors++;
 
-		right = g_stack[g_top--];
-		left = g_stack[g_top--];
-		g_stack[++g_top] = opr(T_STMT_LIST, 2, left, right);
-	} // fine while
+            /* stmt() puo' aver lasciato nodi parziali sullo stack:
+               rimuoviamoli, altrimenti il prossimo pop prenderebbe un
+               nodo spurio come 'left' della lista (AST corrotto). */
+            while ( g_top > listDepth )
+                freeNode(g_stack[g_top--]);
 
-	g_isStmtList = 0;
+            /* 'end' appartiene al chiamante (code_block): non consumarlo. */
+            if ( g_Token.Type == T_KW_END || g_Token.Type == T_EOF )
+                break;
 
-	return 1;
+            /* GARANZIA DI AVANZAMENTO: se stmt() e' fallito senza consumare
+               il token corrente (es. identificatore non dichiarato), il solo
+               sync-set non basta: T_ID e' sia inizio-stmt sia punto di
+               sincronizzazione -> loop infinito. Consumiamo almeno un token. */
+            if ( g_Token.line == startLine && g_Token.column == startColumn )
+                GetNextToken(&g_Token);
+
+            /* Panic mode: salta fino a un punto di sincronizzazione sicuro. */
+            while ( g_Token.Type != T_SEMICOLON &&
+                    g_Token.Type != T_KW_END &&
+                    g_Token.Type != T_EOF &&
+                    !isStmtStart(g_Token.Type) )
+                GetNextToken(&g_Token);
+
+            if ( g_Token.Type == T_SEMICOLON )
+                GetNextToken(&g_Token);
+
+            if ( g_Token.Type == T_KW_END || g_Token.Type == T_EOF )
+                break;
+        }
+        else
+        {
+            right = g_stack[g_top--];
+            left  = g_stack[g_top--];
+            g_stack[++g_top] = opr(T_STMT_LIST, 2, left, right);
+        }
+    }
+
+    g_isStmtList = 0;
+    return 1;
 }
 
 //stmt : T_KW_PRINT expr ';'
@@ -1304,9 +1331,11 @@ int stmt()
 		right = g_stack[g_top--];
 		//if ( hashTable.Tipo0 != T_ARRAY )
 		//	left = id(szIdName, "a", hashTable.Tipo0, hashTable.Tipo1, hashTable.Tipo2, hashTable.Value, 1);
+		
 		left = id(szIdName, "a", hashTable.Tipo0, hashTable.Tipo1, hashTable.Tipo2, value, 1);
-		scopeUpdateValue(&g_Scope, szIdName, hashTable.Tipo0, hashTable.Tipo1, hashTable.Tipo2, value, 1, -1);
-
+		if ( hashTable.Tipo0 != T_ARRAY )
+			scopeUpdateValue(&g_Scope, szIdName, hashTable.Tipo0, hashTable.Tipo1, hashTable.Tipo2, value, 1, -1);
+ 		
 		if ( left->type1 != right->type1 )
 		{
 			if ( left->type1 == T_INTEGER && right->type1 == T_REAL )
@@ -1326,16 +1355,6 @@ int stmt()
 						line,
 						column);
 
-				if ( hashTable.Tipo0 == T_ARRAY )
-				{
-					currArrayIndex--;
-					while ( currArrayIndex >= 0 )
-						freeNode(value.pArrayDef->indexes[currArrayIndex--]);
-					free(value.pArrayDef->indexes);
-					value.pArrayDef->indexes = NULL;
-					free(value.pArrayDef);
-					value.pArrayDef = NULL;
-				}
 				freeNode(left);
 				freeNode(right);
 
@@ -1348,16 +1367,6 @@ int stmt()
 						line,
 						column);
 
-				if ( hashTable.Tipo0 == T_ARRAY )
-				{
-					currArrayIndex--;
-					while ( currArrayIndex >= 0 )
-						freeNode(value.pArrayDef->indexes[currArrayIndex--]);
-					free(value.pArrayDef->indexes);
-					value.pArrayDef->indexes = NULL;
-					free(value.pArrayDef);
-					value.pArrayDef = NULL;
-				}
 				freeNode(left);
 				freeNode(right);
 
@@ -1370,16 +1379,6 @@ int stmt()
 						line,
 						column);
 
-				if ( hashTable.Tipo0 == T_ARRAY )
-				{
-					currArrayIndex--;
-					while ( currArrayIndex >= 0 )
-						freeNode(value.pArrayDef->indexes[currArrayIndex--]);
-					free(value.pArrayDef->indexes);
-					value.pArrayDef->indexes = NULL;
-					free(value.pArrayDef);
-					value.pArrayDef = NULL;
-				}
 				freeNode(left);
 				freeNode(right);
 
@@ -1392,16 +1391,6 @@ int stmt()
 						line,
 						column);
 
-				if ( hashTable.Tipo0 == T_ARRAY )
-				{
-					currArrayIndex--;
-					while ( currArrayIndex >= 0 )
-						freeNode(value.pArrayDef->indexes[currArrayIndex--]);
-					free(value.pArrayDef->indexes);
-					value.pArrayDef->indexes = NULL;
-					free(value.pArrayDef);
-					value.pArrayDef = NULL;
-				}
 				freeNode(left);
 				freeNode(right);
 
@@ -1414,16 +1403,6 @@ int stmt()
 						line,
 						column);
 
-				if ( hashTable.Tipo0 == T_ARRAY )
-				{
-					currArrayIndex--;
-					while ( currArrayIndex >= 0 )
-						freeNode(value.pArrayDef->indexes[currArrayIndex--]);
-					free(value.pArrayDef->indexes);
-					value.pArrayDef->indexes = NULL;
-					free(value.pArrayDef);
-					value.pArrayDef = NULL;
-				}
 				freeNode(left);
 				freeNode(right);
 
@@ -1436,16 +1415,6 @@ int stmt()
 						line,
 						column);
 
-				if ( hashTable.Tipo0 == T_ARRAY )
-				{
-					currArrayIndex--;
-					while ( currArrayIndex >= 0 )
-						freeNode(value.pArrayDef->indexes[currArrayIndex--]);
-					free(value.pArrayDef->indexes);
-					value.pArrayDef->indexes = NULL;
-					free(value.pArrayDef);
-					value.pArrayDef = NULL;
-				}
 				freeNode(left);
 				freeNode(right);
 
@@ -1453,15 +1422,6 @@ int stmt()
 			}
 		}
 		g_stack[++g_top] = opr(T_OP_ASSIGN, 2, left, right);
-
-		/*
-		printf("%s", g_stack[g_top]->opr.op[0]->id.name);
-		for ( currArrayIndex = 0; currArrayIndex < hashTable.Value.pArrayDef->countIndexes; currArrayIndex++ )
-		{
-			printf("[%d]", g_stack[g_top]->opr.op[0]->id.value.pArrayDef->indexes[currArrayIndex]->con.value.iVal);
-		}
-		printf(" = %d\n\n", g_stack[g_top]->opr.op[1]->con.value.iVal);
-		*/
 
 		break;
 	default:
@@ -1896,6 +1856,9 @@ int expr4()
 		}
 		pNode = g_stack[g_top--];
 		g_stack[++g_top] = opr(T_OP_UMINUS, 1, pNode);
+		g_stack[g_top]->type0 = T_SIMPLE;
+		g_stack[g_top]->type1 = pNode->type1;   /* il meno unario conserva il tipo dell'operando */
+		g_stack[g_top]->type2 = T_VAR;
 		break;
 	case T_OP_NOT:
 		//if ( !match(T_OP_NOT) )
@@ -1910,10 +1873,13 @@ int expr4()
 					g_Token.line,
 					g_Token.column);
 			return 0;
-		}
+		}		
 		pNode = g_stack[g_top--];
 		g_stack[++g_top] = opr(T_OP_NOT, 1, pNode);
-		break;
+		g_stack[g_top]->type0 = T_SIMPLE;
+		g_stack[g_top]->type1 = T_BOOLEAN;      /* il not restituisce un booleano */
+		g_stack[g_top]->type2 = T_VAR;
+		break;		
 	case T_ID:
 		if ( !scopeFind(&g_Scope, g_Token.Value.vString, &hashTable) )
 		{

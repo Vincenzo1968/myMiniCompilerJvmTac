@@ -314,7 +314,7 @@ static char *emitTAC(TACList *tac, Scope *pScope, nodeType *p)
         return tacStrdup(p->con.lexeme);
 
     case typeId: {
-        HashTable Dati;
+        HashTable Dati = {0};
         if (!scopeFind(pScope, p->id.name, &Dati)) {
             printf("Errore TAC: identificatore '%s' non dichiarato\n", p->id.name);
             return tacStrdup("0");
@@ -330,10 +330,12 @@ static char *emitTAC(TACList *tac, Scope *pScope, nodeType *p)
     }
 
     case typeOperator:
-        switch (p->opr.oper) {
+        switch (p->opr.oper) {            
         case T_STMT_LIST:
             free(emitTAC(tac, pScope, p->opr.op[0]));
-            return emitTAC(tac, pScope, p->opr.op[1]);
+            if (p->opr.nops > 1)
+                return emitTAC(tac, pScope, p->opr.op[1]);
+            return NULL;
 
         case T_CODE_BLOCK:
             return emitTAC(tac, pScope, p->opr.op[0]);
@@ -396,7 +398,7 @@ static char *emitTAC(TACList *tac, Scope *pScope, nodeType *p)
         case T_KW_READ: {
             nodeType *dst = p->opr.op[0];
             if (dst->type0 == T_ARRAY) {
-                HashTable Dati;
+                HashTable Dati = {0};
                 if (scopeFind(pScope, dst->id.name, &Dati)) {
                     char *off = emitArrayOffset(tac, pScope, dst, &Dati);
                     char *tmp = newTemp();
@@ -415,7 +417,7 @@ static char *emitTAC(TACList *tac, Scope *pScope, nodeType *p)
             nodeType *lhs = p->opr.op[0];
             char *rhs = emitTAC(tac, pScope, p->opr.op[1]);
             if (lhs->type0 == T_ARRAY) {
-                HashTable Dati;
+                HashTable Dati = {0};
                 if (scopeFind(pScope, lhs->id.name, &Dati)) {
                     char *off = emitArrayOffset(tac, pScope, lhs, &Dati);
                     tacEmit(tac, TAC_STORE_IDX, off, rhs, lhs->id.name, lhs->type1);

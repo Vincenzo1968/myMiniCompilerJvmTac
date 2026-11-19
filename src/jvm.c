@@ -882,7 +882,7 @@ void MakeBytecodeDeclInitMain(jvmHashTable **pHT, Scope *pScope)
 	int index;
 	HashTable *t;
 	HashTable **pHashTable;
-	HashTable Dati;
+	HashTable Dati = {0};
 
 	pHashTable = pScope->stack[0];
 
@@ -1039,7 +1039,7 @@ static int tacElemByteSize(enumTipo1 t1)
 
 static enumTipo1 jvmInferOperandType(const char *opStr, Scope *pScope, const TempTable *tt, enumTipo1 fallback)
 {
-	HashTable Dati;
+	HashTable Dati = {0};
 	double d;
 	long iv;
 	int isInt, b;
@@ -1079,7 +1079,7 @@ static void jvmPrepareTemps(const TACList *tac, Scope *pScope, TempTable *tt)
 
 	for (i = 0; i < tac->count; i++) {
 		const TACInstr *in = &tac->items[i];
-		HashTable Dati;
+		HashTable Dati = {0};
 		enumTipo1 tRes;
 
 		if (in->dead || !in->res) continue;
@@ -1110,7 +1110,7 @@ static void jvmPrepareTemps(const TACList *tac, Scope *pScope, TempTable *tt)
 static void jvmLoadOperand(const char *opStr, enumTipo1 targetType,
                            jvmHashTable **pHT, Scope *pScope, const TempTable *tt)
 {
-	HashTable Dati;
+	HashTable Dati = {0};
 	double d;
 	long iv;
 	int isInt, b;
@@ -1185,7 +1185,7 @@ static void jvmLoadAsBool(const char *opStr, jvmHashTable **pHT, Scope *pScope, 
 
 static void jvmStoreDest(const char *dstName, enumTipo1 valueType, Scope *pScope, TempTable *tt)
 {
-	HashTable Dati;
+	HashTable Dati = {0};
 	int tidx;
 
 	if (scopeFind(pScope, (char *)dstName, &Dati)) {
@@ -1313,7 +1313,7 @@ static void MakeBytecodeFromTAC(const TACList *tac, jvmHashTable **pHT, Scope *p
 		}
 
 		case TAC_ASSIGN: {
-			HashTable Dati;
+			HashTable Dati = {0};
 			enumTipo1 dstType = in->type1;
 			int tidx;
 			if (scopeFind(pScope, in->res, &Dati))
@@ -1442,7 +1442,7 @@ static void MakeBytecodeFromTAC(const TACList *tac, jvmHashTable **pHT, Scope *p
 		}
 
 		case TAC_LOAD_IDX: {
-			HashTable Dati;
+			HashTable Dati = {0};
 			if (!scopeFind(pScope, in->arg1, &Dati)) {
 				printf("Errore JVM: array '%s' non dichiarato.\n", in->arg1);
 				break;
@@ -1464,7 +1464,7 @@ static void MakeBytecodeFromTAC(const TACList *tac, jvmHashTable **pHT, Scope *p
 		}
 
 		case TAC_STORE_IDX: {
-			HashTable Dati;
+			HashTable Dati = {0};
 			if (!scopeFind(pScope, in->res, &Dati)) {
 				printf("Errore JVM: array '%s' non dichiarato.\n", in->res);
 				break;
@@ -1511,7 +1511,7 @@ static void MakeBytecodeFromTAC(const TACList *tac, jvmHashTable **pHT, Scope *p
 		}
 
 		case TAC_READ: {
-			HashTable Dati;
+			HashTable Dati = {0};
 			enumTipo1 rType = in->type1;
 			if (scopeFind(pScope, in->res, &Dati))
 				rType = Dati.Tipo1;

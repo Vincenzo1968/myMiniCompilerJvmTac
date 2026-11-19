@@ -199,8 +199,8 @@ void htFree(HashTable* first)
 				{
 					if ( pszArray[k] != NULL )
 						free(pszArray[k]);
-					free(pszArray);
 				}
+				free(pszArray);
 			}
 			free(n1->Value.pArrayDef->sizes);
 			n1->Value.pArrayDef->sizes = NULL;
@@ -330,14 +330,6 @@ void scopeInit(Scope *pScope)
 	{
 		for ( x = 0; x < HT_SIZE; x++ )
 		{
-			pHT[x] = (HashTable*)malloc(sizeof(HashTable));
-			if ( pHT[x] == NULL )
-			{
-				printf("Memoria non sufficiente.\n");
-				free(pHT);
-				pHT = NULL;
-				return; 
-			}
 			pHT[x] = NULL;
 		}
 	}
@@ -371,14 +363,6 @@ void scopePush(Scope *pScope)
 	{
 		for ( x = 0; x < HT_SIZE; x++ )
 		{
-			pHT[x] = (HashTable*)malloc(sizeof(HashTable));
-			if ( pHT[x] == NULL )
-			{
-				printf("Memoria non sufficiente.\n");
-				free(pHT);
-				pHT = NULL;
-				return; 
-			}
 			pHT[x] = NULL;
 		}
 	}

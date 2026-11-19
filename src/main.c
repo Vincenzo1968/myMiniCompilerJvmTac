@@ -19,6 +19,18 @@ You should have received a copy of the GNU General Public License
 along with mypdfsearch. If not, see <http://www.gnu.org/licenses/>.
 */
 
+/*
+Architettura :
+
+    Unica pipeline di compilazione: AST -> TAC (-O0..-O3) -> JVM (.class),
+    con -O3 attivo di default per il target jvm (e modificabile da riga
+    di comando con -O0..-O3).
+
+    Backend JVM aggiornato (src/jvm.c): allineato alle ottimizzazioni del TAC,
+    con calcolo corretto dello stack massimo, gestione dei temporanei/label,
+    supporto a ldc/ldc_w, confronti su interi/reali e array linearizzati.
+*/
+
 #ifdef HAVE_CONFIG_H
 #  include "config.h"
 #endif
@@ -997,7 +1009,6 @@ gcc -Wall -W -pedantic -O2 ast.c endianess.c jvm.c main.c parser.c scanner.c sym
 java myprog_01
 */
 
-
 int main(int argc, char **argv)
 {
 	//char *szInput = "expr:	term { ('+'|'-') term };\n"
@@ -1072,9 +1083,9 @@ int main(int argc, char **argv)
 
 	printf("\n");
 
-	//scopeFree(&g_Scope);
+	scopeFree(&g_Scope);
 	freeNode(pTree);
-
+	
 	return 0;
 }
 
