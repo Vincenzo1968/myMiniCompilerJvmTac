@@ -19,11 +19,13 @@ You should have received a copy of the GNU General Public License
 along with mypdfsearch. If not, see <http://www.gnu.org/licenses/>.
 */
 
+#ifdef HAVE_CONFIG_H
+#  include "config.h"
+#endif
+
 #include <stdio.h>
 #include <string.h>
 #include <malloc.h>
-
-//#pragma warning(disable : 4996)
 
 #include "symtab.h"
 
