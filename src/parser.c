@@ -298,7 +298,6 @@ int match(TokenTypeEnum ExpectedToken)
 	return 0;
 }
 
-
 int TypeCheck(Valore *value, const Token *pToken)
 {
 	if ( g_currType == g_currConstType )
@@ -474,6 +473,35 @@ int decl_list()
 	return 1;
 }
 
+//type : T_KW_INT | T_KW_REAL | T_KW_BOOL | T_KW_STRING;
+int type(void)
+{
+	switch ( g_Token.Type )
+	{
+	case T_KW_INT:
+		g_currType = T_INTEGER;
+		GetNextToken(&g_Token);
+		return 1;
+	case T_KW_REAL:
+		g_currType = T_REAL;
+		GetNextToken(&g_Token);
+		return 1;
+	case T_KW_BOOL:
+		g_currType = T_BOOLEAN;
+		GetNextToken(&g_Token);
+		return 1;
+	case T_KW_STRING:
+		g_currType = T_STRING;
+		GetNextToken(&g_Token);
+		return 1;
+	default:
+		printf("Linea %d Colonna %d: Errore type. Attesa keyword 'int' o 'real' o 'bool' o 'string'.\n",
+		       g_Token.line, g_Token.column);
+		g_numErrors++;
+		return 0;
+	}
+}
+
 //decl : type var_list ';'
 //		| T_KW_ARRAY T_ID '[' T_INT_LITERAL ']' {'[' T_INT_LITERAL ']'} T_KW_OF type ';'
 //		;
@@ -495,6 +523,7 @@ int decl()
 		if ( !value.pArrayDef )
 		{
 			printf("Errore: memoria insufficiente.\n");
+			g_numErrors++;
 			return 0;
 		}
 
@@ -507,41 +536,55 @@ int decl()
 
 		token = g_Token;
 		if ( g_Token.Type == T_ID )
+		{
+			if ( strlen(g_Token.Value.vString) >= sizeof(szIdName) )
+			{
+				printf("Linea %d Colonna %d: Errore decl. Identificatore troppo lungo.\n",
+						g_Token.line, g_Token.column);
+				g_numErrors++;
+				free(value.pArrayDef);
+				return 0;
+			}
 			strcpy(szIdName, g_Token.Value.vString);
-		token.Value.vString = szIdName;   // nome in buffer locale: sicuro dopo match()
+		}
+		token.Value.vString = szIdName;
 
 		if ( !match(T_ID) )
 		{
 			printf("Linea %d Colonna %d: Errore decl. Atteso identificatore.\n",
-				g_Token.line,
-				g_Token.column);
+				g_Token.line, g_Token.column);
+			g_numErrors++;
 			free(value.pArrayDef);
-			value.pArrayDef = NULL;
 			return 0;
 		}
 		if ( scopeFind(&g_Scope, token.Value.vString, &hashTable) )
 		{
 			printf("Linea %d Colonna %d: Errore var_list. Identificatore '%s' già dichiarato.\n",
-					token.line,
-					token.column,
-					token.Value.vString);
+					token.line, token.column, token.Value.vString);
+			g_numErrors++;
 			free(value.pArrayDef);
-			value.pArrayDef = NULL;
 			return 0;
 		}
 
 		if ( !match(T_QOPAREN) )
 		{
 			printf("Linea %d Colonna %d: Errore decl. Attesa parentesi '['.\n",
-				g_Token.line,
-				g_Token.column);
+				g_Token.line, g_Token.column);
+			g_numErrors++;
 			free(value.pArrayDef);
-			value.pArrayDef = NULL;
 			return 0;
 		}
 
 		if ( g_Token.Type == T_INT_LITERAL )
 		{
+			if ( g_Token.Value.vInt <= 0 )
+			{
+				printf("Linea %d Colonna %d: Errore decl. La dimensione dell'array deve essere positiva.\n",
+						g_Token.line, g_Token.column);
+				g_numErrors++;
+				free(value.pArrayDef);
+				return 0;
+			}
 			indici[value.pArrayDef->countIndexes++] = g_Token.Value.vInt;
 			array_size = g_Token.Value.vInt;
 		}
@@ -549,19 +592,17 @@ int decl()
 		if ( !match(T_INT_LITERAL) )
 		{
 			printf("Linea %d Colonna %d: Errore decl. Atteso int literal.\n",
-				g_Token.line,
-				g_Token.column);
+				g_Token.line, g_Token.column);
+			g_numErrors++;
 			free(value.pArrayDef);
-			value.pArrayDef = NULL;
 			return 0;
 		}
 		if ( !match(T_QCPAREN) )
 		{
 			printf("Linea %d Colonna %d: Errore decl. Attesa parentesi ']'.\n",
-				g_Token.line,
-				g_Token.column);
+				g_Token.line, g_Token.column);
+			g_numErrors++;
 			free(value.pArrayDef);
-			value.pArrayDef = NULL;
 			return 0;
 		}
 		while ( g_Token.Type == T_QOPAREN )
@@ -569,15 +610,30 @@ int decl()
 			if ( !match(T_QOPAREN) )
 			{
 				printf("Linea %d Colonna %d: Errore decl. Attesa parentesi '['.\n",
-					g_Token.line,
-					g_Token.column);
+					g_Token.line, g_Token.column);
+				g_numErrors++;
 				free(value.pArrayDef);
-				value.pArrayDef = NULL;
 				return 0;
 			}
 
 			if ( g_Token.Type == T_INT_LITERAL )
 			{
+				if ( value.pArrayDef->countIndexes >= 89 )
+				{
+					printf("Linea %d Colonna %d: Errore decl. Troppe dimensioni per l'array.\n",
+							g_Token.line, g_Token.column);
+					g_numErrors++;
+					free(value.pArrayDef);
+					return 0;
+				}
+				if ( g_Token.Value.vInt <= 0 )
+				{
+					printf("Linea %d Colonna %d: Errore decl. La dimensione dell'array deve essere positiva.\n",
+							g_Token.line, g_Token.column);
+					g_numErrors++;
+					free(value.pArrayDef);
+					return 0;
+				}
 				indici[value.pArrayDef->countIndexes++] = g_Token.Value.vInt;
 				array_size *= g_Token.Value.vInt;
 			}
@@ -585,81 +641,72 @@ int decl()
 			if ( !match(T_INT_LITERAL) )
 			{
 				printf("Linea %d Colonna %d: Errore decl. Atteso int literal.\n",
-					g_Token.line,
-					g_Token.column);
+					g_Token.line, g_Token.column);
+				g_numErrors++;
 				free(value.pArrayDef);
-				value.pArrayDef = NULL;
 				return 0;
 			}
 			if ( !match(T_QCPAREN) )
 			{
 				printf("Linea %d Colonna %d: Errore decl. Attesa parentesi ']'.\n",
-					g_Token.line,
-					g_Token.column);
+					g_Token.line, g_Token.column);
+				g_numErrors++;
 				free(value.pArrayDef);
-				value.pArrayDef = NULL;
 				return 0;
 			}
 		}
 		if ( !match(T_KW_OF) )
 		{
 			printf("Linea %d Colonna %d: Errore decl. Attesa keyword 'of'.\n",
-				g_Token.line,
-				g_Token.column);
+				g_Token.line, g_Token.column);
+			g_numErrors++;
 			free(value.pArrayDef);
-			value.pArrayDef = NULL;
 			return 0;
 		}
 		if ( !type() )
 		{
+			g_numErrors++;
 			free(value.pArrayDef);
-			value.pArrayDef = NULL;
+			return 0;
+		}
+
+		if ( array_size <= 0 )
+		{
+			printf("Linea %d Colonna %d: Errore decl. Dimensione totale array non valida.\n",
+					g_Token.line, g_Token.column);
+			g_numErrors++;
+			free(value.pArrayDef);
 			return 0;
 		}
 
 		if ( g_currType == T_INTEGER || g_currType == T_BOOLEAN )
 		{
 			value.pArrayDef->pArray = (int*)calloc((size_t)array_size, sizeof(int));
-			if ( !value.pArrayDef->pArray )
-			{
-				printf("Errore pArrayDef->pArray: memoria insufficiente.\n");
-				free(value.pArrayDef);
-				value.pArrayDef = NULL;
-				return 0;
-			}
 		}
 		else if ( g_currType == T_REAL )
 		{
 			value.pArrayDef->pArray = (double*)calloc((size_t)array_size, sizeof(double));
-			if ( !value.pArrayDef->pArray )
-			{
-				printf("Errore pArrayDef->pArray: memoria insufficiente.\n");
-				free(value.pArrayDef);
-				value.pArrayDef = NULL;
-				return 0;
-			}
 		}
 		else if ( g_currType == T_STRING )
 		{
 			value.pArrayDef->pArray = (char**)calloc((size_t)array_size, sizeof(char*));
-			if ( !value.pArrayDef->pArray )
-			{
-				printf("Errore pArrayDef->pArray: memoria insufficiente.\n");
-				free(value.pArrayDef);
-				value.pArrayDef = NULL;
-				return 0;
-			}
+		}
+
+		if ( !value.pArrayDef->pArray )
+		{
+			printf("Errore pArrayDef->pArray: memoria insufficiente.\n");
+			g_numErrors++;
+			free(value.pArrayDef);
+			return 0;
 		}
 
 		if ( !match(T_SEMICOLON) )
 		{
 			printf("Linea %d Colonna %d: Errore decl. Atteso semicolon ';'.\n",
-				g_Token.line,
-				g_Token.column);
+				g_Token.line, g_Token.column);
+			g_numErrors++;
 			free(value.pArrayDef->pArray);
-			value.pArrayDef->pArray = NULL;
 			free(value.pArrayDef);
-			value.pArrayDef = NULL;
 			return 0;
 		}
 
@@ -667,10 +714,9 @@ int decl()
 		if ( !value.pArrayDef->sizes )
 		{
 			printf("Errore pArrayDef->sizes: memoria insufficiente.\n");
+			g_numErrors++;
 			free(value.pArrayDef->pArray);
-			value.pArrayDef->pArray = NULL;
 			free(value.pArrayDef);
-			value.pArrayDef = NULL;
 			return 0;
 		}
 
@@ -688,50 +734,22 @@ int decl()
 	else
 	{
 		if ( !type() )
+		{
+			g_numErrors++;
 			return 0;
+		}
 		if ( !var_list() )
 			return 0;
 		if ( !match(T_SEMICOLON) )
 		{
 			printf("Linea %d Colonna %d: Errore decl. Atteso semicolon ';'.\n",
-				g_Token.line,
-				g_Token.column);
+				g_Token.line, g_Token.column);
+			g_numErrors++;
 			return 0;
 		}
 	}
 
 	return 1;
-}
-
-//type : T_KW_INT | T_KW_REAL | T_KW_BOOL | T_KW_STRING;
-int type()
-{
-	switch ( g_Token.Type )
-	{
-	case T_KW_INT:
-		g_currType = T_INTEGER;
-		GetNextToken(&g_Token);
-		return 1;
-	case T_KW_REAL:
-		g_currType = T_REAL;
-		GetNextToken(&g_Token);
-		return 1;
-	case T_KW_BOOL:
-		g_currType = T_BOOLEAN;
-		GetNextToken(&g_Token);
-		return 1;
-	case T_KW_STRING:
-		g_currType = T_STRING;
-		GetNextToken(&g_Token);
-		return 1;
-		//break;
-	default:
-		printf("Linea %d Colonna %d: Errore type. Attesa keyword 'int' o 'real' o 'bool' o 'string'.\n", g_Token.line, g_Token.column);
-		return 0;
-		//break;
-	}
-
-	//return 0;
 }
 
 //var_list : T_ID ['=' expr] {',' T_ID['=' expr]};

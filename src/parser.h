@@ -27,7 +27,7 @@ void Panic();
 int program();
 int decl_list();
 int decl();
-int type();
+int type(void);
 int var_list();
 int code_block();
 int stmt_list();

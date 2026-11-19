@@ -24,6 +24,7 @@ along with mypdfsearch. If not, see <http://www.gnu.org/licenses/>.
 #endif
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <malloc.h>
 
@@ -188,19 +189,23 @@ void htFree(HashTable* first)
 			}
 			else
 			{
-				int k;
-				int count = 1;
 				char **pszArray = (char**)n1->Value.pArrayDef->pArray;
-				for ( k = 0; k < n1->Value.pArrayDef->countIndexes; k++ )
+				if ( pszArray != NULL && n1->Value.pArrayDef->sizes != NULL )
 				{
-					count *= n1->Value.pArrayDef->sizes[k];
-				}
-				for ( k = 0; k < count; k++ )
-				{
-					if ( pszArray[k] != NULL )
-						free(pszArray[k]);
+					int k;
+					int count = 1;
+					for ( k = 0; k < n1->Value.pArrayDef->countIndexes; k++ )
+					{
+						count *= n1->Value.pArrayDef->sizes[k];
+					}
+					for ( k = 0; k < count; k++ )
+					{
+						if ( pszArray[k] != NULL )
+							free(pszArray[k]);
+					}
 				}
 				free(pszArray);
+				n1->Value.pArrayDef->pArray = NULL;
 			}
 			free(n1->Value.pArrayDef->sizes);
 			n1->Value.pArrayDef->sizes = NULL;
@@ -452,6 +457,14 @@ int scopeUpdateValue(Scope *pScope, char *Key, enumTipo0 t0, enumTipo1 t1, enumT
 			HashTable *pTable = pHT[index];
 			while ( strcmp(pTable->Key, Key) != 0 )
 				pTable = pTable->next;
+
+			if ( pTable->Tipo0 == T_SIMPLE && pTable->Tipo1 == T_STRING &&
+				 pTable->Value.strVal != NULL && pTable->Value.strVal != v.strVal )
+			{
+				free(pTable->Value.strVal);
+				pTable->Value.strVal = NULL;
+			}
+
 			pTable->Tipo0 = t0;
 			pTable->Tipo1 = t1;
 			pTable->Tipo2 = t2;
@@ -467,4 +480,3 @@ int scopeUpdateValue(Scope *pScope, char *Key, enumTipo0 t0, enumTipo1 t1, enumT
 	printf("Errore: variabile '%s' non dichiarata\n", Key);
 	return 0;
 }
-

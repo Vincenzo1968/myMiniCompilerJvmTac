@@ -4,7 +4,7 @@ An educational compiler written in ANSI/C99 featuring a recursive descent parser
 
 ## Features
 
-- **Frontend & Memory Safety:** Hand-written lexical analyzer (`scanner.c`), recursive descent parser (`parser.c`) with panic-mode error recovery and trailing-token checks, AST builder (`ast.c`), and scoped symbol table (`symtab.c`) with clean memory management (zero leaks/use-after-free on syntax or semantic errors).
+- **Frontend & Memory Safety:** Hand-written lexical analyzer (`scanner.c`), recursive descent parser (`parser.c`) with panic-mode error recovery (handling missing `;` and `)` without cascading false errors) and trailing-token checks, AST builder (`ast.c`), and scoped symbol table (`symtab.c`) with clean memory management (zero Valgrind errors/leaks across syntax and semantic error paths).
 - **Data Types & Control Flow:**
   - Primitive types: `int`, `real` (64-bit IEEE 754 `double`), `bool`, and `string`.
   - Multidimensional arrays (`array name[N][M] of type`).
@@ -49,8 +49,8 @@ expr4      : T_INT_LITERAL
            | 'true'
            | 'false'
            | '(' expr ')'
-           | '-' expr4
-           | '!' expr4
+		   | '-' expr
+           | '!' expr
            | T_ID { '[' expr ']' }
            ;
 ```
@@ -180,23 +180,17 @@ src/myCompiler prg_test/myprog_02.prg jvm -O0
 
 ### 4. Syntax & Semantic Error Reporting
 
-The parser reports line/column diagnostics and uses panic-mode recovery to continue checking the rest of the file:
+The parser reports line/column diagnostics and recovers cleanly from missing delimiters (`;` or `)`), undeclared identifiers, and type mismatches without triggering cascading false-positive errors on subsequent valid statements:
 
 ```bash
-src/myCompiler prg_test/test_error_recovery.prg tac -O0
+src/myCompiler prg_test/test_error_recovery.prg
 ```
-
 ```text
 Linea 6 Colonna 2: Errore stmt. Atteso semicolon ';'.
-Linea 8 Colonna 4: Errore expr4. Identificatore 'a' non inizializzato.
-Linea 8 Colonna 4: Errore stmt. Atteso operatore '='.
-Linea 8 Colonna 5: Errore stmt. Atteso operatore '='.
-Linea 8 Colonna 26: Errore stmt. Identificatore 'variabile_sconosciuta' non dichiarato.
+Linea 8 Colonna 26: Errore expr4. Identificatore 'variabile_sconosciuta' non dichiarato.
 Linea 11 Colonna 2: Errore stmt. Non si puo' assegnare una valore di tipo string ad una variabile di tipo int.
-Linea 13 Colonna 4: Errore expr4. Identificatore 'a' non inizializzato.
-Linea 13 Colonna 4: Errore stmt. Atteso operatore '='.
-Linea 14 Colonna 3: Errore stmt. Atteso operatore '='.
+Linea 14 Colonna 3: Errore stmt. Attesa parentesi ')'.
 Linea 17 Colonna 6: Errore. Token inattesi dopo la fine del programma.
-Errori: 10
-Warnings: 0.
+Errori: 4
+Warnings: 0
 ```
