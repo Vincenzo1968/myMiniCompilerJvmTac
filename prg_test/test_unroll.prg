@@ -10,4 +10,6 @@ begin
     end
 
     print s;
+    
+    print "\n";
 end
