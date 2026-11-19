@@ -1012,7 +1012,7 @@ int main(int argc, char **argv)
 	int genJVM = 0;
 	
 	int i;
-	int optLevel = 0;
+	int optLevel = -1;
 
 	nodeType *pTree = NULL;
 
@@ -1044,6 +1044,9 @@ int main(int argc, char **argv)
 			optLevel = 3;
 	}
 
+	if (optLevel < 0)
+		optLevel = genJVM ? 3 : 0;
+	
 	scopeInit(&g_Scope);
 
 	printf("\n");
@@ -1059,7 +1062,7 @@ int main(int argc, char **argv)
 		}
 		else if ( genJVM )
 		{
-			jvmStart(argv[1], pTree, &g_Scope);
+			jvmStart(argv[1], &pTree, &g_Scope, optLevel);
 		}
 		else
 		{

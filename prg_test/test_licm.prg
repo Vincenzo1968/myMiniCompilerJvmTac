@@ -2,8 +2,13 @@
 int i, n, a, b, s;
 
 begin
+	print "Inserisci n: ";
     read n;
+    
+    print "Inserisci a: ";
     read a;
+    
+    print "Inserisci b: ";
     read b;
 
     i = 0;
@@ -14,5 +19,6 @@ begin
         i = i + 1;
     end
 
+    print "Eqque qua: ";
     print s;
 end

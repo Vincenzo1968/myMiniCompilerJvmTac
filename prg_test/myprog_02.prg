@@ -1,7 +1,10 @@
 int a, b, x, y;
 
 begin
+	print "Inserisci a: ";
     read a;
+    
+    print "Inserisci b: ";
     read b;
 
     x = 10;
@@ -17,6 +20,7 @@ begin
 
     y = b * a + 2;
 
+	print "Eqque qua:\n";
     print x;
     print y;
 end

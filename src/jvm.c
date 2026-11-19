@@ -24,15 +24,15 @@ along with mypdfsearch. If not, see <http://www.gnu.org/licenses/>.
 #endif
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <malloc.h>
-#include <string.h> // necessario per memcpy
+#include <string.h>
 #include <ctype.h>
 #include <math.h>
 #include "scanner.h"
 #include "endianess.h"
 #include "jvm.h"
-
-// #pragma warning(disable : 4996)
+#include "tac.h"
 
 #define ARRAY_TO_S2(arr,v){ buff = (BYTE*)&v;\
 		FORMAT_WORD(arr,0);\
@@ -66,12 +66,14 @@ along with mypdfsearch. If not, see <http://www.gnu.org/licenses/>.
 		FORMAT_QWORD(arr,0);\
 		v = *( (F8*)arr ); }
 
-U2 g_ConstantPoolCount = 68;
-//U2 g_ConstantPoolCount = 13;
-U1 g_ArrayConstantPool[4096];
-U1 g_ArrayCode[4096];
+#define JVM_MAX_CP_BYTES   65536
+#define JVM_MAX_CODE_BYTES 65536
 
-int g_IndexConstantPool;
+U2 g_ConstantPoolCount = 68;
+U1 g_ArrayConstantPool[JVM_MAX_CP_BYTES];
+U1 g_ArrayCode[JVM_MAX_CODE_BYTES];
+
+int g_IndexConstantPool = 0;
 int g_IndexBytecodeArray = 0;
 
 int g_myType1 = -1;
@@ -80,23 +82,71 @@ U2 g_max_stack = 0;
 U2 g_max_locals = 1;
 U4 g_code_length = 0;
 
+static int g_cur_stack = 0;
+
+static void jvmUpdateStack(int delta)
+{
+	g_cur_stack += delta;
+	if (g_cur_stack < 0)
+		g_cur_stack = 0;
+	if (g_cur_stack > (int)g_max_stack)
+		g_max_stack = (U2)g_cur_stack;
+}
+
+static void jvmEmitU1(U1 b, int stackDelta)
+{
+	if (g_IndexBytecodeArray >= JVM_MAX_CODE_BYTES) {
+		printf("Errore JVM: buffer bytecode esaurito.\n");
+		return;
+	}
+	g_ArrayCode[g_IndexBytecodeArray++] = b;
+	g_code_length++;
+	if (stackDelta != 0)
+		jvmUpdateStack(stackDelta);
+}
+
+static void jvmEmitU2(U2 v)
+{
+	BYTE *buff;
+	U1 fb[8];
+	if (g_IndexBytecodeArray + 2 > JVM_MAX_CODE_BYTES) {
+		printf("Errore JVM: buffer bytecode esaurito.\n");
+		return;
+	}
+	if (!isBigEndian()) {
+		ARRAY_TO_U2(buff, v);
+	}
+	memcpy(g_ArrayCode + g_IndexBytecodeArray, &v, 2);
+	g_IndexBytecodeArray += 2;
+	g_code_length += 2;
+}
+
+static void jvmEmitS2(S2 v)
+{
+	BYTE *buff;
+	U1 fb[8];
+	if (g_IndexBytecodeArray + 2 > JVM_MAX_CODE_BYTES) {
+		printf("Errore JVM: buffer bytecode esaurito.\n");
+		return;
+	}
+	if (!isBigEndian()) {
+		ARRAY_TO_S2(buff, v);
+	}
+	memcpy(g_ArrayCode + g_IndexBytecodeArray, &v, 2);
+	g_IndexBytecodeArray += 2;
+	g_code_length += 2;
+}
 
 // -------------------------- HashTable -----------------------------------------
 
-
-//HashTable* htNewNode(char *Key, enumTipo0 t0, enumTipo1 t1, enumTipo2 t2, Valore v, char bInizializzato)
 jvmHashTable* jvmhtNewNode(char *Key, unsigned short c)
 {
-	jvmHashTable *n = NULL;
-
-	n = (jvmHashTable*)malloc(sizeof(jvmHashTable));
-
-	if( n == NULL )
+	jvmHashTable *n = (jvmHashTable*)malloc(sizeof(jvmHashTable));
+	if (n == NULL)
 		return NULL;
 
-	n->Key = (char*)malloc(strlen(Key)+1);
-	if ( n->Key == NULL )
-	{ 
+	n->Key = (char*)malloc(strlen(Key) + 1);
+	if (n->Key == NULL) {
 		free(n);
 		return NULL;
 	}
@@ -107,35 +157,30 @@ jvmHashTable* jvmhtNewNode(char *Key, unsigned short c)
 	return n;
 }
 
-//int htFind(HashTable **pHashTable, char *Key, HashTable *pDati)
 int jvmhtFind(jvmHashTable **pHashTable, char *Key, unsigned short *c)
 {
 	int index = 0;
 	jvmHashTable *t = NULL;
 	int a = 31415;
-	/* int b = 27183; */
 	char szTemp[1024];
-	//char *s = Key;
 	char *s = szTemp;
 
-	strcpy(szTemp, Key);
+	strncpy(szTemp, Key, sizeof(szTemp) - 1);
+	szTemp[sizeof(szTemp) - 1] = '\0';
 
 	*c = 0;
 
-	for(; *s != '\0'; s++)
-	{
-		if ( *s == '\n' )
+	for (; *s != '\0'; s++) {
+		if (*s == '\n')
 			*s = ' ';
-		index = (a*index + *s) % JVM_HT_SIZE;
+		index = (a * index + *s) % JVM_HT_SIZE;
 	}
-	if ( index < 0 )
+	if (index < 0)
 		index *= -1;
 
 	t = pHashTable[index];
-	while ( t != NULL )
-	{
-		if ( strcmp(t->Key, Key) == 0 )
-		{
+	while (t != NULL) {
+		if (strcmp(t->Key, Key) == 0) {
 			*c = t->c;
 			return 1;
 		}
@@ -145,63 +190,50 @@ int jvmhtFind(jvmHashTable **pHashTable, char *Key, unsigned short *c)
 	return 0;
 }
 
-//void htInsert(HashTable **pHashTable, char *Key, enumTipo0 t0, enumTipo1 t1, enumTipo2 t2, Valore v, char bInizializzato)
 void jvmhtInsert(jvmHashTable **pHashTable, char *Key, unsigned short c)
 {
 	int index = 0;
 	jvmHashTable *t = NULL;
 	int a = 31415;
-	/* int b = 27183; */
 	char szTemp[1024];
-	//char *s = Key;
 	char *s = szTemp;
 
-	strcpy(szTemp, Key);
+	strncpy(szTemp, Key, sizeof(szTemp) - 1);
+	szTemp[sizeof(szTemp) - 1] = '\0';
 
-	for(; *s != '\0'; s++)
-	{
-		if ( *s == '\n' )
+	for (; *s != '\0'; s++) {
+		if (*s == '\n')
 			*s = ' ';
-		index = (a*index + *s) % JVM_HT_SIZE;
+		index = (a * index + *s) % JVM_HT_SIZE;
 	}
-	if ( index < 0 )
+	if (index < 0)
 		index *= -1;
 
 	t = pHashTable[index];
-	if ( t == NULL )
-	{
+	if (t == NULL) {
 		pHashTable[index] = jvmhtNewNode(Key, c);
 		return;
 	}
 
-	while ( t != NULL )
-	{
-		if ( strcmp(t->Key, Key) == 0 )
-		{
-			//pHashTable[index]->pLista = ListAppend(pHashTable[index]->pLista, pos);
+	while (t != NULL) {
+		if (strcmp(t->Key, Key) == 0) {
 			printf("\nErrore: La chiave %s e' gia' presente nella hashtable\n", Key);
 			return;
 		}
-		if ( t->next == NULL )
-		{
+		if (t->next == NULL) {
 			t->next = jvmhtNewNode(Key, c);
-			//t = t->next;
-			//t->next = NULL;
 			return;
 		}
 		t = t->next;
 	}
 }
 
-//void htFree(HashTable* first)
 void jvmhtFree(jvmHashTable* first)
 {
 	jvmHashTable *n1 = first, *n2 = NULL;
-	while ( n1 != NULL )
-	{
+	while (n1 != NULL) {
 		n2 = n1->next;
-		if ( n1->Key )
-		{
+		if (n1->Key) {
 			free(n1->Key);
 		}
 		free(n1);
@@ -213,7 +245,7 @@ void jvmhtFree(jvmHashTable* first)
 
 void jvmSetNumberLocals(int n)
 {
-	g_max_locals = n;
+	g_max_locals = (U2)n;
 }
 
 void jvmWriteHeader(FILE *fp)
@@ -222,12 +254,10 @@ void jvmWriteHeader(FILE *fp)
 	U2 minor_version = 0;
 	U2 major_version = 50;
 
-	//unsigned char *buff;
 	BYTE *buff;
-	U1 fb[8]; // Necessario per usare le macro;
+	U1 fb[8];
 
-	if ( !isBigEndian() )
-	{
+	if (!isBigEndian()) {
 		ARRAY_TO_U4(buff, magic);
 		ARRAY_TO_U2(buff, minor_version);
 		ARRAY_TO_U2(buff, major_version);
@@ -238,978 +268,206 @@ void jvmWriteHeader(FILE *fp)
 	fwrite(&major_version, sizeof(U2), 1, fp);
 }
 
+static int jvmWriteCpUtf8(int index, const char *str)
+{
+	U1 tag = CONSTANT_Utf8;
+	U2 length = (U2)strlen(str);
+	U2 lengthBigEndian = length;
+	U1 fb[8];
+	BYTE *buff;
+
+	g_ArrayConstantPool[index++] = tag;
+	if (!isBigEndian()) {
+		ARRAY_TO_U2(buff, lengthBigEndian);
+	}
+	memcpy(g_ArrayConstantPool + index, &lengthBigEndian, 2);
+	index += 2;
+	memcpy(g_ArrayConstantPool + index, str, length);
+	index += length;
+	return index;
+}
+
+static int jvmWriteCpTwoU2(int index, U1 tag, U2 v1, U2 v2)
+{
+	U1 fb[8];
+	BYTE *buff;
+
+	if (!isBigEndian()) {
+		ARRAY_TO_U2(buff, v1);
+		ARRAY_TO_U2(buff, v2);
+	}
+	g_ArrayConstantPool[index++] = tag;
+	memcpy(g_ArrayConstantPool + index, &v1, 2);
+	index += 2;
+	memcpy(g_ArrayConstantPool + index, &v2, 2);
+	index += 2;
+	return index;
+}
+
 int jvmMakeConstantPool(char *szSourceFile, char *szClassName)
 {
 	int k;
 	int index = 0;
 	U1 tag;
 	U2 name_index;
-	U2 class_index;
-	U2 name_and_type_index;
-	U2 descriptor_index;
-	//U2 string_index;
-	U2 length;
-	U2 lengthBigEndian;
-
-	char szStringa[1024];
-
-	U1 fb[8]; // Necessario per usare le macro;
+	U1 fb[8];
 	BYTE *buff;
 
 	tag = CONSTANT_Class;
-	for ( k = 25; k < 33; k++)
-	{
+	for (k = 25; k < 33; k++) {
 		g_ArrayConstantPool[index++] = tag;
-		name_index = k;
-		if ( !isBigEndian() )
-		{
+		name_index = (U2)k;
+		if (!isBigEndian()) {
 			ARRAY_TO_U2(buff, name_index);
 		}
 		memcpy(g_ArrayConstantPool + index, &name_index, 2);
 		index += 2;
 	}
 
-	tag = CONSTANT_Fieldref;
-	class_index = 3;
-	name_and_type_index = 33;
-	if ( !isBigEndian() )
-	{
-		ARRAY_TO_U2(buff, class_index);
-		ARRAY_TO_U2(buff, name_and_type_index);
-	}
-	g_ArrayConstantPool[index++] = tag;
-	memcpy(g_ArrayConstantPool + index, &class_index, 2);
-	index += 2;
-	memcpy(g_ArrayConstantPool + index, &name_and_type_index, 2);
-	index += 2;
-
-
-
-	tag = CONSTANT_Methodref;
-
-	class_index = 2;
-	name_and_type_index = 36;
-	if ( !isBigEndian() )
-	{
-		ARRAY_TO_U2(buff, class_index);
-		ARRAY_TO_U2(buff, name_and_type_index);
-	}
-	g_ArrayConstantPool[index++] = tag;
-	memcpy(g_ArrayConstantPool + index, &class_index, 2);
-	index += 2;
-	memcpy(g_ArrayConstantPool + index, &name_and_type_index, 2);
-	index += 2;
-
-	class_index = 6;
-	name_and_type_index = 36;
-	if ( !isBigEndian() )
-	{
-		ARRAY_TO_U2(buff, class_index);
-		ARRAY_TO_U2(buff, name_and_type_index);
-	}
-	g_ArrayConstantPool[index++] = tag;
-	memcpy(g_ArrayConstantPool + index, &class_index, 2);
-	index += 2;
-	memcpy(g_ArrayConstantPool + index, &name_and_type_index, 2);
-	index += 2;
-
-	class_index = 6;
-	name_and_type_index = 39;
-	if ( !isBigEndian() )
-	{
-		ARRAY_TO_U2(buff, class_index);
-		ARRAY_TO_U2(buff, name_and_type_index);
-	}
-	g_ArrayConstantPool[index++] = tag;
-	memcpy(g_ArrayConstantPool + index, &class_index, 2);
-	index += 2;
-	memcpy(g_ArrayConstantPool + index, &name_and_type_index, 2);
-	index += 2;
-
-	class_index = 6;
-	name_and_type_index = 42;
-	if ( !isBigEndian() )
-	{
-		ARRAY_TO_U2(buff, class_index);
-		ARRAY_TO_U2(buff, name_and_type_index);
-	}
-	g_ArrayConstantPool[index++] = tag;
-	memcpy(g_ArrayConstantPool + index, &class_index, 2);
-	index += 2;
-	memcpy(g_ArrayConstantPool + index, &name_and_type_index, 2);
-	index += 2;
-
-	class_index = 4;
-	name_and_type_index = 45;
-	if ( !isBigEndian() )
-	{
-		ARRAY_TO_U2(buff, class_index);
-		ARRAY_TO_U2(buff, name_and_type_index);
-	}
-	g_ArrayConstantPool[index++] = tag;
-	memcpy(g_ArrayConstantPool + index, &class_index, 2);
-	index += 2;
-	memcpy(g_ArrayConstantPool + index, &name_and_type_index, 2);
-	index += 2;
-
-	class_index = 3;
-	name_and_type_index = 48;
-	if ( !isBigEndian() )
-	{
-		ARRAY_TO_U2(buff, class_index);
-		ARRAY_TO_U2(buff, name_and_type_index);
-	}
-	g_ArrayConstantPool[index++] = tag;
-	memcpy(g_ArrayConstantPool + index, &class_index, 2);
-	index += 2;
-	memcpy(g_ArrayConstantPool + index, &name_and_type_index, 2);
-	index += 2;
-
-	class_index = 5;
-	name_and_type_index = 51;
-	if ( !isBigEndian() )
-	{
-		ARRAY_TO_U2(buff, class_index);
-		ARRAY_TO_U2(buff, name_and_type_index);
-	}
-	g_ArrayConstantPool[index++] = tag;
-	memcpy(g_ArrayConstantPool + index, &class_index, 2);
-	index += 2;
-	memcpy(g_ArrayConstantPool + index, &name_and_type_index, 2);
-	index += 2;
-
-	class_index = 7;
-	name_and_type_index = 54;
-	if ( !isBigEndian() )
-	{
-		ARRAY_TO_U2(buff, class_index);
-		ARRAY_TO_U2(buff, name_and_type_index);
-	}
-	g_ArrayConstantPool[index++] = tag;
-	memcpy(g_ArrayConstantPool + index, &class_index, 2);
-	index += 2;
-	memcpy(g_ArrayConstantPool + index, &name_and_type_index, 2);
-	index += 2;
-
-	class_index = 8;
-	name_and_type_index = 57;
-	if ( !isBigEndian() )
-	{
-		ARRAY_TO_U2(buff, class_index);
-		ARRAY_TO_U2(buff, name_and_type_index);
-	}
-	g_ArrayConstantPool[index++] = tag;
-	memcpy(g_ArrayConstantPool + index, &class_index, 2);
-	index += 2;
-	memcpy(g_ArrayConstantPool + index, &name_and_type_index, 2);
-	index += 2;
-
-
-
-
-	tag = CONSTANT_Utf8;
-
-	strcpy(szStringa, "Code");
-	length = strlen(szStringa);
-	lengthBigEndian = length;
-	g_ArrayConstantPool[index++] = tag;
-	if ( !isBigEndian() )
-	{
-		ARRAY_TO_U2(buff, lengthBigEndian);
-	}
-	memcpy(g_ArrayConstantPool + index, &lengthBigEndian, 2);
-	index += 2;
-	memcpy(g_ArrayConstantPool + index, szStringa, length);
-	index += length;
-
-	strcpy(szStringa, "LineNumberTable");
-	length = strlen(szStringa);
-	lengthBigEndian = length;
-	g_ArrayConstantPool[index++] = tag;
-	if ( !isBigEndian() )
-	{
-		ARRAY_TO_U2(buff, lengthBigEndian);
-	}
-	memcpy(g_ArrayConstantPool + index, &lengthBigEndian, 2);
-	index += 2;
-	memcpy(g_ArrayConstantPool + index, szStringa, length);
-	index += length;
-
-	strcpy(szStringa, "main");
-	length = strlen(szStringa);
-	lengthBigEndian = length;
-	g_ArrayConstantPool[index++] = tag;
-	if ( !isBigEndian() )
-	{
-		ARRAY_TO_U2(buff, lengthBigEndian);
-	}
-	memcpy(g_ArrayConstantPool + index, &lengthBigEndian, 2);
-	index += 2;
-	memcpy(g_ArrayConstantPool + index, szStringa, length);
-	index += length;
-
-	strcpy(szStringa, "([Ljava/lang/String;)V");
-	length = strlen(szStringa);
-	lengthBigEndian = length;
-	g_ArrayConstantPool[index++] = tag;
-	if ( !isBigEndian() )
-	{
-		ARRAY_TO_U2(buff, lengthBigEndian);
-	}
-	memcpy(g_ArrayConstantPool + index, &lengthBigEndian, 2);
-	index += 2;
-	memcpy(g_ArrayConstantPool + index, szStringa, length);
-	index += length;
-
-	strcpy(szStringa, "SourceFile");
-	length = strlen(szStringa);
-	lengthBigEndian = length;
-	g_ArrayConstantPool[index++] = tag;
-	if ( !isBigEndian() )
-	{
-		ARRAY_TO_U2(buff, lengthBigEndian);
-	}
-	memcpy(g_ArrayConstantPool + index, &lengthBigEndian, 2);
-	index += 2;
-	memcpy(g_ArrayConstantPool + index, szStringa, length);
-	index += length;
-
-	strcpy(szStringa, szSourceFile);
-	length = strlen(szStringa);
-	lengthBigEndian = length;
-	g_ArrayConstantPool[index++] = tag;
-	if ( !isBigEndian() )
-	{
-		ARRAY_TO_U2(buff, lengthBigEndian);
-	}
-	memcpy(g_ArrayConstantPool + index, &lengthBigEndian, 2);
-	index += 2;
-	memcpy(g_ArrayConstantPool + index, szStringa, length);
-	index += length;
-
-	//strcpy(szStringa, "PrintDemo");
-	strcpy(szStringa, szClassName);
-	length = strlen(szStringa);
-	lengthBigEndian = length;
-	g_ArrayConstantPool[index++] = tag;
-	if ( !isBigEndian() )
-	{
-		ARRAY_TO_U2(buff, lengthBigEndian);
-	}
-	memcpy(g_ArrayConstantPool + index, &lengthBigEndian, 2);
-	index += 2;
-	memcpy(g_ArrayConstantPool + index, szStringa, length);
-	index += length;
-
-	strcpy(szStringa, "java/lang/Object");
-	length = strlen(szStringa);
-	lengthBigEndian = length;
-	g_ArrayConstantPool[index++] = tag;
-	if ( !isBigEndian() )
-	{
-		ARRAY_TO_U2(buff, lengthBigEndian);
-	}
-	memcpy(g_ArrayConstantPool + index, &lengthBigEndian, 2);
-	index += 2;
-	memcpy(g_ArrayConstantPool + index, szStringa, length);
-	index += length;
-
-	strcpy(szStringa, "java/lang/System");
-	length = strlen(szStringa);
-	lengthBigEndian = length;
-	g_ArrayConstantPool[index++] = tag;
-	if ( !isBigEndian() )
-	{
-		ARRAY_TO_U2(buff, lengthBigEndian);
-	}
-	memcpy(g_ArrayConstantPool + index, &lengthBigEndian, 2);
-	index += 2;
-	memcpy(g_ArrayConstantPool + index, szStringa, length);
-	index += length;
-
-	strcpy(szStringa, "java/io/PrintStream");
-	length = strlen(szStringa);
-	lengthBigEndian = length;
-	g_ArrayConstantPool[index++] = tag;
-	if ( !isBigEndian() )
-	{
-		ARRAY_TO_U2(buff, lengthBigEndian);
-	}
-	memcpy(g_ArrayConstantPool + index, &lengthBigEndian, 2);
-	index += 2;
-	memcpy(g_ArrayConstantPool + index, szStringa, length);
-	index += length;
-
-	strcpy(szStringa, "java/io/Console");
-	length = strlen(szStringa);
-	lengthBigEndian = length;
-	g_ArrayConstantPool[index++] = tag;
-	if ( !isBigEndian() )
-	{
-		ARRAY_TO_U2(buff, lengthBigEndian);
-	}
-	memcpy(g_ArrayConstantPool + index, &lengthBigEndian, 2);
-	index += 2;
-	memcpy(g_ArrayConstantPool + index, szStringa, length);
-	index += length;
-
-	strcpy(szStringa, "java/lang/StringBuilder");
-	length = strlen(szStringa);
-	lengthBigEndian = length;
-	g_ArrayConstantPool[index++] = tag;
-	if ( !isBigEndian() )
-	{
-		ARRAY_TO_U2(buff, lengthBigEndian);
-	}
-	memcpy(g_ArrayConstantPool + index, &lengthBigEndian, 2);
-	index += 2;
-	memcpy(g_ArrayConstantPool + index, szStringa, length);
-	index += length;
-
-	strcpy(szStringa, "java/lang/Integer");
-	length = strlen(szStringa);
-	lengthBigEndian = length;
-	g_ArrayConstantPool[index++] = tag;
-	if ( !isBigEndian() )
-	{
-		ARRAY_TO_U2(buff, lengthBigEndian);
-	}
-	memcpy(g_ArrayConstantPool + index, &lengthBigEndian, 2);
-	index += 2;
-	memcpy(g_ArrayConstantPool + index, szStringa, length);
-	index += length;
-
-	strcpy(szStringa, "java/lang/Double");
-	length = strlen(szStringa);
-	lengthBigEndian = length;
-	g_ArrayConstantPool[index++] = tag;
-	if ( !isBigEndian() )
-	{
-		ARRAY_TO_U2(buff, lengthBigEndian);
-	}
-	memcpy(g_ArrayConstantPool + index, &lengthBigEndian, 2);
-	index += 2;
-	memcpy(g_ArrayConstantPool + index, szStringa, length);
-	index += length;
-
-
-	tag = CONSTANT_NameAndType;
-	name_index = 34;
-	descriptor_index = 35;
-	if ( !isBigEndian() )
-	{
-		ARRAY_TO_U2(buff, name_index);
-		ARRAY_TO_U2(buff, descriptor_index);
-	}
-	g_ArrayConstantPool[index++] = tag;
-	memcpy(g_ArrayConstantPool + index, &name_index, 2);
-	index += 2;
-	memcpy(g_ArrayConstantPool + index, &descriptor_index, 2);
-	index += 2;
-
-	tag = CONSTANT_Utf8;
-	strcpy(szStringa, "out");
-	length = strlen(szStringa);
-	lengthBigEndian = length;
-	g_ArrayConstantPool[index++] = tag;
-	if ( !isBigEndian() )
-	{
-		ARRAY_TO_U2(buff, lengthBigEndian);
-	}
-	memcpy(g_ArrayConstantPool + index, &lengthBigEndian, 2);
-	index += 2;
-	memcpy(g_ArrayConstantPool + index, szStringa, length);
-	index += length;
-
-	strcpy(szStringa, "Ljava/io/PrintStream;");
-	length = strlen(szStringa);
-	lengthBigEndian = length;
-	g_ArrayConstantPool[index++] = tag;
-	if ( !isBigEndian() )
-	{
-		ARRAY_TO_U2(buff, lengthBigEndian);
-	}
-	memcpy(g_ArrayConstantPool + index, &lengthBigEndian, 2);
-	index += 2;
-	memcpy(g_ArrayConstantPool + index, szStringa, length);
-	index += length;
-
-
-	tag = CONSTANT_NameAndType;
-	name_index = 37;
-	descriptor_index = 38;
-	if ( !isBigEndian() )
-	{
-		ARRAY_TO_U2(buff, name_index);
-		ARRAY_TO_U2(buff, descriptor_index);
-	}
-	g_ArrayConstantPool[index++] = tag;
-	memcpy(g_ArrayConstantPool + index, &name_index, 2);
-	index += 2;
-	memcpy(g_ArrayConstantPool + index, &descriptor_index, 2);
-	index += 2;
-
-	tag = CONSTANT_Utf8;
-	strcpy(szStringa, "<init>");
-	length = strlen(szStringa);
-	lengthBigEndian = length;
-	g_ArrayConstantPool[index++] = tag;
-	if ( !isBigEndian() )
-	{
-		ARRAY_TO_U2(buff, lengthBigEndian);
-	}
-	memcpy(g_ArrayConstantPool + index, &lengthBigEndian, 2);
-	index += 2;
-	memcpy(g_ArrayConstantPool + index, szStringa, length);
-	index += length;
-
-	strcpy(szStringa, "()V");
-	length = strlen(szStringa);
-	lengthBigEndian = length;
-	g_ArrayConstantPool[index++] = tag;
-	if ( !isBigEndian() )
-	{
-		ARRAY_TO_U2(buff, lengthBigEndian);
-	}
-	memcpy(g_ArrayConstantPool + index, &lengthBigEndian, 2);
-	index += 2;
-	memcpy(g_ArrayConstantPool + index, szStringa, length);
-	index += length;
-
-
-	tag = CONSTANT_NameAndType;
-	name_index = 40;
-	descriptor_index = 41;
-	if ( !isBigEndian() )
-	{
-		ARRAY_TO_U2(buff, name_index);
-		ARRAY_TO_U2(buff, descriptor_index);
-	}
-	g_ArrayConstantPool[index++] = tag;
-	memcpy(g_ArrayConstantPool + index, &name_index, 2);
-	index += 2;
-	memcpy(g_ArrayConstantPool + index, &descriptor_index, 2);
-	index += 2;
-
-	tag = CONSTANT_Utf8;
-	strcpy(szStringa, "append");
-	length = strlen(szStringa);
-	lengthBigEndian = length;
-	g_ArrayConstantPool[index++] = tag;
-	if ( !isBigEndian() )
-	{
-		ARRAY_TO_U2(buff, lengthBigEndian);
-	}
-	memcpy(g_ArrayConstantPool + index, &lengthBigEndian, 2);
-	index += 2;
-	memcpy(g_ArrayConstantPool + index, szStringa, length);
-	index += length;
-
-	strcpy(szStringa, "(Ljava/lang/String;)Ljava/lang/StringBuilder;");
-	length = strlen(szStringa);
-	lengthBigEndian = length;
-	g_ArrayConstantPool[index++] = tag;
-	if ( !isBigEndian() )
-	{
-		ARRAY_TO_U2(buff, lengthBigEndian);
-	}
-	memcpy(g_ArrayConstantPool + index, &lengthBigEndian, 2);
-	index += 2;
-	memcpy(g_ArrayConstantPool + index, szStringa, length);
-	index += length;
-
-
-	tag = CONSTANT_NameAndType;
-	name_index = 43;
-	descriptor_index = 44;
-	if ( !isBigEndian() )
-	{
-		ARRAY_TO_U2(buff, name_index);
-		ARRAY_TO_U2(buff, descriptor_index);
-	}
-	g_ArrayConstantPool[index++] = tag;
-	memcpy(g_ArrayConstantPool + index, &name_index, 2);
-	index += 2;
-	memcpy(g_ArrayConstantPool + index, &descriptor_index, 2);
-	index += 2;
-
-	tag = CONSTANT_Utf8;
-	strcpy(szStringa, "toString");
-	length = strlen(szStringa);
-	lengthBigEndian = length;
-	g_ArrayConstantPool[index++] = tag;
-	if ( !isBigEndian() )
-	{
-		ARRAY_TO_U2(buff, lengthBigEndian);
-	}
-	memcpy(g_ArrayConstantPool + index, &lengthBigEndian, 2);
-	index += 2;
-	memcpy(g_ArrayConstantPool + index, szStringa, length);
-	index += length;
-
-	strcpy(szStringa, "()Ljava/lang/String;");
-	length = strlen(szStringa);
-	lengthBigEndian = length;
-	g_ArrayConstantPool[index++] = tag;
-	if ( !isBigEndian() )
-	{
-		ARRAY_TO_U2(buff, lengthBigEndian);
-	}
-	memcpy(g_ArrayConstantPool + index, &lengthBigEndian, 2);
-	index += 2;
-	memcpy(g_ArrayConstantPool + index, szStringa, length);
-	index += length;
-
-
-	tag = CONSTANT_NameAndType;
-	name_index = 46;
-	descriptor_index = 47;
-	if ( !isBigEndian() )
-	{
-		ARRAY_TO_U2(buff, name_index);
-		ARRAY_TO_U2(buff, descriptor_index);
-	}
-	g_ArrayConstantPool[index++] = tag;
-	memcpy(g_ArrayConstantPool + index, &name_index, 2);
-	index += 2;
-	memcpy(g_ArrayConstantPool + index, &descriptor_index, 2);
-	index += 2;
-
-	tag = CONSTANT_Utf8;
-	//strcpy(szStringa, "print");
-	strcpy(szStringa, "println");
-	length = strlen(szStringa);
-	lengthBigEndian = length;
-	g_ArrayConstantPool[index++] = tag;
-	if ( !isBigEndian() )
-	{
-		ARRAY_TO_U2(buff, lengthBigEndian);
-	}
-	memcpy(g_ArrayConstantPool + index, &lengthBigEndian, 2);
-	index += 2;
-	memcpy(g_ArrayConstantPool + index, szStringa, length);
-	index += length;
-
-	strcpy(szStringa, "(Ljava/lang/String;)V");
-	length = strlen(szStringa);
-	lengthBigEndian = length;
-	g_ArrayConstantPool[index++] = tag;
-	if ( !isBigEndian() )
-	{
-		ARRAY_TO_U2(buff, lengthBigEndian);
-	}
-	memcpy(g_ArrayConstantPool + index, &lengthBigEndian, 2);
-	index += 2;
-	memcpy(g_ArrayConstantPool + index, szStringa, length);
-	index += length;
-
-
-	tag = CONSTANT_NameAndType;
-	name_index = 49;
-	descriptor_index = 50;
-	if ( !isBigEndian() )
-	{
-		ARRAY_TO_U2(buff, name_index);
-		ARRAY_TO_U2(buff, descriptor_index);
-	}
-	g_ArrayConstantPool[index++] = tag;
-	memcpy(g_ArrayConstantPool + index, &name_index, 2);
-	index += 2;
-	memcpy(g_ArrayConstantPool + index, &descriptor_index, 2);
-	index += 2;
-
-	tag = CONSTANT_Utf8;
-	strcpy(szStringa, "console");
-	length = strlen(szStringa);
-	lengthBigEndian = length;
-	g_ArrayConstantPool[index++] = tag;
-	if ( !isBigEndian() )
-	{
-		ARRAY_TO_U2(buff, lengthBigEndian);
-	}
-	memcpy(g_ArrayConstantPool + index, &lengthBigEndian, 2);
-	index += 2;
-	memcpy(g_ArrayConstantPool + index, szStringa, length);
-	index += length;
-
-	strcpy(szStringa, "()Ljava/io/Console;");
-	length = strlen(szStringa);
-	lengthBigEndian = length;
-	g_ArrayConstantPool[index++] = tag;
-	if ( !isBigEndian() )
-	{
-		ARRAY_TO_U2(buff, lengthBigEndian);
-	}
-	memcpy(g_ArrayConstantPool + index, &lengthBigEndian, 2);
-	index += 2;
-	memcpy(g_ArrayConstantPool + index, szStringa, length);
-	index += length;
-
-
-	tag = CONSTANT_NameAndType;
-	name_index = 52;
-	descriptor_index = 53;
-	if ( !isBigEndian() )
-	{
-		ARRAY_TO_U2(buff, name_index);
-		ARRAY_TO_U2(buff, descriptor_index);
-	}
-	g_ArrayConstantPool[index++] = tag;
-	memcpy(g_ArrayConstantPool + index, &name_index, 2);
-	index += 2;
-	memcpy(g_ArrayConstantPool + index, &descriptor_index, 2);
-	index += 2;
-
-	tag = CONSTANT_Utf8;
-	strcpy(szStringa, "readLine");
-	length = strlen(szStringa);
-	lengthBigEndian = length;
-	g_ArrayConstantPool[index++] = tag;
-	if ( !isBigEndian() )
-	{
-		ARRAY_TO_U2(buff, lengthBigEndian);
-	}
-	memcpy(g_ArrayConstantPool + index, &lengthBigEndian, 2);
-	index += 2;
-	memcpy(g_ArrayConstantPool + index, szStringa, length);
-	index += length;
-
-	strcpy(szStringa, "()Ljava/lang/String;");
-	length = strlen(szStringa);
-	lengthBigEndian = length;
-	g_ArrayConstantPool[index++] = tag;
-	if ( !isBigEndian() )
-	{
-		ARRAY_TO_U2(buff, lengthBigEndian);
-	}
-	memcpy(g_ArrayConstantPool + index, &lengthBigEndian, 2);
-	index += 2;
-	memcpy(g_ArrayConstantPool + index, szStringa, length);
-	index += length;
-
-
-	tag = CONSTANT_NameAndType;
-	name_index = 55;
-	descriptor_index = 56;
-	if ( !isBigEndian() )
-	{
-		ARRAY_TO_U2(buff, name_index);
-		ARRAY_TO_U2(buff, descriptor_index);
-	}
-	g_ArrayConstantPool[index++] = tag;
-	memcpy(g_ArrayConstantPool + index, &name_index, 2);
-	index += 2;
-	memcpy(g_ArrayConstantPool + index, &descriptor_index, 2);
-	index += 2;
-
-	tag = CONSTANT_Utf8;
-	strcpy(szStringa, "parseInt");
-	length = strlen(szStringa);
-	lengthBigEndian = length;
-	g_ArrayConstantPool[index++] = tag;
-	if ( !isBigEndian() )
-	{
-		ARRAY_TO_U2(buff, lengthBigEndian);
-	}
-	memcpy(g_ArrayConstantPool + index, &lengthBigEndian, 2);
-	index += 2;
-	memcpy(g_ArrayConstantPool + index, szStringa, length);
-	index += length;
-
-	strcpy(szStringa, "(Ljava/lang/String;)I");
-	length = strlen(szStringa);
-	lengthBigEndian = length;
-	g_ArrayConstantPool[index++] = tag;
-	if ( !isBigEndian() )
-	{
-		ARRAY_TO_U2(buff, lengthBigEndian);
-	}
-	memcpy(g_ArrayConstantPool + index, &lengthBigEndian, 2);
-	index += 2;
-	memcpy(g_ArrayConstantPool + index, szStringa, length);
-	index += length;
-
-
-	tag = CONSTANT_NameAndType;
-	name_index = 58;
-	descriptor_index = 59;
-	if ( !isBigEndian() )
-	{
-		ARRAY_TO_U2(buff, name_index);
-		ARRAY_TO_U2(buff, descriptor_index);
-	}
-	g_ArrayConstantPool[index++] = tag;
-	memcpy(g_ArrayConstantPool + index, &name_index, 2);
-	index += 2;
-	memcpy(g_ArrayConstantPool + index, &descriptor_index, 2);
-	index += 2;
-
-	tag = CONSTANT_Utf8;
-	strcpy(szStringa, "parseDouble");
-	length = strlen(szStringa);
-	lengthBigEndian = length;
-	g_ArrayConstantPool[index++] = tag;
-	if ( !isBigEndian() )
-	{
-		ARRAY_TO_U2(buff, lengthBigEndian);
-	}
-	memcpy(g_ArrayConstantPool + index, &lengthBigEndian, 2);
-	index += 2;
-	memcpy(g_ArrayConstantPool + index, szStringa, length);
-	index += length;
-
-	strcpy(szStringa, "(Ljava/lang/String;)D");
-	length = strlen(szStringa);
-	lengthBigEndian = length;
-	g_ArrayConstantPool[index++] = tag;
-	if ( !isBigEndian() )
-	{
-		ARRAY_TO_U2(buff, lengthBigEndian);
-	}
-	memcpy(g_ArrayConstantPool + index, &lengthBigEndian, 2);
-	index += 2;
-	memcpy(g_ArrayConstantPool + index, szStringa, length);
-	index += length;
-
-
-
-	//---------------------- Aggiunti in seguito --------------------
-
-	tag = CONSTANT_Methodref;
-	class_index = 4;
-	name_and_type_index = 61;
-	if ( !isBigEndian() )
-	{
-		ARRAY_TO_U2(buff, class_index);
-		ARRAY_TO_U2(buff, name_and_type_index);
-	}
-	g_ArrayConstantPool[index++] = tag;
-	memcpy(g_ArrayConstantPool + index, &class_index, 2);
-	index += 2;
-	memcpy(g_ArrayConstantPool + index, &name_and_type_index, 2);
-	index += 2;
-
-	tag = CONSTANT_NameAndType;
-	name_index = 46;
-	descriptor_index = 62;
-	if ( !isBigEndian() )
-	{
-		ARRAY_TO_U2(buff, name_index);
-		ARRAY_TO_U2(buff, descriptor_index);
-	}
-	g_ArrayConstantPool[index++] = tag;
-	memcpy(g_ArrayConstantPool + index, &name_index, 2);
-	index += 2;
-	memcpy(g_ArrayConstantPool + index, &descriptor_index, 2);
-	index += 2;
-
-	tag = CONSTANT_Utf8;
-	strcpy(szStringa, "(I)V");
-	length = strlen(szStringa);
-	lengthBigEndian = length;
-	g_ArrayConstantPool[index++] = tag;
-	if ( !isBigEndian() )
-	{
-		ARRAY_TO_U2(buff, lengthBigEndian);
-	}
-	memcpy(g_ArrayConstantPool + index, &lengthBigEndian, 2);
-	index += 2;
-	memcpy(g_ArrayConstantPool + index, szStringa, length);
-	index += length;
-
-
-	tag = CONSTANT_Methodref;
-	class_index = 4;
-	name_and_type_index = 64;
-	if ( !isBigEndian() )
-	{
-		ARRAY_TO_U2(buff, class_index);
-		ARRAY_TO_U2(buff, name_and_type_index);
-	}
-	g_ArrayConstantPool[index++] = tag;
-	memcpy(g_ArrayConstantPool + index, &class_index, 2);
-	index += 2;
-	memcpy(g_ArrayConstantPool + index, &name_and_type_index, 2);
-	index += 2;
-
-	tag = CONSTANT_NameAndType;
-	name_index = 46;
-	descriptor_index = 65;
-	if ( !isBigEndian() )
-	{
-		ARRAY_TO_U2(buff, name_index);
-		ARRAY_TO_U2(buff, descriptor_index);
-	}
-	g_ArrayConstantPool[index++] = tag;
-	memcpy(g_ArrayConstantPool + index, &name_index, 2);
-	index += 2;
-	memcpy(g_ArrayConstantPool + index, &descriptor_index, 2);
-	index += 2;
-
-	tag = CONSTANT_Utf8;
-	strcpy(szStringa, "(D)V");
-	length = strlen(szStringa);
-	lengthBigEndian = length;
-	g_ArrayConstantPool[index++] = tag;
-	if ( !isBigEndian() )
-	{
-		ARRAY_TO_U2(buff, lengthBigEndian);
-	}
-	memcpy(g_ArrayConstantPool + index, &lengthBigEndian, 2);
-	index += 2;
-	memcpy(g_ArrayConstantPool + index, szStringa, length);
-	index += length;
-
-
-	tag = CONSTANT_Methodref;
-	class_index = 4;
-	name_and_type_index = 67;
-	if ( !isBigEndian() )
-	{
-		ARRAY_TO_U2(buff, class_index);
-		ARRAY_TO_U2(buff, name_and_type_index);
-	}
-	g_ArrayConstantPool[index++] = tag;
-	memcpy(g_ArrayConstantPool + index, &class_index, 2);
-	index += 2;
-	memcpy(g_ArrayConstantPool + index, &name_and_type_index, 2);
-	index += 2;
-
-	tag = CONSTANT_NameAndType;
-	name_index = 46;
-	descriptor_index = 68;
-	if ( !isBigEndian() )
-	{
-		ARRAY_TO_U2(buff, name_index);
-		ARRAY_TO_U2(buff, descriptor_index);
-	}
-	g_ArrayConstantPool[index++] = tag;
-	memcpy(g_ArrayConstantPool + index, &name_index, 2);
-	index += 2;
-	memcpy(g_ArrayConstantPool + index, &descriptor_index, 2);
-	index += 2;
-
-	tag = CONSTANT_Utf8;
-	strcpy(szStringa, "(Z)V");
-	length = strlen(szStringa);
-	lengthBigEndian = length;
-	g_ArrayConstantPool[index++] = tag;
-	if ( !isBigEndian() )
-	{
-		ARRAY_TO_U2(buff, lengthBigEndian);
-	}
-	memcpy(g_ArrayConstantPool + index, &lengthBigEndian, 2);
-	index += 2;
-	memcpy(g_ArrayConstantPool + index, szStringa, length);
-	index += length;
+	index = jvmWriteCpTwoU2(index, CONSTANT_Fieldref, 3, 33);
+
+	index = jvmWriteCpTwoU2(index, CONSTANT_Methodref, 2, 36);
+	index = jvmWriteCpTwoU2(index, CONSTANT_Methodref, 6, 36);
+	index = jvmWriteCpTwoU2(index, CONSTANT_Methodref, 6, 39);
+	index = jvmWriteCpTwoU2(index, CONSTANT_Methodref, 6, 42);
+	index = jvmWriteCpTwoU2(index, CONSTANT_Methodref, 4, 45);
+	index = jvmWriteCpTwoU2(index, CONSTANT_Methodref, 3, 48);
+	index = jvmWriteCpTwoU2(index, CONSTANT_Methodref, 5, 51);
+	index = jvmWriteCpTwoU2(index, CONSTANT_Methodref, 7, 54);
+	index = jvmWriteCpTwoU2(index, CONSTANT_Methodref, 8, 57);
+
+	index = jvmWriteCpUtf8(index, "Code");
+	index = jvmWriteCpUtf8(index, "LineNumberTable");
+	index = jvmWriteCpUtf8(index, "main");
+	index = jvmWriteCpUtf8(index, "([Ljava/lang/String;)V");
+	index = jvmWriteCpUtf8(index, "SourceFile");
+	index = jvmWriteCpUtf8(index, szSourceFile);
+	index = jvmWriteCpUtf8(index, szClassName);
+	index = jvmWriteCpUtf8(index, "java/lang/Object");
+	index = jvmWriteCpUtf8(index, "java/lang/System");
+	index = jvmWriteCpUtf8(index, "java/io/PrintStream");
+	index = jvmWriteCpUtf8(index, "java/io/Console");
+	index = jvmWriteCpUtf8(index, "java/lang/StringBuilder");
+	index = jvmWriteCpUtf8(index, "java/lang/Integer");
+	index = jvmWriteCpUtf8(index, "java/lang/Double");
+
+	index = jvmWriteCpTwoU2(index, CONSTANT_NameAndType, 34, 35);
+	index = jvmWriteCpUtf8(index, "out");
+	index = jvmWriteCpUtf8(index, "Ljava/io/PrintStream;");
+
+	index = jvmWriteCpTwoU2(index, CONSTANT_NameAndType, 37, 38);
+	index = jvmWriteCpUtf8(index, "<init>");
+	index = jvmWriteCpUtf8(index, "()V");
+
+	index = jvmWriteCpTwoU2(index, CONSTANT_NameAndType, 40, 41);
+	index = jvmWriteCpUtf8(index, "append");
+	index = jvmWriteCpUtf8(index, "(Ljava/lang/String;)Ljava/lang/StringBuilder;");
+
+	index = jvmWriteCpTwoU2(index, CONSTANT_NameAndType, 43, 44);
+	index = jvmWriteCpUtf8(index, "toString");
+	index = jvmWriteCpUtf8(index, "()Ljava/lang/String;");
+
+	index = jvmWriteCpTwoU2(index, CONSTANT_NameAndType, 46, 47);
+	index = jvmWriteCpUtf8(index, "println");
+	index = jvmWriteCpUtf8(index, "(Ljava/lang/String;)V");
+
+	index = jvmWriteCpTwoU2(index, CONSTANT_NameAndType, 49, 50);
+	index = jvmWriteCpUtf8(index, "console");
+	index = jvmWriteCpUtf8(index, "()Ljava/io/Console;");
+
+	index = jvmWriteCpTwoU2(index, CONSTANT_NameAndType, 52, 53);
+	index = jvmWriteCpUtf8(index, "readLine");
+	index = jvmWriteCpUtf8(index, "()Ljava/lang/String;");
+
+	index = jvmWriteCpTwoU2(index, CONSTANT_NameAndType, 55, 56);
+	index = jvmWriteCpUtf8(index, "parseInt");
+	index = jvmWriteCpUtf8(index, "(Ljava/lang/String;)I");
+
+	index = jvmWriteCpTwoU2(index, CONSTANT_NameAndType, 58, 59);
+	index = jvmWriteCpUtf8(index, "parseDouble");
+	index = jvmWriteCpUtf8(index, "(Ljava/lang/String;)D");
+
+	index = jvmWriteCpTwoU2(index, CONSTANT_Methodref, 4, 61);
+	index = jvmWriteCpTwoU2(index, CONSTANT_NameAndType, 46, 62);
+	index = jvmWriteCpUtf8(index, "(I)V");
+
+	index = jvmWriteCpTwoU2(index, CONSTANT_Methodref, 4, 64);
+	index = jvmWriteCpTwoU2(index, CONSTANT_NameAndType, 46, 65);
+	index = jvmWriteCpUtf8(index, "(D)V");
+
+	index = jvmWriteCpTwoU2(index, CONSTANT_Methodref, 4, 67);
+	index = jvmWriteCpTwoU2(index, CONSTANT_NameAndType, 46, 68);
+	index = jvmWriteCpUtf8(index, "(Z)V");
 
 	return index;
 }
 
-
-/*
-	tag = CONSTANT_Class;
-	for ( k = 25; k < 33; k++)
-	{
-		g_ArrayConstantPool[index++] = tag;
-		name_index = k;
-		if ( !isBigEndian() )
-		{
-			ARRAY_TO_U2(buff, name_index);
-		}
-		memcpy(g_ArrayConstantPool + index, &name_index, 2);
-		index += 2;
-	}
-*/
-
 int jvmAddArrayClass(int type, int sizes, int index)
 {
 	char szClassName[512];
-	U1 tag;
-	U2 string_index;
-	U2 length;
-	U2 lengthBigEndian;
-
-	U1 fb[8]; // Necessario per usare le macro;
+	U1 tag = CONSTANT_Class;
+	U2 string_index = (U2)(g_ConstantPoolCount + 2);
+	U1 fb[8];
 	BYTE *buff;
-
 	int k;
 
-	tag = CONSTANT_Class;
 	g_ArrayConstantPool[index++] = tag;
-	string_index = g_ConstantPoolCount + 2;
-	if ( !isBigEndian() )
-	{
+	if (!isBigEndian()) {
 		ARRAY_TO_U2(buff, string_index);
 	}
 	memcpy(g_ArrayConstantPool + index, &string_index, 2);
 	index += 2;
 
-	tag = CONSTANT_Utf8;
 	strcpy(szClassName, "[");
-	for ( k = 1; k < sizes; k++ )
-	{
+	for (k = 1; k < sizes; k++) {
 		strcat(szClassName, "[");
 	}
-	if ( type == T_INTEGER )
-		strcat(szClassName, "I");
-	if ( type == T_REAL )
-		strcat(szClassName, "D");
-	if ( type == T_BOOLEAN )
-		strcat(szClassName, "Z");
-	if ( type == T_STRING )
-		strcat(szClassName, "Ljava/lang/String;");
-	length = strlen(szClassName);
-	lengthBigEndian = length;
-	g_ArrayConstantPool[index++] = tag;
-	if ( !isBigEndian() )
-	{
-		ARRAY_TO_U2(buff, lengthBigEndian);
-	}
-	memcpy(g_ArrayConstantPool + index, &lengthBigEndian, 2);
-	index += 2;
-	memcpy(g_ArrayConstantPool + index, szClassName, length);
-	index += length;
+	if (type == T_INTEGER)      strcat(szClassName, "I");
+	else if (type == T_REAL)    strcat(szClassName, "D");
+	else if (type == T_BOOLEAN) strcat(szClassName, "Z");
+	else if (type == T_STRING)  strcat(szClassName, "Ljava/lang/String;");
 
+	index = jvmWriteCpUtf8(index, szClassName);
 	g_ConstantPoolCount += 2;
 
 	return index;
 }
 
-
-int jvmAddStringConstant(char *sz, int index)
+int jvmAddClassConstant(const char *szClassName, int index)
 {
-	U1 tag;
-	U2 string_index;
-	U2 length;
-	U2 lengthBigEndian;
-
-	U1 fb[8]; // Necessario per usare le macro;
+	U1 tag = CONSTANT_Class;
+	U2 string_index = (U2)(g_ConstantPoolCount + 2);
+	U1 fb[8];
 	BYTE *buff;
 
-	tag = CONSTANT_String;
 	g_ArrayConstantPool[index++] = tag;
-	string_index = g_ConstantPoolCount + 2;
-	if ( !isBigEndian() )
-	{
+	if (!isBigEndian()) {
 		ARRAY_TO_U2(buff, string_index);
 	}
 	memcpy(g_ArrayConstantPool + index, &string_index, 2);
 	index += 2;
 
-	tag = CONSTANT_Utf8;
-	length = strlen(sz);
-	lengthBigEndian = length;
-	g_ArrayConstantPool[index++] = tag;
-	if ( !isBigEndian() )
-	{
-		ARRAY_TO_U2(buff, lengthBigEndian);
-	}
-	memcpy(g_ArrayConstantPool + index, &lengthBigEndian, 2);
-	index += 2;
-	memcpy(g_ArrayConstantPool + index, sz, length);
-	index += length;
+	index = jvmWriteCpUtf8(index, szClassName);
+	g_ConstantPoolCount += 2;
 
+	return index;
+}
+
+int jvmAddStringConstant(char *sz, int index)
+{
+	U1 tag = CONSTANT_String;
+	U2 string_index = (U2)(g_ConstantPoolCount + 2);
+	U1 fb[8];
+	BYTE *buff;
+
+	g_ArrayConstantPool[index++] = tag;
+	if (!isBigEndian()) {
+		ARRAY_TO_U2(buff, string_index);
+	}
+	memcpy(g_ArrayConstantPool + index, &string_index, 2);
+	index += 2;
+
+	index = jvmWriteCpUtf8(index, sz);
 	g_ConstantPoolCount += 2;
 
 	return index;
@@ -1217,16 +475,13 @@ int jvmAddStringConstant(char *sz, int index)
 
 int jvmAddIntegerConstant(int c, int index)
 {
-	U1 tag;
+	U1 tag = CONSTANT_Integer;
 	U4 bytes = (U4)c;
-
-	U1 fb[8]; // Necessario per usare le macro;
+	U1 fb[8];
 	BYTE *buff;
 
-	tag = CONSTANT_Integer;
 	g_ArrayConstantPool[index++] = tag;
-	if ( !isBigEndian() )
-	{
+	if (!isBigEndian()) {
 		ARRAY_TO_U4(buff, bytes);
 	}
 	memcpy(g_ArrayConstantPool + index, &bytes, 4);
@@ -1239,23 +494,16 @@ int jvmAddIntegerConstant(int c, int index)
 
 int jvmAddRealConstant(double c, int index)
 {
-	U1 tag;
+	U1 tag = CONSTANT_Double;
 	F8 bytes = (F8)c;
 
-	//U1 fb[8]; // Necessario per usare le macro;
-	//BYTE *buff;
-
-	tag = CONSTANT_Double;
 	g_ArrayConstantPool[index++] = tag;
-	if ( !isBigEndian() )
-	{
-		/* ARRAY_TO_F8(buff, bytes); */
+	if (!isBigEndian()) {
 		SwapDouble(c, &bytes);
 	}
 	memcpy(g_ArrayConstantPool + index, &bytes, 8);
 	index += 8;
 
-	//g_ConstantPoolCount++;
 	g_ConstantPoolCount += 2;
 
 	return index;
@@ -1264,20 +512,16 @@ int jvmAddRealConstant(double c, int index)
 void jvmWriteInfo(FILE *fp)
 {
 	U2 access_flags = ACC_SUPER;
-    U2 this_class = 1;
-    U2 super_class = 2;
-    U2 interfaces_count = 0;
-    //U2 interfaces[interfaces_count];
-    U2 fields_count = 0;
-    //field_info fields[fields_count];
-    U2 methods_count = 2;
+	U2 this_class = 1;
+	U2 super_class = 2;
+	U2 interfaces_count = 0;
+	U2 fields_count = 0;
+	U2 methods_count = 2;
 
-	//unsigned char *buff;
 	BYTE *buff;
-	U1 fb[8]; // Necessario per usare le macro;
+	U1 fb[8];
 
-	if ( !isBigEndian() )
-	{
+	if (!isBigEndian()) {
 		ARRAY_TO_U2(buff, access_flags);
 		ARRAY_TO_U2(buff, this_class);
 		ARRAY_TO_U2(buff, super_class);
@@ -1298,44 +542,21 @@ void jvmWriteInitMethod(FILE *fp)
 {
 	U1 bytecode;
 	U2 param;
-
 	U2 access_flags = 0;
-
-    //U2 name_index = 5;
-    //U2 descriptor_index = 6;
-    U2 name_index = 37;
-    U2 descriptor_index = 38;
-
-    U2 attributes_count = 1;
-    //attribute_info attributes[attributes_count];
-
-	//U2 attribute_name_index = 7;
+	U2 name_index = 37;
+	U2 descriptor_index = 38;
+	U2 attributes_count = 1;
 	U2 attribute_name_index = 19;
+	U4 attribute_length = 17;
+	U2 max_stack = 1;
+	U2 max_locals = 1;
+	U4 code_length = 5;
+	U2 exception_table_length = 0;
 
-
-    //U4 attribute_length = 29;
-    U4 attribute_length = 17;
-    U2 max_stack = 1;
-    U2 max_locals = 1;
-    U4 code_length = 5;
-    //U1 code[code_length];
-    U2 exception_table_length = 0;
-	/*
-    {    	u2 start_pc;
-          	u2 end_pc;
-         	u2  handler_pc;
-          	u2  catch_type;
-    }	exception_table[exception_table_length];
-	*/
-    //U2 attributes_count;
-    //attribute_info attributes[attributes_count];
-
-	//unsigned char *buff;
 	BYTE *buff;
-	U1 fb[8]; // Necessario per usare le macro;
+	U1 fb[8];
 
-	if ( !isBigEndian() )
-	{
+	if (!isBigEndian()) {
 		ARRAY_TO_U2(buff, access_flags);
 		ARRAY_TO_U2(buff, name_index);
 		ARRAY_TO_U2(buff, descriptor_index);
@@ -1363,10 +584,8 @@ void jvmWriteInitMethod(FILE *fp)
 	bytecode = jvm_invokespecial;
 	fwrite(&bytecode, sizeof(U1), 1, fp);
 
-	//param = 3; //Method java/lang/Object."<init>":()V
-	param = 10; //Method java/lang/Object."<init>":()V
-	if ( !isBigEndian() )
-	{
+	param = 10; // Method java/lang/Object."<init>":()V
+	if (!isBigEndian()) {
 		ARRAY_TO_U2(buff, param);
 	}
 	fwrite(&param, sizeof(U2), 1, fp);
@@ -1374,17 +593,14 @@ void jvmWriteInitMethod(FILE *fp)
 	bytecode = jvm_return;
 	fwrite(&bytecode, sizeof(U1), 1, fp);
 
-
 	exception_table_length = 0;
-	if ( !isBigEndian() )
-	{
+	if (!isBigEndian()) {
 		ARRAY_TO_U2(buff, exception_table_length);
 	}
 	fwrite(&exception_table_length, sizeof(U2), 1, fp);
 
 	attributes_count = 0;
-	if ( !isBigEndian() )
-	{
+	if (!isBigEndian()) {
 		ARRAY_TO_U2(buff, attributes_count);
 	}
 	fwrite(&attributes_count, sizeof(U2), 1, fp);
@@ -1396,42 +612,18 @@ void jvmWriteMainMethod(FILE *fp, nodeType *pTree, jvmHashTable **pHT)
 	(void)pHT;
 
 	U2 access_flags = ACC_PUBLIC | ACC_STATIC;
-
-    //U2 name_index = 8;
-    //U2 descriptor_index = 9;
-    U2 name_index = 21;
-    U2 descriptor_index = 22;
-
-    U2 attributes_count = 1;
-    //attribute_info attributes[attributes_count];
-
-	//U2 attribute_name_index = 7;
+	U2 name_index = 21;
+	U2 descriptor_index = 22;
+	U2 attributes_count = 1;
 	U2 attribute_name_index = 19;
+	U4 attribute_length;
+	U4 code_lengthBigEndian;
+	U2 exception_table_length = 0;
 
-    //U4 attribute_length = 37;
-    U4 attribute_length;
-    //U2 max_stack;
-    //U2 max_locals;
-    //U4 code_length;
-    U4 code_lengthBigEndian;
-    //U1 code[code_length];
-    U2 exception_table_length = 0;
-	/*
-    {    	u2 start_pc;
-          	u2 end_pc;
-         	u2  handler_pc;
-          	u2  catch_type;
-    }	exception_table[exception_table_length];
-	*/
-    //U2 attributes_count;
-    //attribute_info attributes[attributes_count];
-
-	//unsigned char *buff;
 	BYTE *buff;
-	U1 fb[8]; // Necessario per usare le macro;
+	U1 fb[8];
 
-	if ( !isBigEndian() )
-	{
+	if (!isBigEndian()) {
 		ARRAY_TO_U2(buff, access_flags);
 		ARRAY_TO_U2(buff, name_index);
 		ARRAY_TO_U2(buff, descriptor_index);
@@ -1445,16 +637,10 @@ void jvmWriteMainMethod(FILE *fp, nodeType *pTree, jvmHashTable **pHT)
 	fwrite(&attributes_count, sizeof(U2), 1, fp);
 	fwrite(&attribute_name_index, sizeof(U2), 1, fp);
 
-	//MakeCodeArray_PrintDemo(&max_stack, &max_locals, &code_length);
-	//MakeBytecodeMain(pTree, pHT);
-
 	code_lengthBigEndian = g_code_length;
+	attribute_length = 12 + g_code_length;
 
-	attribute_length = 12;
-	attribute_length += g_code_length;
-
-	if ( !isBigEndian() )
-	{
+	if (!isBigEndian()) {
 		ARRAY_TO_U4(buff, attribute_length);
 		ARRAY_TO_U2(buff, g_max_stack);
 		ARRAY_TO_U2(buff, g_max_locals);
@@ -1469,15 +655,13 @@ void jvmWriteMainMethod(FILE *fp, nodeType *pTree, jvmHashTable **pHT)
 	fwrite(g_ArrayCode, g_code_length, 1, fp);
 
 	exception_table_length = 0;
-	if ( !isBigEndian() )
-	{
+	if (!isBigEndian()) {
 		ARRAY_TO_U2(buff, exception_table_length);
 	}
 	fwrite(&exception_table_length, sizeof(U2), 1, fp);
 
 	attributes_count = 0;
-	if ( !isBigEndian() )
-	{
+	if (!isBigEndian()) {
 		ARRAY_TO_U2(buff, attributes_count);
 	}
 	fwrite(&attributes_count, sizeof(U2), 1, fp);
@@ -1487,258 +671,210 @@ void MakeOutputFileName(char *szInputFileName, char *szOutputFileName, char *szF
 {
 	int k;
 	int dotIndex;
-	int len = strlen(szInputFileName);
+	int len = (int)strlen(szInputFileName);
 
 	strcpy(szOutputFileName, "");
 	strcpy(szFileNameWithoutExt, "");
 	strcpy(szExt, "");
 
 	k = len - 1;
-
-	while ( k >= 0 )
-	{
-		if ( szInputFileName[k] == '.' )
+	while (k >= 0) {
+		if (szInputFileName[k] == '.')
 			break;
 		--k;
 	}
 	k++;
 
-	if ( k > 0 )
-	{
-		memcpy(szExt, szInputFileName + k, len - k);
+	if (k > 0) {
+		memcpy(szExt, szInputFileName + k, (size_t)(len - k));
 		szExt[len - k] = '\0';
-
 		k -= 2;
 		dotIndex = k + 1;
-	}
-	else
-	{
+	} else {
 		dotIndex = len;
 	}
 
-	while ( k >= 0 )
-	{
-		if ( !isalnum(szInputFileName[k]) && szInputFileName[k] != '_' )
+	while (k >= 0) {
+		if (!isalnum((unsigned char)szInputFileName[k]) && szInputFileName[k] != '_')
 			break;
 		--k;
 	}
 	k++;
 
-	memcpy(szFileNameWithoutExt, szInputFileName + k, dotIndex - k);
+	memcpy(szFileNameWithoutExt, szInputFileName + k, (size_t)(dotIndex - k));
 	szFileNameWithoutExt[dotIndex - k] = '\0';
 
 	strcpy(szOutputFileName, szFileNameWithoutExt);
 	strcat(szOutputFileName, ".class");
 }
 
+/* ---------------- Helper per emissione bytecode ---------------- */
+
+static void jvmPushInt(int val, jvmHashTable **pHT)
+{
+	if (val >= -1 && val <= 5) {
+		static const U1 iconstOps[7] = {
+			jvm_iconst_m1, jvm_iconst_0, jvm_iconst_1,
+			jvm_iconst_2,  jvm_iconst_3, jvm_iconst_4, jvm_iconst_5
+		};
+		jvmEmitU1(iconstOps[val + 1], +1);
+	} else if (val >= -128 && val <= 127) {
+		jvmEmitU1(jvm_bipush, +1);
+		jvmEmitU1((U1)(S1)val, 0);
+	} else if (val >= -32768 && val <= 32767) {
+		jvmEmitU1(jvm_sipush, +1);
+		jvmEmitS2((S2)val);
+	} else {
+		char key[64];
+		unsigned short idx = 0;
+		sprintf(key, "I:%d", val);
+		if (!jvmhtFind(pHT, key, &idx)) {
+			idx = (unsigned short)(g_ConstantPoolCount + 1);
+			jvmhtInsert(pHT, key, idx);
+			g_IndexConstantPool = jvmAddIntegerConstant(val, g_IndexConstantPool);
+		}
+		if (idx <= 255) {
+			jvmEmitU1(jvm_ldc, +1);
+			jvmEmitU1((U1)idx, 0);
+		} else {
+			jvmEmitU1(jvm_ldc_w, +1);
+			jvmEmitU2((U2)idx);
+		}
+	}
+}
+
+static void jvmPushDouble(double val, jvmHashTable **pHT)
+{
+	if (val == 0.0) {
+		jvmEmitU1(jvm_dconst_0, +2);
+	} else if (val == 1.0) {
+		jvmEmitU1(jvm_dconst_1, +2);
+	} else {
+		char key[128];
+		unsigned short idx = 0;
+		sprintf(key, "D:%.17g", val);
+		if (!jvmhtFind(pHT, key, &idx)) {
+			idx = (unsigned short)(g_ConstantPoolCount + 1);
+			jvmhtInsert(pHT, key, idx);
+			g_IndexConstantPool = jvmAddRealConstant(val, g_IndexConstantPool);
+		}
+		jvmEmitU1(jvm_ldc2_w, +2);
+		jvmEmitU2((U2)idx);
+	}
+}
+
+static void jvmPushString(const char *sz, jvmHashTable **pHT)
+{
+	size_t len = strlen(sz);
+	char *key = (char *)malloc(len + 4);
+	unsigned short idx = 0;
+
+	if (!key) {
+		printf("Errore JVM: memoria insufficiente.\n");
+		return;
+	}
+	sprintf(key, "S:%s", sz);
+	if (!jvmhtFind(pHT, key, &idx)) {
+		idx = (unsigned short)(g_ConstantPoolCount + 1);
+		jvmhtInsert(pHT, key, idx);
+		g_IndexConstantPool = jvmAddStringConstant((char *)sz, g_IndexConstantPool);
+	}
+	free(key);
+
+	if (idx <= 255) {
+		jvmEmitU1(jvm_ldc, +1);
+		jvmEmitU1((U1)idx, 0);
+	} else {
+		jvmEmitU1(jvm_ldc_w, +1);
+		jvmEmitU2((U2)idx);
+	}
+}
+
+static void jvmEmitLoadLocal(int slot, enumTipo1 t1)
+{
+	if (t1 == T_INTEGER || t1 == T_BOOLEAN) {
+		if (slot >= 0 && slot <= 3) jvmEmitU1((U1)(jvm_iload_0 + slot), +1);
+		else { jvmEmitU1(jvm_iload, +1); jvmEmitU1((U1)slot, 0); }
+	} else if (t1 == T_REAL) {
+		if (slot >= 0 && slot <= 3) jvmEmitU1((U1)(jvm_dload_0 + slot), +2);
+		else { jvmEmitU1(jvm_dload, +2); jvmEmitU1((U1)slot, 0); }
+	} else { /* T_STRING o reference (array) */
+		if (slot >= 0 && slot <= 3) jvmEmitU1((U1)(jvm_aload_0 + slot), +1);
+		else { jvmEmitU1(jvm_aload, +1); jvmEmitU1((U1)slot, 0); }
+	}
+}
+
+static void jvmEmitStoreLocal(int slot, enumTipo1 t1)
+{
+	if (t1 == T_INTEGER || t1 == T_BOOLEAN) {
+		if (slot >= 0 && slot <= 3) jvmEmitU1((U1)(jvm_istore_0 + slot), -1);
+		else { jvmEmitU1(jvm_istore, -1); jvmEmitU1((U1)slot, 0); }
+	} else if (t1 == T_REAL) {
+		if (slot >= 0 && slot <= 3) jvmEmitU1((U1)(jvm_dstore_0 + slot), -2);
+		else { jvmEmitU1(jvm_dstore, -2); jvmEmitU1((U1)slot, 0); }
+	} else { /* T_STRING o reference (array) */
+		if (slot >= 0 && slot <= 3) jvmEmitU1((U1)(jvm_astore_0 + slot), -1);
+		else { jvmEmitU1(jvm_astore, -1); jvmEmitU1((U1)slot, 0); }
+	}
+}
+
+static void jvmEmitLoadArrayRef(int slot)
+{
+	if (slot >= 0 && slot <= 3) jvmEmitU1((U1)(jvm_aload_0 + slot), +1);
+	else { jvmEmitU1(jvm_aload, +1); jvmEmitU1((U1)slot, 0); }
+}
+
+static void jvmEmitStoreArrayRef(int slot)
+{
+	if (slot >= 0 && slot <= 3) jvmEmitU1((U1)(jvm_astore_0 + slot), -1);
+	else { jvmEmitU1(jvm_astore, -1); jvmEmitU1((U1)slot, 0); }
+}
+
+void jvmTypeCheck(int t1, int t2)
+{
+	if (t1 == t2)
+		return;
+
+	if ((t1 == T_INTEGER || t1 == T_BOOLEAN) && t2 == T_REAL) {
+		jvmEmitU1(jvm_d2i, -1);
+	} else if (t1 == T_REAL && (t2 == T_INTEGER || t2 == T_BOOLEAN)) {
+		jvmEmitU1(jvm_i2d, +1);
+	}
+}
+
+/* Alloca ogni array come array 1D linearizzato di (sizes[0] * ... * sizes[n-1]) elementi,
+ * coerente con l'offset linearizzato prodotto da tac.c */
 void MakeBytecodeDeclArrayMain(jvmHashTable **pHT, HashTable *pDati)
 {
-	char szInt[128];
-	char szClassName[128];
 	int k;
-
-	U2 constClassIndex;
-	U2 constIntegerIndex;
-
-	U1 bytecode;
-	U1 paramU1;
-	U2 paramU2;
-
-	BYTE *buff;
-	U1 fb[8]; // Necessario per usare le macro;
-
+	int totalSize = 1;
 	HashTable *t = pDati;
 
-
-	for ( k = 0; k < t->Value.pArrayDef->countIndexes; k++ )
-	{
-		//************** INIZIO LOAD *******************
-
-		if ( t->Value.pArrayDef->sizes[k] >= -128 && t->Value.pArrayDef->sizes[k] <= 127 )
-		{
-			if ( t->Value.pArrayDef->sizes[k] >= -1 && t->Value.pArrayDef->sizes[k] <= 5 )
-			{
-				if ( t->Value.pArrayDef->sizes[k] == 0 )
-					bytecode = jvm_iconst_0;
-				else if ( t->Value.pArrayDef->sizes[k] == 1 )
-					bytecode = jvm_iconst_1;
-				else if ( t->Value.pArrayDef->sizes[k] == 2 )
-					bytecode = jvm_iconst_2;
-				else if ( t->Value.pArrayDef->sizes[k] == 3 )
-					bytecode = jvm_iconst_3;
-				else if ( t->Value.pArrayDef->sizes[k] == 4 )
-					bytecode = jvm_iconst_4;
-				else if ( t->Value.pArrayDef->sizes[k] == 5 )
-					bytecode = jvm_iconst_5;
-
-				memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-				g_max_stack++;
-				g_code_length++;
-				g_IndexBytecodeArray++;
-			}
-			else
-			{
-				bytecode = jvm_bipush;
-				memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-				g_max_stack++;
-				g_code_length++;
-				g_IndexBytecodeArray++;
-
-				paramU1 = (U1)t->Value.pArrayDef->sizes[k];
-				memcpy(g_ArrayCode + g_IndexBytecodeArray, &paramU1, 1);
-				g_code_length++;
-				g_IndexBytecodeArray++;
-			}
-		}
-		else if ( t->Value.pArrayDef->sizes[k] >= -32768 && t->Value.pArrayDef->sizes[k] <= 32767 )
-		{
-			bytecode = jvm_sipush;
-			memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-			g_max_stack++;
-			g_code_length++;
-			g_IndexBytecodeArray++;
-
-			paramU2 = (U2)t->Value.pArrayDef->sizes[k];
-			if ( !isBigEndian() )
-			{
-				ARRAY_TO_S2(buff, paramU2);
-			}
-			memcpy(g_ArrayCode + g_IndexBytecodeArray, &paramU2, 2);
-			g_code_length += 2;
-			g_IndexBytecodeArray += 2;
-		}
-		else
-		{
-			sprintf(szInt, "%d", t->Value.pArrayDef->sizes[k]);
-			if ( !jvmhtFind(pHT, szInt, (unsigned short*)&constIntegerIndex) )
-			{
-				constIntegerIndex = (unsigned char)(g_ConstantPoolCount + 1);
-				jvmhtInsert(pHT, szInt, constIntegerIndex);
-				g_IndexConstantPool = jvmAddIntegerConstant(t->Value.pArrayDef->sizes[k], g_IndexConstantPool);
-			}
-
-			bytecode = jvm_ldc;
-			memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-			g_max_stack++;
-			g_code_length++;
-			g_IndexBytecodeArray++;
-
-			paramU1 = constIntegerIndex;
-			memcpy(g_ArrayCode + g_IndexBytecodeArray, &paramU1, 1);
-			g_code_length++;
-			g_IndexBytecodeArray++;
-		}
+	for (k = 0; k < t->Value.pArrayDef->countIndexes; k++) {
+		totalSize *= t->Value.pArrayDef->sizes[k];
 	}
 
-	if ( t->Value.pArrayDef->countIndexes == 1 )
-	{
-		bytecode = jvm_newarray;
+	jvmPushInt(totalSize, pHT);
 
-		switch ( t->Tipo1 )
-		{
-		case T_INTEGER:
-			paramU1 = 10;
-			break;
-		case T_REAL:
-			paramU1 = 7;
-			break;
-		case T_BOOLEAN:
-			paramU1 = 4;
-			break;
-		case T_STRING:
-			paramU1 = 8; // byte
-			break;
+	if (t->Tipo1 == T_STRING) {
+		unsigned short strClassIdx = 0;
+		if (!jvmhtFind(pHT, "C:java/lang/String", &strClassIdx)) {
+			strClassIdx = (unsigned short)(g_ConstantPoolCount + 1);
+			jvmhtInsert(pHT, "C:java/lang/String", strClassIdx);
+			g_IndexConstantPool = jvmAddClassConstant("java/lang/String", g_IndexConstantPool);
 		}
-
-		memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-		g_max_stack++;
-		g_code_length++;
-		g_IndexBytecodeArray++;
-
-		memcpy(g_ArrayCode + g_IndexBytecodeArray, &paramU1, 1);
-		g_code_length++;
-		g_IndexBytecodeArray++;
-
-		//************** FINE LOAD *******************
-	}
-	else // Array Multidimensionale
-	{
-		bytecode = jvm_multianewarray;
-
-		memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-		g_max_stack++;
-		g_code_length++;
-		g_IndexBytecodeArray++;
-
-		//sprintf(szInt, "%d", t->Value.pArrayDef->sizes[k]);
-		strcpy(szClassName, "[");
-		for ( k = 1; k < t->Value.pArrayDef->countIndexes; k++ )
-		{
-			strcat(szClassName, "[");
-		}
-		if ( t->Tipo1 == T_INTEGER )
-			strcat(szClassName, "I");
-		if ( t->Tipo1 == T_REAL )
-			strcat(szClassName, "D");
-		if ( t->Tipo1 == T_BOOLEAN )
-			strcat(szClassName, "Z");
-		if ( t->Tipo1 == T_STRING )
-			strcat(szClassName, "Ljava/lang/String;");
-
-		if ( !jvmhtFind(pHT, szClassName, (unsigned short*)&constClassIndex) )
-		{
-			constClassIndex = (unsigned short)(g_ConstantPoolCount + 1);
-			jvmhtInsert(pHT, szClassName, constClassIndex);
-			g_IndexConstantPool = jvmAddArrayClass(t->Tipo1, t->Value.pArrayDef->countIndexes, g_IndexConstantPool);
-		}
-
-		paramU2 = constClassIndex;
-		if ( !isBigEndian() )
-		{
-			ARRAY_TO_U2(buff, paramU2);
-		}
-		memcpy(g_ArrayCode + g_IndexBytecodeArray, &paramU2, 2);
-		g_code_length += 2;
-		g_IndexBytecodeArray += 2;
-
-		paramU1 = (U1)t->Value.pArrayDef->countIndexes;
-		memcpy(g_ArrayCode + g_IndexBytecodeArray, &paramU1, 1);
-		g_code_length++;
-		g_IndexBytecodeArray++;
-
-		//************** FINE LOAD *******************
+		jvmEmitU1(jvm_anewarray, 0); /* pop count (+0 net) -> push arrayref */
+		jvmEmitU2((U2)strClassIdx);
+	} else {
+		U1 atype = 10;
+		if (t->Tipo1 == T_INTEGER)      atype = 10; /* T_INT */
+		else if (t->Tipo1 == T_REAL)    atype = 7;  /* T_DOUBLE */
+		else if (t->Tipo1 == T_BOOLEAN) atype = 4;  /* T_BOOLEAN */
+		jvmEmitU1(jvm_newarray, 0); /* pop count (+0 net) -> push arrayref */
+		jvmEmitU1(atype, 0);
 	}
 
-
-	//************** INIZIO STORE ****************
-	if (pDati->frameIndex >= 0 && pDati->frameIndex <= 3)
-	{
-		if ( (U1)pDati->frameIndex == 0 )
-			bytecode = jvm_astore_0;
-		else if ( (U1)pDati->frameIndex == 1 )
-			bytecode = jvm_astore_1;
-		else if ( (U1)pDati->frameIndex == 2 )
-			bytecode = jvm_astore_2;
-		else if ( (U1)pDati->frameIndex == 3 )
-			bytecode = jvm_astore_3;
-		memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-		g_max_stack--;
-		g_code_length++;
-		g_IndexBytecodeArray++;
-	}
-	else
-	{
-		bytecode = jvm_astore;
-		memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-		g_max_stack--;
-		g_code_length++;
-		g_IndexBytecodeArray++;
-		paramU1 = (U1)pDati->frameIndex;
-		memcpy(g_ArrayCode + g_IndexBytecodeArray, &paramU1, 1);
-		g_code_length++;
-		g_IndexBytecodeArray++;
-	}
-	//************** FINE STORE ***************
+	jvmEmitStoreArrayRef(pDati->frameIndex);
 }
 
 void MakeBytecodeDeclInitMain(jvmHashTable **pHT, Scope *pScope)
@@ -1746,300 +882,32 @@ void MakeBytecodeDeclInitMain(jvmHashTable **pHT, Scope *pScope)
 	int index;
 	HashTable *t;
 	HashTable **pHashTable;
-
 	HashTable Dati;
-
-	char szInt[128];
-	char szReal[128];
-
-	U2 constStringIndex;
-	U2 constIntegerIndex;
-	U2 constRealIndex;
-
-	U1 bytecode;
-	U1 paramU1;
-	U2 paramU2;
-	//U4 paramU4;
-	//U8 paramU8;
-
-	S1 paramS1;
-	S2 paramS2;
-	//S4 paramS4;
-	//S8 paramS8;
-
-	BYTE *buff;
-	U1 fb[8]; // Necessario per usare le macro;
-
 
 	pHashTable = pScope->stack[0];
 
-	for ( index = 0; index < HT_SIZE - 1; index++ )
-	{
+	for (index = 0; index < HT_SIZE; index++) {
 		t = pHashTable[index];
-		while ( t != NULL )
-		{
+		while (t != NULL) {
 			scopeFind(pScope, t->Key, &Dati);
 
-			if ( t->Tipo0 == T_SIMPLE && t->bInizializzato && t->bDecl )
-			{
-				//scopeFind(pScope, t->Key, &Dati);
-
-				//************** INIZIO LOAD *******************
-
-				switch ( t->Tipo1 )
-				{
+			if (t->Tipo0 == T_SIMPLE && t->bInizializzato && t->bDecl) {
+				switch (t->Tipo1) {
 				case T_INTEGER:
-					//printf("int %d ", t->Value.iVal);
-
-					if ( t->Value.iVal >= -128 && t->Value.iVal <= 127 )
-					{
-						if ( t->Value.iVal >= -1 && t->Value.iVal <= 5 )
-						{
-							if ( t->Value.iVal == -1 )
-								bytecode = jvm_iconst_m1;
-							else if ( t->Value.iVal == 0 )
-								bytecode = jvm_iconst_0;
-							else if ( t->Value.iVal == 1 )
-								bytecode = jvm_iconst_1;
-							else if ( t->Value.iVal == 2 )
-								bytecode = jvm_iconst_2;
-							else if ( t->Value.iVal == 3 )
-								bytecode = jvm_iconst_3;
-							else if ( t->Value.iVal == 4 )
-								bytecode = jvm_iconst_4;
-							else if ( t->Value.iVal == 5 )
-								bytecode = jvm_iconst_5;
-
-							memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-							g_max_stack++;
-							g_code_length++;
-							g_IndexBytecodeArray++;
-						}
-						else
-						{
-							bytecode = jvm_bipush;
-							memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-							g_max_stack++;
-							g_code_length++;
-							g_IndexBytecodeArray++;
-
-							paramS1 = (S1)t->Value.iVal;
-							memcpy(g_ArrayCode + g_IndexBytecodeArray, &paramS1, 1);
-							g_code_length++;
-							g_IndexBytecodeArray++;
-						}
-					}
-					else if ( t->Value.iVal >= -32768 && t->Value.iVal <= 32767 )
-					{
-						bytecode = jvm_sipush;
-						memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-						g_max_stack++;
-						g_code_length++;
-						g_IndexBytecodeArray++;
-
-						paramS2 = (S2)t->Value.iVal;
-						if ( !isBigEndian() )
-						{
-							ARRAY_TO_S2(buff, paramS2);
-						}
-						memcpy(g_ArrayCode + g_IndexBytecodeArray, &paramS2, 2);
-						g_code_length += 2;
-						g_IndexBytecodeArray += 2;
-					}
-					else
-					{
-						sprintf(szInt, "%d", t->Value.iVal);
-						if ( !jvmhtFind(pHT, szInt, (unsigned short*)&constIntegerIndex) )
-						{
-							constIntegerIndex = (unsigned char)(g_ConstantPoolCount + 1);
-							jvmhtInsert(pHT, szInt, constIntegerIndex);
-							g_IndexConstantPool = jvmAddIntegerConstant(t->Value.iVal, g_IndexConstantPool);
-						}
-
-						bytecode = jvm_ldc;
-						memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-						g_max_stack++;
-						g_code_length++;
-						g_IndexBytecodeArray++;
-
-						paramU1 = constIntegerIndex;
-						memcpy(g_ArrayCode + g_IndexBytecodeArray, &paramU1, 1);
-						g_code_length++;
-						g_IndexBytecodeArray++;
-					}
-
+					jvmPushInt(t->Value.iVal, pHT);
 					break;
 				case T_REAL:
-					//printf("real %lf ", t->Value.dblVal);
-
-					if ( t->Value.dblVal == 0.0 || t->Value.dblVal == 1.0 )
-					{
-						if ( t->Value.dblVal == 0.0 )
-							bytecode = jvm_dconst_0;
-						else if ( t->Value.dblVal == 1.0 )
-							bytecode = jvm_dconst_1;
-
-						memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-						//g_max_stack++;
-						g_max_stack += 2;
-						g_code_length++;
-						g_IndexBytecodeArray++;
-					}
-					else
-					{
-						sprintf(szReal, "%lf", t->Value.dblVal);
-						if ( !jvmhtFind(pHT, szReal, &constRealIndex) )
-						{
-							constRealIndex = (unsigned short)(g_ConstantPoolCount + 1);
-							jvmhtInsert(pHT, szReal, constRealIndex);
-							g_IndexConstantPool = jvmAddRealConstant(t->Value.dblVal, g_IndexConstantPool);
-						}
-
-						bytecode = jvm_ldc2_w;
-						memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-						//g_max_stack++;
-						g_max_stack += 2;
-						g_code_length++;
-						g_IndexBytecodeArray++;
-
-						paramU2 = constRealIndex;
-						if ( !isBigEndian() )
-						{
-							ARRAY_TO_U2(buff, paramU2);
-						}
-						memcpy(g_ArrayCode + g_IndexBytecodeArray, &paramU2, 2);
-						g_code_length += 2;
-						g_IndexBytecodeArray += 2;
-					}
-
+					jvmPushDouble(t->Value.dblVal, pHT);
 					break;
 				case T_BOOLEAN:
-					//if ( t->Value.bVal )
-					//	printf("bool true ");
-					//else
-					//	printf("bool false ");
-
-					//printf("\nLOAD BOOLEAN\n");
-					//printf("value  -> %s\n", t->Value.bVal ? "true" : "false");
-					//printf("value2 -> %s\n", t->Value.iVal ? "true" : "false");
-
-					if ( t->Value.bVal == 0 )
-					{
-						bytecode = jvm_iconst_0;
-						//printf("value -> false\n");
-					}
-					else if ( t->Value.bVal == 1 )
-					{
-						bytecode = jvm_iconst_1;
-						//printf("value -> true\n");
-					}
-
-					memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-					g_max_stack++;
-					g_code_length++;
-					g_IndexBytecodeArray++;
-
+					jvmPushInt(t->Value.bVal ? 1 : 0, pHT);
 					break;
 				case T_STRING:
-					//printf("string '%s' ", t->Value.strVal);
-
-					if ( !jvmhtFind(pHT, t->Value.strVal, (unsigned short*)&constStringIndex) )
-					{
-						constStringIndex = (unsigned char)(g_ConstantPoolCount + 1);
-						jvmhtInsert(pHT, t->Value.strVal, constStringIndex);
-						g_IndexConstantPool = jvmAddStringConstant(t->Value.strVal, g_IndexConstantPool);
-					}
-
-					bytecode = jvm_ldc;
-					memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-					g_max_stack++;
-					g_code_length++;
-					g_IndexBytecodeArray++;
-
-					paramU1 = constStringIndex;
-					memcpy(g_ArrayCode + g_IndexBytecodeArray, &paramU1, 1);
-					g_code_length++;
-					g_IndexBytecodeArray++;
-
+					jvmPushString(t->Value.strVal ? t->Value.strVal : "", pHT);
 					break;
 				}
-				//************** FINE LOAD *******************
-
-
-				//************** INIZIO STORE ****************
-				if (Dati.frameIndex >= 0 && Dati.frameIndex <= 3)
-				{
-					if ( (U1)Dati.frameIndex == 0 )
-					{
-						if ( Dati.Tipo1 == T_INTEGER || Dati.Tipo1 == T_BOOLEAN)
-							bytecode = jvm_istore_0;
-						else if ( Dati.Tipo1 == T_REAL )
-							bytecode = jvm_dstore_0;
-						else if ( Dati.Tipo1 == T_STRING )
-							bytecode = jvm_astore_0;
-					}
-					else if ( (U1)Dati.frameIndex == 1 )
-					{
-						if ( Dati.Tipo1 == T_INTEGER || Dati.Tipo1 == T_BOOLEAN)
-							bytecode = jvm_istore_1;
-						else if ( Dati.Tipo1 == T_REAL )
-							bytecode = jvm_dstore_1;
-						else if ( Dati.Tipo1 == T_STRING )
-							bytecode = jvm_astore_1;
-					}
-					else if ( (U1)Dati.frameIndex == 2 )
-					{
-						if ( Dati.Tipo1 == T_INTEGER || Dati.Tipo1 == T_BOOLEAN)
-							bytecode = jvm_istore_2;
-						else if ( Dati.Tipo1 == T_REAL )
-							bytecode = jvm_dstore_2;
-						else if ( Dati.Tipo1 == T_STRING )
-							bytecode = jvm_astore_2;
-					}
-					else if ( (U1)Dati.frameIndex == 3 )
-					{
-						if ( Dati.Tipo1 == T_INTEGER || Dati.Tipo1 == T_BOOLEAN)
-							bytecode = jvm_istore_3;
-						else if ( Dati.Tipo1 == T_REAL )
-							bytecode = jvm_dstore_3;
-						else if ( Dati.Tipo1 == T_STRING )
-							bytecode = jvm_astore_3;
-					}
-
-					memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-					if ( Dati.Tipo1 != T_REAL )
-						g_max_stack--;
-					else
-						g_max_stack -= 2;
-					g_code_length++;
-					g_IndexBytecodeArray++;
-				}
-				else
-				{
-					if ( Dati.Tipo1 == T_INTEGER || Dati.Tipo1 == T_BOOLEAN)
-						bytecode = jvm_istore;
-					else if ( Dati.Tipo1 == T_REAL )
-						bytecode = jvm_dstore;
-					else if ( Dati.Tipo1 == T_STRING )
-						bytecode = jvm_astore;
-					memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-					if ( Dati.Tipo1 != T_REAL )
-						g_max_stack--;
-					else
-						g_max_stack -= 2;
-					g_code_length++;
-					g_IndexBytecodeArray++;
-
-					paramU1 = (U1)Dati.frameIndex;
-					memcpy(g_ArrayCode + g_IndexBytecodeArray, &paramU1, 1);
-					g_code_length++;
-					g_IndexBytecodeArray++;
-				}
-
-				//************** FINE STORE ***************
-			}
-			else if ( t->Tipo0 == T_ARRAY )
-			{
+				jvmEmitStoreLocal(Dati.frameIndex, Dati.Tipo1);
+			} else if (t->Tipo0 == T_ARRAY) {
 				MakeBytecodeDeclArrayMain(pHT, &Dati);
 			}
 
@@ -2048,1620 +916,676 @@ void MakeBytecodeDeclInitMain(jvmHashTable **pHT, Scope *pScope)
 	}
 }
 
-void LoadArray(nodeType *p, jvmHashTable **pHT, Scope *pScope)
+/* ---------------- Traduzione TAC -> Bytecode JVM ---------------- */
+
+typedef struct {
+	char *name;
+	enumTipo1 type1;
+	int slot;
+} TempSlot;
+
+typedef struct {
+	TempSlot *items;
+	int count;
+	int capacity;
+} TempTable;
+
+typedef struct {
+	char *name;
+	int offset;
+} LabelPos;
+
+typedef struct {
+	int instrPos;
+	int operandPos;
+	char *labelName;
+} JumpFixup;
+
+static void tempTableInit(TempTable *tt)
 {
-	U1 bytecode;
-	U1 paramU1;
+	tt->items = NULL;
+	tt->count = 0;
+	tt->capacity = 0;
+}
 
-	int k;
+static void tempTableFree(TempTable *tt)
+{
+	int i;
+	for (i = 0; i < tt->count; i++)
+		free(tt->items[i].name);
+	free(tt->items);
+	tt->items = NULL;
+	tt->count = 0;
+	tt->capacity = 0;
+}
 
-	//if ( p->opr.op[0]->type0 == T_ARRAY )
-	if ( p->type0 == T_ARRAY )
-	{
-		HashTable Dati;
-		scopeFind(pScope, p->id.name, &Dati);
+static int tempTableFind(const TempTable *tt, const char *name)
+{
+	int i;
+	if (!name) return -1;
+	for (i = 0; i < tt->count; i++) {
+		if (strcmp(tt->items[i].name, name) == 0)
+			return i;
+	}
+	return -1;
+}
 
-		if ( Dati.frameIndex >= 0 && Dati.frameIndex <= 3 )
-		{
-			if ( (U1)Dati.frameIndex == 0 )
-				bytecode = jvm_aload_0;
-			else if ( (U1)Dati.frameIndex == 1 )
-				bytecode = jvm_aload_1;
-			else if ( (U1)Dati.frameIndex == 2 )
-				bytecode = jvm_aload_2;
-			else if ( (U1)Dati.frameIndex == 3 )
-				bytecode = jvm_aload_3;
-			memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-			g_max_stack++;
-			g_code_length++;
-			g_IndexBytecodeArray++;
-		}
-		else
-		{
-			bytecode = jvm_aload;
-			memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-			g_max_stack++;
-			g_code_length++;
-			g_IndexBytecodeArray++;
-			paramU1 = (U1)Dati.frameIndex;
-			memcpy(g_ArrayCode + g_IndexBytecodeArray, &paramU1, 1);
-			g_code_length++;
-			g_IndexBytecodeArray++;
-		}
+static int tempTableEnsure(TempTable *tt, const char *name, enumTipo1 type1)
+{
+	int idx = tempTableFind(tt, name);
+	if (idx >= 0)
+		return idx;
 
-		MakeBytecodeMain(p->id.value.pArrayDef->indexes[0], pHT, pScope);
+	if (tt->count >= tt->capacity) {
+		int newCap = (tt->capacity == 0) ? 32 : tt->capacity * 2;
+		TempSlot *n = (TempSlot *)realloc(tt->items, (size_t)newCap * sizeof(TempSlot));
+		if (!n) return -1;
+		tt->items = n;
+		tt->capacity = newCap;
+	}
+	idx = tt->count++;
+	tt->items[idx].name = (char *)malloc(strlen(name) + 1);
+	if (tt->items[idx].name)
+		strcpy(tt->items[idx].name, name);
+	tt->items[idx].type1 = type1;
+	tt->items[idx].slot = (int)g_max_locals;
+	g_max_locals += (type1 == T_REAL) ? 2 : 1;
+	return idx;
+}
 
-		if ( p->id.value.pArrayDef->countIndexes > 1 )
-		{
-			for ( k = 1; k < p->id.value.pArrayDef->countIndexes; k++ )
-			{
-				bytecode = jvm_aaload;
-				memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-				g_max_stack++;
-				g_code_length++;
-				g_IndexBytecodeArray++;
+static int isTacNumericLit(const char *s, double *outDbl, long *outInt, int *isInt)
+{
+	char *end = NULL;
+	double d;
+	if (!s || !*s) return 0;
+	if (strcmp(s, "true") == 0 || strcmp(s, "false") == 0 || s[0] == '"') return 0;
+	d = strtod(s, &end);
+	if (end == s || *end != '\0') return 0;
+	*outDbl = d;
+	*isInt = (strchr(s, '.') == NULL && strchr(s, 'e') == NULL && strchr(s, 'E') == NULL);
+	if (*isInt)
+		*outInt = strtol(s, NULL, 10);
+	else
+		*outInt = (long)d;
+	return 1;
+}
 
-				if ( p->id.value.pArrayDef )
-					MakeBytecodeMain(p->id.value.pArrayDef->indexes[k], pHT, pScope);
+static int isTacBoolLit(const char *s, int *outBool)
+{
+	if (!s) return 0;
+	if (strcmp(s, "true") == 0)  { *outBool = 1; return 1; }
+	if (strcmp(s, "false") == 0) { *outBool = 0; return 1; }
+	return 0;
+}
+
+static int isTacStringLit(const char *s)
+{
+	size_t len;
+	if (!s) return 0;
+	len = strlen(s);
+	return (len >= 2 && s[0] == '"' && s[len - 1] == '"');
+}
+
+static int tacElemByteSize(enumTipo1 t1)
+{
+	switch (t1) {
+		case T_INTEGER: return (int)sizeof(int);
+		case T_REAL:    return (int)sizeof(double);
+		case T_BOOLEAN: return (int)sizeof(char);
+		case T_STRING:  return (int)sizeof(char *);
+	}
+	return (int)sizeof(int);
+}
+
+static enumTipo1 jvmInferOperandType(const char *opStr, Scope *pScope, const TempTable *tt, enumTipo1 fallback)
+{
+	HashTable Dati;
+	double d;
+	long iv;
+	int isInt, b;
+	int tidx;
+
+	if (!opStr) return fallback;
+	if (isTacStringLit(opStr)) return T_STRING;
+	if (isTacBoolLit(opStr, &b)) return T_BOOLEAN;
+	if (isTacNumericLit(opStr, &d, &iv, &isInt)) return isInt ? T_INTEGER : T_REAL;
+
+	if (scopeFind(pScope, (char *)opStr, &Dati))
+		return Dati.Tipo1;
+
+	tidx = tempTableFind(tt, opStr);
+	if (tidx >= 0)
+		return tt->items[tidx].type1;
+
+	return fallback;
+}
+
+/* Pre-assegna tipo e slot locale a tutti i temporanei presenti nella TACList */
+static void jvmPrepareTemps(const TACList *tac, Scope *pScope, TempTable *tt)
+{
+	int i;
+	/* Assicuriamoci che g_max_locals copra tutte le variabili utente */
+	if (pScope->top >= 0 && pScope->stack[0]) {
+		for (i = 0; i < HT_SIZE; i++) {
+			HashTable *t = pScope->stack[0][i];
+			while (t) {
+				int need = t->frameIndex + ((t->Tipo0 == T_SIMPLE && t->Tipo1 == T_REAL) ? 2 : 1);
+				if (need > (int)g_max_locals)
+					g_max_locals = (U2)need;
+				t = t->next;
 			}
 		}
 	}
+
+	for (i = 0; i < tac->count; i++) {
+		const TACInstr *in = &tac->items[i];
+		HashTable Dati;
+		enumTipo1 tRes;
+
+		if (in->dead || !in->res) continue;
+		if (in->op == TAC_LABEL || in->op == TAC_GOTO ||
+		    in->op == TAC_IF_FALSE || in->op == TAC_IF_TRUE ||
+		    in->op == TAC_STORE_IDX)
+			continue;
+
+		if (scopeFind(pScope, in->res, &Dati))
+			continue;
+
+		if (in->op >= TAC_LT && in->op <= TAC_OR) {
+			tRes = T_BOOLEAN;
+		} else if (in->op == TAC_NOT) {
+			tRes = T_BOOLEAN;
+		} else if (in->op == TAC_NEG) {
+			tRes = jvmInferOperandType(in->arg1, pScope, tt, in->type1);
+		} else if (in->op == TAC_ASSIGN) {
+			tRes = jvmInferOperandType(in->arg1, pScope, tt, in->type1);
+		} else {
+			tRes = in->type1;
+		}
+
+		tempTableEnsure(tt, in->res, tRes);
+	}
 }
 
-void jvmTypeCheck(int t1, int t2)
+static void jvmLoadOperand(const char *opStr, enumTipo1 targetType,
+                           jvmHashTable **pHT, Scope *pScope, const TempTable *tt)
 {
-	U1 bytecode;
+	HashTable Dati;
+	double d;
+	long iv;
+	int isInt, b;
+	int tidx;
 
-	if ( t1 == t2 )
+	if (isTacStringLit(opStr)) {
+		size_t len = strlen(opStr);
+		char *raw = (char *)malloc(len - 1);
+		if (raw) {
+			memcpy(raw, opStr + 1, len - 2);
+			raw[len - 2] = '\0';
+			jvmPushString(raw, pHT);
+			free(raw);
+		}
 		return;
-
-	switch ( t1 )
-	{
-	case T_INTEGER:
-		if ( t2 == T_REAL )
-			bytecode = jvm_d2i;
-		break;
-	case T_REAL:
-		if ( t2 == T_INTEGER || t2 == T_BOOLEAN )
-			bytecode = jvm_i2d;
-		break;
-	case T_BOOLEAN:
-		if ( t2 == T_REAL )
-			bytecode = jvm_d2i;
-		break;
 	}
 
-	memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-	g_code_length++;
-	g_IndexBytecodeArray++;
+	if (isTacBoolLit(opStr, &b)) {
+		if (targetType == T_REAL)
+			jvmPushDouble(b ? 1.0 : 0.0, pHT);
+		else
+			jvmPushInt(b ? 1 : 0, pHT);
+		return;
+	}
+
+	if (isTacNumericLit(opStr, &d, &iv, &isInt)) {
+		if (targetType == T_REAL) {
+			jvmPushDouble(d, pHT);
+		} else if (targetType == T_BOOLEAN) {
+			jvmPushInt(d != 0.0 ? 1 : 0, pHT);
+		} else {
+			jvmPushInt((int)iv, pHT);
+		}
+		return;
+	}
+
+	if (scopeFind(pScope, (char *)opStr, &Dati)) {
+		jvmEmitLoadLocal(Dati.frameIndex, Dati.Tipo1);
+		jvmTypeCheck(targetType, Dati.Tipo1);
+		return;
+	}
+
+	tidx = tempTableFind(tt, opStr);
+	if (tidx >= 0) {
+		jvmEmitLoadLocal(tt->items[tidx].slot, tt->items[tidx].type1);
+		jvmTypeCheck(targetType, tt->items[tidx].type1);
+		return;
+	}
+
+	printf("Errore JVM: operando '%s' non trovato.\n", opStr ? opStr : "(null)");
+	if (targetType == T_REAL) jvmPushDouble(0.0, pHT);
+	else                      jvmPushInt(0, pHT);
+}
+
+static void jvmLoadAsBool(const char *opStr, jvmHashTable **pHT, Scope *pScope, const TempTable *tt)
+{
+	enumTipo1 t = jvmInferOperandType(opStr, pScope, tt, T_INTEGER);
+	if (t == T_REAL) {
+		jvmLoadOperand(opStr, T_REAL, pHT, pScope, tt);
+		jvmEmitU1(jvm_dconst_0, +2);
+		jvmEmitU1(jvm_dcmpl, -3); /* pop 4, push 1 => -3 */
+	} else {
+		jvmLoadOperand(opStr, T_INTEGER, pHT, pScope, tt);
+	}
+	jvmEmitU1(jvm_ifeq, -1);
+	jvmEmitS2(7);
+	jvmEmitU1(jvm_iconst_1, +1);
+	jvmEmitU1(jvm_goto, 0);
+	jvmEmitS2(4);
+	jvmEmitU1(jvm_iconst_0, +1);
+}
+
+static void jvmStoreDest(const char *dstName, enumTipo1 valueType, Scope *pScope, TempTable *tt)
+{
+	HashTable Dati;
+	int tidx;
+
+	if (scopeFind(pScope, (char *)dstName, &Dati)) {
+		jvmTypeCheck(Dati.Tipo1, valueType);
+		jvmEmitStoreLocal(Dati.frameIndex, Dati.Tipo1);
+		return;
+	}
+
+	tidx = tempTableEnsure(tt, dstName, valueType);
+	if (tidx >= 0) {
+		jvmTypeCheck(tt->items[tidx].type1, valueType);
+		jvmEmitStoreLocal(tt->items[tidx].slot, tt->items[tidx].type1);
+	}
+}
+
+static void jvmEmitArrayIndexFromByteOffset(const char *offStr, enumTipo1 elemType,
+                                            jvmHashTable **pHT, Scope *pScope, const TempTable *tt)
+{
+	int elemSize = tacElemByteSize(elemType);
+	double d;
+	long iv;
+	int isInt;
+
+	if (isTacNumericLit(offStr, &d, &iv, &isInt)) {
+		jvmPushInt((int)(iv / elemSize), pHT);
+		return;
+	}
+
+	jvmLoadOperand(offStr, T_INTEGER, pHT, pScope, tt);
+	if (elemSize == 1) {
+		return;
+	} else if (elemSize == 2) {
+		jvmEmitU1(jvm_iconst_1, +1);
+		jvmEmitU1(jvm_ishr, -1);
+	} else if (elemSize == 4) {
+		jvmEmitU1(jvm_iconst_2, +1);
+		jvmEmitU1(jvm_ishr, -1);
+	} else if (elemSize == 8) {
+		jvmEmitU1(jvm_iconst_3, +1);
+		jvmEmitU1(jvm_ishr, -1);
+	} else {
+		jvmPushInt(elemSize, pHT);
+		jvmEmitU1(jvm_idiv, -1);
+	}
+}
+
+static void MakeBytecodeFromTAC(const TACList *tac, jvmHashTable **pHT, Scope *pScope)
+{
+	TempTable tt;
+	LabelPos *labels = NULL;
+	int numLabels = 0, capLabels = 0;
+	JumpFixup *fixups = NULL;
+	int numFixups = 0, capFixups = 0;
+	int i;
+
+	tempTableInit(&tt);
+	jvmPrepareTemps(tac, pScope, &tt);
+
+	for (i = 0; i < tac->count; i++) {
+		const TACInstr *in = &tac->items[i];
+		if (in->dead) continue;
+
+		switch (in->op) {
+		case TAC_LABEL: {
+			if (numLabels >= capLabels) {
+				int nc = (capLabels == 0) ? 32 : capLabels * 2;
+				LabelPos *nl = (LabelPos *)realloc(labels, (size_t)nc * sizeof(LabelPos));
+				if (!nl) break;
+				labels = nl;
+				capLabels = nc;
+			}
+			labels[numLabels].name = (char *)malloc(strlen(in->res) + 1);
+			if (labels[numLabels].name) strcpy(labels[numLabels].name, in->res);
+			labels[numLabels].offset = g_IndexBytecodeArray;
+			numLabels++;
+			break;
+		}
+
+		case TAC_GOTO: {
+			int instrPos = g_IndexBytecodeArray;
+			jvmEmitU1(jvm_goto, 0);
+			if (numFixups >= capFixups) {
+				int nc = (capFixups == 0) ? 32 : capFixups * 2;
+				JumpFixup *nf = (JumpFixup *)realloc(fixups, (size_t)nc * sizeof(JumpFixup));
+				if (nf) { fixups = nf; capFixups = nc; }
+			}
+			if (numFixups < capFixups) {
+				fixups[numFixups].instrPos = instrPos;
+				fixups[numFixups].operandPos = g_IndexBytecodeArray;
+				fixups[numFixups].labelName = (char *)malloc(strlen(in->res) + 1);
+				if (fixups[numFixups].labelName) strcpy(fixups[numFixups].labelName, in->res);
+				numFixups++;
+			}
+			jvmEmitS2(0);
+			break;
+		}
+
+		case TAC_IF_FALSE:
+		case TAC_IF_TRUE: {
+			enumTipo1 condType = jvmInferOperandType(in->arg1, pScope, &tt, T_INTEGER);
+			int instrPos;
+			if (condType == T_REAL) {
+				jvmLoadOperand(in->arg1, T_REAL, pHT, pScope, &tt);
+				jvmEmitU1(jvm_dconst_0, +2);
+				jvmEmitU1(jvm_dcmpl, -3);
+			} else {
+				jvmLoadOperand(in->arg1, T_INTEGER, pHT, pScope, &tt);
+			}
+			instrPos = g_IndexBytecodeArray;
+			jvmEmitU1((in->op == TAC_IF_FALSE) ? jvm_ifeq : jvm_ifne, -1);
+			if (numFixups >= capFixups) {
+				int nc = (capFixups == 0) ? 32 : capFixups * 2;
+				JumpFixup *nf = (JumpFixup *)realloc(fixups, (size_t)nc * sizeof(JumpFixup));
+				if (nf) { fixups = nf; capFixups = nc; }
+			}
+			if (numFixups < capFixups) {
+				fixups[numFixups].instrPos = instrPos;
+				fixups[numFixups].operandPos = g_IndexBytecodeArray;
+				fixups[numFixups].labelName = (char *)malloc(strlen(in->res) + 1);
+				if (fixups[numFixups].labelName) strcpy(fixups[numFixups].labelName, in->res);
+				numFixups++;
+			}
+			jvmEmitS2(0);
+			break;
+		}
+
+		case TAC_ASSIGN: {
+			HashTable Dati;
+			enumTipo1 dstType = in->type1;
+			int tidx;
+			if (scopeFind(pScope, in->res, &Dati))
+				dstType = Dati.Tipo1;
+			else if ((tidx = tempTableFind(&tt, in->res)) >= 0)
+				dstType = tt.items[tidx].type1;
+			jvmLoadOperand(in->arg1, dstType, pHT, pScope, &tt);
+			jvmStoreDest(in->res, dstType, pScope, &tt);
+			break;
+		}
+
+		case TAC_NEG: {
+			enumTipo1 t = jvmInferOperandType(in->arg1, pScope, &tt, in->type1);
+			if (t != T_REAL) t = T_INTEGER;
+			jvmLoadOperand(in->arg1, t, pHT, pScope, &tt);
+			jvmEmitU1((t == T_REAL) ? jvm_dneg : jvm_ineg, 0);
+			jvmStoreDest(in->res, t, pScope, &tt);
+			break;
+		}
+
+		case TAC_NOT: {
+			jvmLoadAsBool(in->arg1, pHT, pScope, &tt);
+			jvmEmitU1(jvm_ifne, -1);
+			jvmEmitS2(7);
+			jvmEmitU1(jvm_iconst_1, +1);
+			jvmEmitU1(jvm_goto, 0);
+			jvmEmitS2(4);
+			jvmEmitU1(jvm_iconst_0, +1);
+			jvmStoreDest(in->res, T_BOOLEAN, pScope, &tt);
+			break;
+		}
+
+		case TAC_ADD:
+		case TAC_SUB:
+		case TAC_MUL:
+		case TAC_DIV: {
+			if (in->op == TAC_ADD && in->type1 == T_STRING) {
+				jvmEmitU1(jvm_new, +1);
+				jvmEmitU2(6); /* java/lang/StringBuilder */
+				jvmEmitU1(jvm_dup, +1);
+				jvmEmitU1(jvm_invokespecial, -1);
+				jvmEmitU2(11); /* StringBuilder.<init>()V */
+
+				jvmLoadOperand(in->arg1, T_STRING, pHT, pScope, &tt);
+				jvmEmitU1(jvm_invokevirtual, -1);
+				jvmEmitU2(12); /* StringBuilder.append(String) */
+
+				jvmLoadOperand(in->arg2, T_STRING, pHT, pScope, &tt);
+				jvmEmitU1(jvm_invokevirtual, -1);
+				jvmEmitU2(12); /* StringBuilder.append(String) */
+
+				jvmEmitU1(jvm_invokevirtual, 0);
+				jvmEmitU2(13); /* StringBuilder.toString() */
+
+				jvmStoreDest(in->res, T_STRING, pScope, &tt);
+			} else {
+				enumTipo1 opType = (in->type1 == T_REAL) ? T_REAL : T_INTEGER;
+				U1 opByte = jvm_iadd;
+				int stackDelta = (opType == T_REAL) ? -2 : -1;
+
+				jvmLoadOperand(in->arg1, opType, pHT, pScope, &tt);
+				jvmLoadOperand(in->arg2, opType, pHT, pScope, &tt);
+
+				if (in->op == TAC_ADD)      opByte = (opType == T_REAL) ? jvm_dadd : jvm_iadd;
+				else if (in->op == TAC_SUB) opByte = (opType == T_REAL) ? jvm_dsub : jvm_isub;
+				else if (in->op == TAC_MUL) opByte = (opType == T_REAL) ? jvm_dmul : jvm_imul;
+				else if (in->op == TAC_DIV) opByte = (opType == T_REAL) ? jvm_ddiv : jvm_idiv;
+
+				jvmEmitU1(opByte, stackDelta);
+				jvmStoreDest(in->res, opType, pScope, &tt);
+			}
+			break;
+		}
+
+		case TAC_LT:
+		case TAC_LE:
+		case TAC_GT:
+		case TAC_GE:
+		case TAC_EQ:
+		case TAC_NE: {
+			enumTipo1 t1 = jvmInferOperandType(in->arg1, pScope, &tt, in->type1);
+			enumTipo1 t2 = jvmInferOperandType(in->arg2, pScope, &tt, in->type1);
+			enumTipo1 cmpType = (t1 == T_REAL || t2 == T_REAL || in->type1 == T_REAL) ? T_REAL : T_INTEGER;
+
+			jvmLoadOperand(in->arg1, cmpType, pHT, pScope, &tt);
+			jvmLoadOperand(in->arg2, cmpType, pHT, pScope, &tt);
+
+			if (cmpType == T_INTEGER) {
+				U1 br = jvm_if_icmpne;
+				if (in->op == TAC_LT)      br = jvm_if_icmpge;
+				else if (in->op == TAC_LE) br = jvm_if_icmpgt;
+				else if (in->op == TAC_GT) br = jvm_if_icmple;
+				else if (in->op == TAC_GE) br = jvm_if_icmplt;
+				else if (in->op == TAC_EQ) br = jvm_if_icmpne;
+				else if (in->op == TAC_NE) br = jvm_if_icmpeq;
+				jvmEmitU1(br, -2);
+			} else {
+				U1 cmpOp = (in->op == TAC_LT || in->op == TAC_LE) ? jvm_dcmpg : jvm_dcmpl;
+				U1 br = jvm_ifne;
+				if (in->op == TAC_LT)      br = jvm_ifge;
+				else if (in->op == TAC_LE) br = jvm_ifgt;
+				else if (in->op == TAC_GT) br = jvm_ifle;
+				else if (in->op == TAC_GE) br = jvm_iflt;
+				else if (in->op == TAC_EQ) br = jvm_ifne;
+				else if (in->op == TAC_NE) br = jvm_ifeq;
+				jvmEmitU1(cmpOp, -3);
+				jvmEmitU1(br, -1);
+			}
+
+			jvmEmitS2(7);
+			jvmEmitU1(jvm_iconst_1, +1);
+			jvmEmitU1(jvm_goto, 0);
+			jvmEmitS2(4);
+			jvmEmitU1(jvm_iconst_0, +1);
+			jvmStoreDest(in->res, T_BOOLEAN, pScope, &tt);
+			break;
+		}
+
+		case TAC_AND:
+		case TAC_OR: {
+			jvmLoadAsBool(in->arg1, pHT, pScope, &tt);
+			jvmLoadAsBool(in->arg2, pHT, pScope, &tt);
+			jvmEmitU1((in->op == TAC_AND) ? jvm_iand : jvm_ior, -1);
+			jvmStoreDest(in->res, T_BOOLEAN, pScope, &tt);
+			break;
+		}
+
+		case TAC_LOAD_IDX: {
+			HashTable Dati;
+			if (!scopeFind(pScope, in->arg1, &Dati)) {
+				printf("Errore JVM: array '%s' non dichiarato.\n", in->arg1);
+				break;
+			}
+			jvmEmitLoadArrayRef(Dati.frameIndex);
+			jvmEmitArrayIndexFromByteOffset(in->arg2, Dati.Tipo1, pHT, pScope, &tt);
+
+			if (Dati.Tipo1 == T_INTEGER) {
+				jvmEmitU1(jvm_iaload, -1);
+			} else if (Dati.Tipo1 == T_REAL) {
+				jvmEmitU1(jvm_daload, 0); /* pop 2, push 2 */
+			} else if (Dati.Tipo1 == T_BOOLEAN) {
+				jvmEmitU1(jvm_baload, -1);
+			} else if (Dati.Tipo1 == T_STRING) {
+				jvmEmitU1(jvm_aaload, -1);
+			}
+			jvmStoreDest(in->res, Dati.Tipo1, pScope, &tt);
+			break;
+		}
+
+		case TAC_STORE_IDX: {
+			HashTable Dati;
+			if (!scopeFind(pScope, in->res, &Dati)) {
+				printf("Errore JVM: array '%s' non dichiarato.\n", in->res);
+				break;
+			}
+			jvmEmitLoadArrayRef(Dati.frameIndex);
+			jvmEmitArrayIndexFromByteOffset(in->arg1, Dati.Tipo1, pHT, pScope, &tt);
+			jvmLoadOperand(in->arg2, Dati.Tipo1, pHT, pScope, &tt);
+
+			if (Dati.Tipo1 == T_INTEGER) {
+				jvmEmitU1(jvm_iastore, -3);
+			} else if (Dati.Tipo1 == T_REAL) {
+				jvmEmitU1(jvm_dastore, -4);
+			} else if (Dati.Tipo1 == T_BOOLEAN) {
+				jvmEmitU1(jvm_bastore, -3);
+			} else if (Dati.Tipo1 == T_STRING) {
+				jvmEmitU1(jvm_aastore, -3);
+			}
+			break;
+		}
+
+		case TAC_PRINT: {
+			enumTipo1 pType = jvmInferOperandType(in->arg1, pScope, &tt, in->type1);
+			U2 methodRef = 60;
+			int argSlots = 1;
+
+			/* Se in->type1 specifica T_BOOLEAN ma l'operando era int (es. constant folding),
+			 * rispetta in->type1 per stampare true/false */
+			if (in->type1 == T_BOOLEAN && pType == T_INTEGER)
+				pType = T_BOOLEAN;
+
+			jvmEmitU1(jvm_getstatic, +1);
+			jvmEmitU2(9); /* java/lang/System.out */
+
+			jvmLoadOperand(in->arg1, pType, pHT, pScope, &tt);
+
+			if (pType == T_STRING)       { methodRef = 14; argSlots = 1; }
+			else if (pType == T_INTEGER) { methodRef = 60; argSlots = 1; }
+			else if (pType == T_REAL)    { methodRef = 63; argSlots = 2; }
+			else if (pType == T_BOOLEAN) { methodRef = 66; argSlots = 1; }
+
+			jvmEmitU1(jvm_invokevirtual, -(1 + argSlots));
+			jvmEmitU2(methodRef);
+			break;
+		}
+
+		case TAC_READ: {
+			HashTable Dati;
+			enumTipo1 rType = in->type1;
+			if (scopeFind(pScope, in->res, &Dati))
+				rType = Dati.Tipo1;
+
+			jvmEmitU1(jvm_invokestatic, +1);
+			jvmEmitU2(15); /* System.console() */
+			jvmEmitU1(jvm_invokevirtual, 0);
+			jvmEmitU2(16); /* Console.readLine() */
+
+			if (rType == T_INTEGER) {
+				jvmEmitU1(jvm_invokestatic, 0);
+				jvmEmitU2(17); /* Integer.parseInt */
+			} else if (rType == T_REAL) {
+				jvmEmitU1(jvm_invokestatic, +1); /* String -> double (1 -> 2 slot) */
+				jvmEmitU2(18); /* Double.parseDouble */
+			} else if (rType == T_BOOLEAN) {
+				jvmEmitU1(jvm_invokestatic, 0);
+				jvmEmitU2(17); /* Integer.parseInt */
+				jvmEmitU1(jvm_ifeq, -1);
+				jvmEmitS2(7);
+				jvmEmitU1(jvm_iconst_1, +1);
+				jvmEmitU1(jvm_goto, 0);
+				jvmEmitS2(4);
+				jvmEmitU1(jvm_iconst_0, +1);
+			}
+
+			jvmStoreDest(in->res, rType, pScope, &tt);
+			break;
+		}
+		}
+	}
+
+	/* Risoluzione dei salti (patch degli offset relativi a 16 bit) */
+	for (i = 0; i < numFixups; i++) {
+		int j;
+		int targetOffset = -1;
+		for (j = 0; j < numLabels; j++) {
+			if (strcmp(labels[j].name, fixups[i].labelName) == 0) {
+				targetOffset = labels[j].offset;
+				break;
+			}
+		}
+		if (targetOffset < 0) {
+			printf("Errore JVM: label '%s' non trovata.\n", fixups[i].labelName);
+		} else {
+			S2 rel = (S2)(targetOffset - fixups[i].instrPos);
+			BYTE *buff;
+			U1 fb[8];
+			if (!isBigEndian()) {
+				ARRAY_TO_S2(buff, rel);
+			}
+			memcpy(g_ArrayCode + fixups[i].operandPos, &rel, 2);
+		}
+	}
+
+	for (i = 0; i < numLabels; i++) free(labels[i].name);
+	free(labels);
+	for (i = 0; i < numFixups; i++) free(fixups[i].labelName);
+	free(fixups);
+	tempTableFree(&tt);
 }
 
 void MakeBytecodeMain(nodeType *p, jvmHashTable **pHT, Scope *pScope)
 {
-	U2 constStringIndex;
-	U2 constIntegerIndex;
-	U2 constRealIndex;
-
-	U1 bytecode = 0;
-	U1 paramU1;
-	U2 paramU2;
-
-	S1 paramS1;
-	S2 paramS2;
-
-	U2 segnaposto1, segnaposto2;
-
-	static int bLeftSide = 0;
-
-	BYTE *buff;
-	U1 fb[8]; // Necessario per usare le macro;
-
-    if (!p)
-	{
-		return;
-	}
-
-    switch(p->type)
-	{
-    case typeConst:
-		{
-			switch( p->type1 )
-			{
-			case T_INTEGER:
-				if ( p->con.value.iVal >= -128 && p->con.value.iVal <= 127 )
-				{
-					if ( p->con.value.iVal >= -1 && p->con.value.iVal <= 5 )
-					{
-						if ( p->con.value.iVal == -1 )
-							bytecode = jvm_iconst_m1;
-						else if ( p->con.value.iVal == 0 )
-							bytecode = jvm_iconst_0;
-						else if ( p->con.value.iVal == 1 )
-							bytecode = jvm_iconst_1;
-						else if ( p->con.value.iVal == 2 )
-							bytecode = jvm_iconst_2;
-						else if ( p->con.value.iVal == 3 )
-							bytecode = jvm_iconst_3;
-						else if ( p->con.value.iVal == 4 )
-							bytecode = jvm_iconst_4;
-						else if ( p->con.value.iVal == 5 )
-							bytecode = jvm_iconst_5;
-
-						memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-						g_max_stack++;
-						g_code_length++;
-						g_IndexBytecodeArray++;
-					}
-					else
-					{
-						bytecode = jvm_bipush;
-						memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-						g_max_stack++;
-						g_code_length++;
-						g_IndexBytecodeArray++;
-
-						paramS1 = (S1)p->con.value.iVal;
-						memcpy(g_ArrayCode + g_IndexBytecodeArray, &paramS1, 1);
-						g_code_length++;
-						g_IndexBytecodeArray++;
-					}
-				}
-				else if ( p->con.value.iVal >= -32768 && p->con.value.iVal <= 32767 )
-				{
-					bytecode = jvm_sipush;
-					memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-					g_max_stack++;
-					g_code_length++;
-					g_IndexBytecodeArray++;
-
-					paramS2 = (S2)p->con.value.iVal;
-					if ( !isBigEndian() )
-					{
-						ARRAY_TO_S2(buff, paramS2);
-					}
-					memcpy(g_ArrayCode + g_IndexBytecodeArray, &paramS2, 2);
-					g_code_length += 2;
-					g_IndexBytecodeArray += 2;
-				}
-				else
-				{
-					if ( !jvmhtFind(pHT, p->con.lexeme, (unsigned short*)&constIntegerIndex) )
-					{
-						constIntegerIndex = (unsigned char)(g_ConstantPoolCount + 1);
-						jvmhtInsert(pHT, p->con.lexeme, constIntegerIndex);
-						g_IndexConstantPool = jvmAddIntegerConstant(p->con.value.iVal, g_IndexConstantPool);
-					}
-
-					bytecode = jvm_ldc;
-					memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-					g_max_stack++;
-					g_code_length++;
-					g_IndexBytecodeArray++;
-
-					paramU1 = constIntegerIndex;
-					memcpy(g_ArrayCode + g_IndexBytecodeArray, &paramU1, 1);
-					g_code_length++;
-					g_IndexBytecodeArray++;
-				}
-
-				break;
-			case T_REAL:
-				if ( p->con.value.dblVal == 0.0 || p->con.value.dblVal == 1.0 )
-				{
-					if ( p->con.value.dblVal == 0.0 )
-						bytecode = jvm_dconst_0;
-					else if ( p->con.value.dblVal == 1.0 )
-						bytecode = jvm_dconst_1;
-
-					memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-					//g_max_stack++;
-					g_max_stack += 2;
-					g_code_length++;
-					g_IndexBytecodeArray++;
-				}
-				else
-				{
-					if ( !jvmhtFind(pHT, p->con.lexeme, &constRealIndex) )
-					{
-						constRealIndex = (unsigned short)(g_ConstantPoolCount + 1);
-						jvmhtInsert(pHT, p->con.lexeme, constRealIndex);
-						g_IndexConstantPool = jvmAddRealConstant(p->con.value.dblVal, g_IndexConstantPool);
-					}
-
-					bytecode = jvm_ldc2_w;
-					memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-					//g_max_stack++;
-					g_max_stack += 2;
-					g_code_length++;
-					g_IndexBytecodeArray++;
-
-					paramU2 = constRealIndex;
-					if ( !isBigEndian() )
-					{
-						ARRAY_TO_U2(buff, paramU2);
-					}
-					memcpy(g_ArrayCode + g_IndexBytecodeArray, &paramU2, 2);
-					g_code_length += 2;
-					g_IndexBytecodeArray += 2;
-				}
-
-				break;
-			case T_BOOLEAN:
-				if ( p->con.value.bVal == 0 )
-					bytecode = jvm_iconst_0;
-				else if ( p->con.value.bVal == 1 )
-					bytecode = jvm_iconst_1;
-
-				memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-				g_max_stack++;
-				g_code_length++;
-				g_IndexBytecodeArray++;
-
-				break;
-			case T_STRING:
-				if ( !jvmhtFind(pHT, p->con.value.strVal, (unsigned short*)&constStringIndex) )
-				{
-					constStringIndex = (unsigned char)(g_ConstantPoolCount + 1);
-					jvmhtInsert(pHT, p->con.value.strVal, constStringIndex);
-					g_IndexConstantPool = jvmAddStringConstant(p->con.value.strVal, g_IndexConstantPool);
-				}
-
-				bytecode = jvm_ldc;
-				memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-				g_max_stack++;
-				g_code_length++;
-				g_IndexBytecodeArray++;
-
-				paramU1 = constStringIndex;
-				memcpy(g_ArrayCode + g_IndexBytecodeArray, &paramU1, 1);
-				g_code_length++;
-				g_IndexBytecodeArray++;
-
-				break;
-			}
-
-			return;
-		}
-		break;
-    case typeId:
-		{
-			HashTable Dati;
-			if ( scopeFind(pScope, p->id.name, &Dati) )
-			{
-				if ( Dati.Tipo0 == T_ARRAY )
-				{
-					if ( bLeftSide )
-					{
-						if ( Dati.Tipo1 == T_INTEGER )
-							bytecode = jvm_iastore;
-						else if ( Dati.Tipo1 == T_REAL )
-							bytecode = jvm_dastore;
-						else if ( Dati.Tipo1 == T_BOOLEAN )
-							bytecode = jvm_bastore;
-						else if ( Dati.Tipo1 == T_STRING )
-							bytecode = jvm_aastore;
-					}
-					else
-					{
-						if ( Dati.Tipo1 == T_INTEGER )
-							bytecode = jvm_iaload;
-						else if ( Dati.Tipo1 == T_REAL )
-							bytecode = jvm_daload;
-						else if ( Dati.Tipo1 == T_BOOLEAN )
-							bytecode = jvm_baload;
-						else if ( Dati.Tipo1 == T_STRING )
-							bytecode = jvm_aaload;
-					}
-					memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-					if ( bLeftSide )
-					{
-						if ( Dati.Tipo1 != T_REAL )
-							g_max_stack--;
-						else
-							g_max_stack -= 2;
-					}
-					else
-					{
-						if ( Dati.Tipo1 != T_REAL )
-							g_max_stack++;
-						else
-							g_max_stack += 2;
-					}
-					g_code_length++;
-					g_IndexBytecodeArray++;
-				}
-				else // Dati.Tipo0 == T_SIMPLE
-				{
-					if (Dati.frameIndex >= 0 && Dati.frameIndex <= 3)
-					{
-						if ( (U1)Dati.frameIndex == 0 )
-						{
-							if ( Dati.Tipo1 == T_INTEGER || Dati.Tipo1 == T_BOOLEAN)
-							{
-								if ( bLeftSide )
-									bytecode = jvm_istore_0;
-								else
-									bytecode = jvm_iload_0;
-							}
-							else if ( Dati.Tipo1 == T_REAL )
-							{
-								if ( bLeftSide )
-									bytecode = jvm_dstore_0;
-								else
-									bytecode = jvm_dload_0;
-							}
-							else if ( Dati.Tipo1 == T_STRING )
-							{
-								if ( bLeftSide )
-									bytecode = jvm_astore_0;
-								else
-									bytecode = jvm_aload_0;
-							}
-						}
-						else if ( (U1)Dati.frameIndex == 1 )
-						{
-							if ( Dati.Tipo1 == T_INTEGER || Dati.Tipo1 == T_BOOLEAN)
-							{
-								if ( bLeftSide )
-									bytecode = jvm_istore_1;
-								else
-									bytecode = jvm_iload_1;
-							}
-							else if ( Dati.Tipo1 == T_REAL )
-							{
-								if ( bLeftSide )
-									bytecode = jvm_dstore_1;
-								else
-									bytecode = jvm_dload_1;
-							}
-							else if ( Dati.Tipo1 == T_STRING )
-							{
-								if ( bLeftSide )
-									bytecode = jvm_astore_1;
-								else
-									bytecode = jvm_aload_1;
-							}
-						}
-						else if ( (U1)Dati.frameIndex == 2 )
-						{
-							if ( Dati.Tipo1 == T_INTEGER || Dati.Tipo1 == T_BOOLEAN)
-							{
-								if ( bLeftSide )
-									bytecode = jvm_istore_2;
-								else
-									bytecode = jvm_iload_2;
-							}
-							else if ( Dati.Tipo1 == T_REAL )
-							{
-								if ( bLeftSide )
-									bytecode = jvm_dstore_2;
-								else
-									bytecode = jvm_dload_2;
-							}
-							else if ( Dati.Tipo1 == T_STRING )
-							{
-								if ( bLeftSide )
-									bytecode = jvm_astore_2;
-								else
-									bytecode = jvm_aload_2;
-							}
-						}
-						else if ( (U1)Dati.frameIndex == 3 )
-						{
-							if ( Dati.Tipo1 == T_INTEGER || Dati.Tipo1 == T_BOOLEAN)
-							{
-								if ( bLeftSide )
-									bytecode = jvm_istore_3;
-								else
-									bytecode = jvm_iload_3;
-							}
-							else if ( Dati.Tipo1 == T_REAL )
-							{
-								if ( bLeftSide )
-									bytecode = jvm_dstore_3;
-								else
-									bytecode = jvm_dload_3;
-							}
-							else if ( Dati.Tipo1 == T_STRING )
-							{
-								if ( bLeftSide )
-									bytecode = jvm_astore_3;
-								else
-									bytecode = jvm_aload_3;
-							}
-						}
-
-						memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-						if ( bLeftSide )
-						{
-							if ( Dati.Tipo1 != T_REAL )
-								g_max_stack--;
-							else
-								g_max_stack -= 2;
-						}
-						else
-						{
-							if ( Dati.Tipo1 != T_REAL )
-								g_max_stack++;
-							else
-								g_max_stack += 2;
-						}
-						g_code_length++;
-						g_IndexBytecodeArray++;
-					}
-					else
-					{
-						if ( Dati.Tipo1 == T_INTEGER || Dati.Tipo1 == T_BOOLEAN)
-						{
-							if ( bLeftSide )
-								bytecode = jvm_istore;
-							else
-								bytecode = jvm_iload;
-						}
-						else if ( Dati.Tipo1 == T_REAL )
-						{
-							if ( bLeftSide )
-								bytecode = jvm_dstore;
-							else
-								bytecode = jvm_dload;
-						}
-						else if ( Dati.Tipo1 == T_STRING )
-						{
-							if ( bLeftSide )
-								bytecode = jvm_astore;
-							else
-								bytecode = jvm_aload;
-						}
-						memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-						if ( bLeftSide )
-						{
-							if ( Dati.Tipo1 != T_REAL )
-								g_max_stack--;
-							else
-								g_max_stack -= 2;
-						}
-						else
-						{
-							if ( Dati.Tipo1 != T_REAL )
-								g_max_stack++;
-							else
-								g_max_stack += 2;
-						}
-						g_code_length++;
-						g_IndexBytecodeArray++;
-
-						paramU1 = (U1)Dati.frameIndex;
-						memcpy(g_ArrayCode + g_IndexBytecodeArray, &paramU1, 1);
-						g_code_length++;
-						g_IndexBytecodeArray++;
-					}
-				}
-			}
-			else
-			{
-				printf("Errore: X identificatore '%s' non dichiarato\n", p->id.name);
-			}
-
-			return;
-		}
-		break;
-    case typeOperator:
-		{
-			switch(p->opr.oper)
-			{
-			case T_KW_WHILE:
-				segnaposto1 = g_IndexBytecodeArray;
-				MakeBytecodeMain(p->opr.op[0], pHT, pScope);
-
-				bytecode = jvm_iconst_0;
-				memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-				g_code_length++;
-				g_IndexBytecodeArray++;
-
-				bytecode = jvm_if_icmpeq;
-				memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-				g_code_length++;
-				g_IndexBytecodeArray++;
-				segnaposto2 = g_IndexBytecodeArray;
-
-				paramU2 = 0;
-				if ( !isBigEndian() )
-				{
-					ARRAY_TO_U2(buff, paramU2);
-				}
-				memcpy(g_ArrayCode + g_IndexBytecodeArray, &paramU2, 2);
-				g_code_length += 2;
-				g_IndexBytecodeArray += 2;
-
-				MakeBytecodeMain(p->opr.op[1], pHT, pScope);
-
-				bytecode = jvm_goto;
-				memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-				g_code_length++;
-				g_IndexBytecodeArray++;
-
-				paramU2 = segnaposto1 - g_IndexBytecodeArray + 1;
-				if ( !isBigEndian() )
-				{
-					ARRAY_TO_U2(buff, paramU2);
-				}
-				memcpy(g_ArrayCode + g_IndexBytecodeArray, &paramU2, 2);
-				g_code_length += 2;
-				g_IndexBytecodeArray += 2;
-
-				paramU2 = g_IndexBytecodeArray - segnaposto2 + 1;
-				if ( !isBigEndian() )
-				{
-					ARRAY_TO_U2(buff, paramU2);
-				}
-				memcpy(g_ArrayCode + segnaposto2, &paramU2, 2);
-
-				return;
-			case T_KW_DO: // do-while
-				segnaposto1 = g_IndexBytecodeArray;
-				MakeBytecodeMain(p->opr.op[1], pHT, pScope);
-
-				bytecode = jvm_iconst_0;
-				memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-				g_code_length++;
-				g_IndexBytecodeArray++;
-
-				bytecode = jvm_if_icmpeq;
-				memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-				g_code_length++;
-				g_IndexBytecodeArray++;
-				segnaposto2 = g_IndexBytecodeArray;
-
-				paramU2 = 0;
-				if ( !isBigEndian() )
-				{
-					ARRAY_TO_U2(buff, paramU2);
-				}
-				memcpy(g_ArrayCode + g_IndexBytecodeArray, &paramU2, 2);
-				g_code_length += 2;
-				g_IndexBytecodeArray += 2;
-
-				MakeBytecodeMain(p->opr.op[0], pHT, pScope);
-
-				bytecode = jvm_goto;
-				memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-				g_code_length++;
-				g_IndexBytecodeArray++;
-
-				paramU2 = segnaposto1 - g_IndexBytecodeArray + 1;
-				if ( !isBigEndian() )
-				{
-					ARRAY_TO_U2(buff, paramU2);
-				}
-				memcpy(g_ArrayCode + g_IndexBytecodeArray, &paramU2, 2);
-				g_code_length += 2;
-				g_IndexBytecodeArray += 2;
-
-				paramU2 = g_IndexBytecodeArray - segnaposto2 + 1;
-				if ( !isBigEndian() )
-				{
-					ARRAY_TO_U2(buff, paramU2);
-				}
-				memcpy(g_ArrayCode + segnaposto2, &paramU2, 2);
-
-				return;
-			case T_KW_IF:
-				MakeBytecodeMain(p->opr.op[0], pHT, pScope);
-
-				if (p->opr.nops > 2)
-				{
-					// if else
-					bytecode = jvm_iconst_0;
-					memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-					g_code_length++;
-					g_IndexBytecodeArray++;
-
-					bytecode = jvm_if_icmpeq;
-					memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-					g_code_length++;
-					g_IndexBytecodeArray++;
-					segnaposto2 = g_IndexBytecodeArray;
-
-					paramU2 = 0;
-					if ( !isBigEndian() )
-					{
-						ARRAY_TO_U2(buff, paramU2);
-					}
-					memcpy(g_ArrayCode + g_IndexBytecodeArray, &paramU2, 2);
-					g_code_length += 2;
-					g_IndexBytecodeArray += 2;
-
-					MakeBytecodeMain(p->opr.op[1], pHT, pScope);
-
-					bytecode = jvm_goto;
-					memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-					g_code_length++;
-					g_IndexBytecodeArray++;
-					segnaposto1 = g_IndexBytecodeArray;
-
-					paramU2 = 0;
-					if ( !isBigEndian() )
-					{
-						ARRAY_TO_U2(buff, paramU2);
-					}
-					memcpy(g_ArrayCode + g_IndexBytecodeArray, &paramU2, 2);
-					g_code_length += 2;
-					g_IndexBytecodeArray += 2;
-
-					paramU2 = g_IndexBytecodeArray - segnaposto2 + 1;
-					if ( !isBigEndian() )
-					{
-						ARRAY_TO_U2(buff, paramU2);
-					}
-					memcpy(g_ArrayCode + segnaposto2, &paramU2, 2);
-
-					MakeBytecodeMain(p->opr.op[2], pHT, pScope);
-
-					paramU2 = g_IndexBytecodeArray - segnaposto1 + 1;
-					if ( !isBigEndian() )
-					{
-						ARRAY_TO_U2(buff, paramU2);
-					}
-					memcpy(g_ArrayCode + segnaposto1, &paramU2, 2);
-				}
-				else
-				{
-					// if
-					bytecode = jvm_iconst_0;
-					memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-					g_code_length++;
-					g_IndexBytecodeArray++;
-
-					bytecode = jvm_if_icmpeq;
-					memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-					g_code_length++;
-					g_IndexBytecodeArray++;
-					segnaposto2 = g_IndexBytecodeArray;
-
-					paramU2 = 0;
-					if ( !isBigEndian() )
-					{
-						ARRAY_TO_U2(buff, paramU2);
-					}
-					memcpy(g_ArrayCode + g_IndexBytecodeArray, &paramU2, 2);
-					g_code_length += 2;
-					g_IndexBytecodeArray += 2;
-
-					MakeBytecodeMain(p->opr.op[1], pHT, pScope);
-
-					paramU2 = g_IndexBytecodeArray - segnaposto2 + 1;
-					if ( !isBigEndian() )
-					{
-						ARRAY_TO_U2(buff, paramU2);
-					}
-					memcpy(g_ArrayCode + segnaposto2, &paramU2, 2);
-				}
-
-				return;
-			case T_KW_PRINT:
-				bytecode = jvm_getstatic;
-				memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-				g_max_stack++;
-				g_code_length++;
-				g_IndexBytecodeArray++;
-
-				paramU2 = 9; ////Field java/lang/System.out:Ljava/io/PrintStream;
-				if ( !isBigEndian() )
-				{
-					ARRAY_TO_U2(buff, paramU2);
-				}
-				memcpy(g_ArrayCode + g_IndexBytecodeArray, &paramU2, 2);
-				g_code_length += 2;
-				g_IndexBytecodeArray += 2;
-
-				LoadArray(p->opr.op[0], pHT, pScope);
-
-				MakeBytecodeMain(p->opr.op[0], pHT, pScope);
-
-				bytecode = jvm_invokevirtual;
-				memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-				g_code_length++;
-				g_IndexBytecodeArray++;
-
-				if ( p->opr.op[0]->type1 == T_STRING )
-					paramU2 = 14; //  java/io/PrintStream.print:(Ljava/lang/String;)V
-				else if ( p->opr.op[0]->type1 == T_INTEGER )
-					paramU2 = 60; //  java/io/PrintStream.print:(I)V
-				else if ( p->opr.op[0]->type1 == T_REAL )
-					paramU2 = 63; //  java/io/PrintStream.print:(D)V
-				else if ( p->opr.op[0]->type1 == T_BOOLEAN )
-					paramU2 = 66; //  java/io/PrintStream.print:(Z)V
-				else
-				{
-					if (g_myType1 == T_INTEGER)
-						paramU2 = 60; //  java/io/PrintStream.print:(I)V
-					else if (g_myType1 == T_REAL)
-						paramU2 = 63; //  java/io/PrintStream.print:(D)V
-				}
-				
-				if ( !isBigEndian() )
-				{
-					ARRAY_TO_U2(buff, paramU2);
-				}
-				memcpy(g_ArrayCode + g_IndexBytecodeArray, &paramU2, 2);
-				g_code_length += 2;
-				g_IndexBytecodeArray += 2;
-
-				return;
-			case T_KW_READ:
-				bytecode = jvm_invokestatic;
-				memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-				g_max_stack++;
-				g_code_length++;
-				g_IndexBytecodeArray++;
-
-				paramU2 = 15; // java/lang/System.console:()Ljava/io/Console;
-				if ( !isBigEndian() )
-				{
-					ARRAY_TO_U2(buff, paramU2);
-				}
-				memcpy(g_ArrayCode + g_IndexBytecodeArray, &paramU2, 2);
-				g_code_length += 2;
-				g_IndexBytecodeArray += 2;
-
-				bytecode = jvm_invokevirtual;
-				memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-				g_code_length++;
-				g_IndexBytecodeArray++;
-
-				paramU2 = 16; // java/io/Console.readLine:()Ljava/lang/String;
-				if ( !isBigEndian() )
-				{
-					ARRAY_TO_U2(buff, paramU2);
-				}
-				memcpy(g_ArrayCode + g_IndexBytecodeArray, &paramU2, 2);
-				g_code_length += 2;
-				g_IndexBytecodeArray += 2;
-
-				if ( p->opr.op[0]->type1 != T_STRING )
-				{
-					bytecode = jvm_invokestatic;
-					memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-					g_code_length++;
-					g_IndexBytecodeArray++;
-
-					if ( p->opr.op[0]->type1 == T_INTEGER )
-						paramU2 = 17; // java/lang/Integer.parseInt:(Ljava/lang/String;)I
-					else if ( p->opr.op[0]->type1 == T_REAL )
-						paramU2 = 18; // java/lang/Double.parseDouble:(Ljava/lang/String;)D
-					if ( !isBigEndian() )
-					{
-						ARRAY_TO_U2(buff, paramU2);
-					}
-					memcpy(g_ArrayCode + g_IndexBytecodeArray, &paramU2, 2);
-					g_code_length += 2;
-					g_IndexBytecodeArray += 2;
-				}
-
-				LoadArray(p->opr.op[0], pHT, pScope);
-				bLeftSide = 1;
-				MakeBytecodeMain(p->opr.op[0], pHT, pScope);
-				bLeftSide = 0;
-
-				return;
-			case T_STMT_LIST:
-				MakeBytecodeMain(p->opr.op[0], pHT, pScope);
-				MakeBytecodeMain(p->opr.op[1], pHT, pScope);
-				return;
-			case T_CODE_BLOCK:
-				MakeBytecodeMain(p->opr.op[0], pHT, pScope);
-				return;
-			case T_OP_ASSIGN:
-				LoadArray(p->opr.op[0], pHT, pScope);
-				LoadArray(p->opr.op[1], pHT, pScope);
-				bLeftSide = 0;
-				MakeBytecodeMain(p->opr.op[1], pHT, pScope);
-				if ( g_myType1 == -1 )
-					jvmTypeCheck(p->opr.op[0]->type1, p->opr.op[1]->type1);
-				else
-					jvmTypeCheck(p->opr.op[0]->type1, g_myType1);
-				bLeftSide = 1;
-				MakeBytecodeMain(p->opr.op[0], pHT, pScope);
-				bLeftSide = 0;
-				g_myType1 = -1;
-				return;
-			case T_OP_UMINUS:
-				LoadArray(p->opr.op[0], pHT, pScope);
-				MakeBytecodeMain(p->opr.op[0], pHT, pScope);
-
-				if ( p->opr.op[0]->type1 == T_INTEGER )
-				{
-					bytecode = jvm_ineg;
-					g_myType1 = T_INTEGER;
-				}
-				else if ( p->opr.op[0]->type1 == T_REAL )
-				{
-					bytecode = jvm_dneg;
-					g_myType1 = T_REAL;
-				}
-				memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-				g_code_length++;
-				g_IndexBytecodeArray++;
-
-				return;
-			case T_OP_PLUS:
-				if ( p->type1 != T_STRING )
-				{
-					LoadArray(p->opr.op[0], pHT, pScope);
-					MakeBytecodeMain(p->opr.op[0], pHT, pScope);
-					jvmTypeCheck(p->type1, p->opr.op[0]->type1);
-
-					LoadArray(p->opr.op[1], pHT, pScope);
-					MakeBytecodeMain(p->opr.op[1], pHT, pScope);
-					jvmTypeCheck(p->type1, p->opr.op[1]->type1);
-
-					if ( p->type1 == T_INTEGER )
-						bytecode = jvm_iadd;
-					else if ( p->type1 == T_REAL )
-						bytecode = jvm_dadd;
-					memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-					g_code_length++;
-					g_IndexBytecodeArray++;
-				}
-				else // Concatenazione di due stringhe
-				{
-					bytecode = jvm_new;
-					memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-					g_code_length++;
-					g_IndexBytecodeArray++;
-
-					paramU2 = 6; // class java/lang/StringBuilder
-					if ( !isBigEndian() )
-					{
-						ARRAY_TO_U2(buff, paramU2);
-					}
-					memcpy(g_ArrayCode + g_IndexBytecodeArray, &paramU2, 2);
-					g_code_length += 2;
-					g_IndexBytecodeArray += 2;
-
-					bytecode = jvm_dup;
-					memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-					g_code_length++;
-					g_IndexBytecodeArray++;
-
-					bytecode = jvm_invokespecial;
-					memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-					g_code_length++;
-					g_IndexBytecodeArray++;
-
-					paramU2 = 11; // java/lang/StringBuilder."<init>":()V
-					if ( !isBigEndian() )
-					{
-						ARRAY_TO_U2(buff, paramU2);
-					}
-					memcpy(g_ArrayCode + g_IndexBytecodeArray, &paramU2, 2);
-					g_code_length += 2;
-					g_IndexBytecodeArray += 2;
-
-					LoadArray(p->opr.op[0], pHT, pScope);
-					MakeBytecodeMain(p->opr.op[0], pHT, pScope);
-
-					bytecode = jvm_invokevirtual;
-					memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-					g_code_length++;
-					g_IndexBytecodeArray++;
-
-					paramU2 = 12; // java/lang/StringBuilder.append:(Ljava/lang/String;)Ljava/lang/StringBuilder;
-					if ( !isBigEndian() )
-					{
-						ARRAY_TO_U2(buff, paramU2);
-					}
-					memcpy(g_ArrayCode + g_IndexBytecodeArray, &paramU2, 2);
-					g_code_length += 2;
-					g_IndexBytecodeArray += 2;
-
-					LoadArray(p->opr.op[1], pHT, pScope);
-					MakeBytecodeMain(p->opr.op[1], pHT, pScope);
-
-					bytecode = jvm_invokevirtual;
-					memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-					g_code_length++;
-					g_IndexBytecodeArray++;
-
-					paramU2 = 12; // java/lang/StringBuilder.append:(Ljava/lang/String;)Ljava/lang/StringBuilder;
-					if ( !isBigEndian() )
-					{
-						ARRAY_TO_U2(buff, paramU2);
-					}
-					memcpy(g_ArrayCode + g_IndexBytecodeArray, &paramU2, 2);
-					g_code_length += 2;
-					g_IndexBytecodeArray += 2;
-
-					bytecode = jvm_invokevirtual;
-					memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-					g_code_length++;
-					g_IndexBytecodeArray++;
-
-					paramU2 = 13; // java/lang/StringBuilder.toString:()Ljava/lang/String;
-					if ( !isBigEndian() )
-					{
-						ARRAY_TO_U2(buff, paramU2);
-					}
-					memcpy(g_ArrayCode + g_IndexBytecodeArray, &paramU2, 2);
-					g_code_length += 2;
-					g_IndexBytecodeArray += 2;
-				}
-
-				return;
-			case T_OP_MINUS:
-				LoadArray(p->opr.op[0], pHT, pScope);
-				MakeBytecodeMain(p->opr.op[0], pHT, pScope);
-				jvmTypeCheck(p->type1, p->opr.op[0]->type1);
-
-				LoadArray(p->opr.op[1], pHT, pScope);
-				MakeBytecodeMain(p->opr.op[1], pHT, pScope);
-				jvmTypeCheck(p->type1, p->opr.op[1]->type1);
-
-				if ( p->type1 == T_INTEGER )
-					bytecode = jvm_isub;
-				else if ( p->type1 == T_REAL )
-					bytecode = jvm_dsub;
-				memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-				g_code_length++;
-				g_IndexBytecodeArray++;
-
-				return;
-			case T_OP_MULT:
-				LoadArray(p->opr.op[0], pHT, pScope);
-				MakeBytecodeMain(p->opr.op[0], pHT, pScope);
-				jvmTypeCheck(p->type1, p->opr.op[0]->type1);
-
-				LoadArray(p->opr.op[1], pHT, pScope);
-				MakeBytecodeMain(p->opr.op[1], pHT, pScope);
-				jvmTypeCheck(p->type1, p->opr.op[1]->type1);
-
-				if ( p->type1 == T_INTEGER )
-					bytecode = jvm_imul;
-				else if ( p->type1 == T_REAL )
-					bytecode = jvm_dmul;
-				memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-				g_code_length++;
-				g_IndexBytecodeArray++;
-
-				return;
-			case T_OP_DIV:
-				LoadArray(p->opr.op[0], pHT, pScope);
-				MakeBytecodeMain(p->opr.op[0], pHT, pScope);
-				jvmTypeCheck(p->type1, p->opr.op[0]->type1);
-
-				LoadArray(p->opr.op[1], pHT, pScope);
-				MakeBytecodeMain(p->opr.op[1], pHT, pScope);
-				jvmTypeCheck(p->type1, p->opr.op[1]->type1);
-
-				if ( p->type1 == T_INTEGER )
-					bytecode = jvm_idiv;
-				else if ( p->type1 == T_REAL )
-					bytecode = jvm_ddiv;
-				memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-				g_code_length++;
-				g_IndexBytecodeArray++;
-
-				return;
-			case T_OP_LT:
-				LoadArray(p->opr.op[0], pHT, pScope);
-				MakeBytecodeMain(p->opr.op[0], pHT, pScope);
-				jvmTypeCheck(p->type1, p->opr.op[0]->type1);
-
-				LoadArray(p->opr.op[1], pHT, pScope);
-				MakeBytecodeMain(p->opr.op[1], pHT, pScope);
-				jvmTypeCheck(p->type1, p->opr.op[1]->type1);
-
-				if ( p->type1 == T_INTEGER )
-				{
-					bytecode = jvm_if_icmpge;
-					memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-					g_code_length++;
-					g_IndexBytecodeArray++;
-				}
-				else if ( p->type1 == T_REAL )
-				{
-					bytecode = jvm_dcmpg;
-					memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-					g_code_length++;
-					g_IndexBytecodeArray++;
-
-					bytecode = jvm_ifge;
-					memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-					g_code_length++;
-					g_IndexBytecodeArray++;
-				}
-
-				paramU2 = 7; // = 6 + 1 ( + 1 perchè comprende il byte dell'istruzione if_icmpge o ifge )
-				//paramU2 = -5;
-				if ( !isBigEndian() )
-				{
-					ARRAY_TO_U2(buff, paramU2);
-				}
-				memcpy(g_ArrayCode + g_IndexBytecodeArray, &paramU2, 2);
-				g_code_length += 2;
-				g_IndexBytecodeArray += 2;
-
-				bytecode = jvm_iconst_1;
-				memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-				g_code_length++;
-				g_IndexBytecodeArray++;
-
-				bytecode = jvm_goto;
-				memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-				g_code_length++;
-				g_IndexBytecodeArray++;
-
-				paramU2 = 4; // = 3 + 1 ( + 1 perchè comprende il byte dell'istruzione goto )
-				//paramU2 = -4;
-				if ( !isBigEndian() )
-				{
-					ARRAY_TO_U2(buff, paramU2);
-				}
-				memcpy(g_ArrayCode + g_IndexBytecodeArray, &paramU2, 2);
-				g_code_length += 2;
-				g_IndexBytecodeArray += 2;
-
-				bytecode = jvm_iconst_0;
-				memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-				g_code_length++;
-				g_IndexBytecodeArray++;
-
-				return;
-			case T_OP_GT:
-				LoadArray(p->opr.op[0], pHT, pScope);
-				MakeBytecodeMain(p->opr.op[0], pHT, pScope);
-				jvmTypeCheck(p->type1, p->opr.op[0]->type1);
-
-				LoadArray(p->opr.op[1], pHT, pScope);
-				MakeBytecodeMain(p->opr.op[1], pHT, pScope);
-				jvmTypeCheck(p->type1, p->opr.op[1]->type1);
-
-				if ( p->type1 == T_INTEGER )
-				{
-					bytecode = jvm_if_icmple;
-					memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-					g_code_length++;
-					g_IndexBytecodeArray++;
-				}
-				else if ( p->type1 == T_REAL )
-				{
-					bytecode = jvm_dcmpl;
-					memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-					g_code_length++;
-					g_IndexBytecodeArray++;
-
-					bytecode = jvm_ifle;
-					memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-					g_code_length++;
-					g_IndexBytecodeArray++;
-				}
-
-				paramU2 = 7; // = 6 + 1 ( + 1 perchè comprende il byte dell'istruzione if_icmpge o ifge )
-				//paramU2 = -5;
-				if ( !isBigEndian() )
-				{
-					ARRAY_TO_U2(buff, paramU2);
-				}
-				memcpy(g_ArrayCode + g_IndexBytecodeArray, &paramU2, 2);
-				g_code_length += 2;
-				g_IndexBytecodeArray += 2;
-
-				bytecode = jvm_iconst_1;
-				memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-				g_code_length++;
-				g_IndexBytecodeArray++;
-
-				bytecode = jvm_goto;
-				memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-				g_code_length++;
-				g_IndexBytecodeArray++;
-
-				paramU2 = 4; // = 3 + 1 ( + 1 perchè comprende il byte dell'istruzione goto )
-				//paramU2 = -4;
-				if ( !isBigEndian() )
-				{
-					ARRAY_TO_U2(buff, paramU2);
-				}
-				memcpy(g_ArrayCode + g_IndexBytecodeArray, &paramU2, 2);
-				g_code_length += 2;
-				g_IndexBytecodeArray += 2;
-
-				bytecode = jvm_iconst_0;
-				memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-				g_code_length++;
-				g_IndexBytecodeArray++;
-
-				return;
-			case T_OP_GE:
-				LoadArray(p->opr.op[0], pHT, pScope);
-				MakeBytecodeMain(p->opr.op[0], pHT, pScope);
-				jvmTypeCheck(p->type1, p->opr.op[0]->type1);
-
-				LoadArray(p->opr.op[1], pHT, pScope);
-				MakeBytecodeMain(p->opr.op[1], pHT, pScope);
-				jvmTypeCheck(p->type1, p->opr.op[1]->type1);
-
-				if ( p->type1 == T_INTEGER )
-				{
-					bytecode = jvm_if_icmplt;
-					memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-					g_code_length++;
-					g_IndexBytecodeArray++;
-				}
-				else if ( p->type1 == T_REAL )
-				{
-					bytecode = jvm_dcmpl;
-					memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-					g_code_length++;
-					g_IndexBytecodeArray++;
-
-					bytecode = jvm_iflt;
-					memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-					g_code_length++;
-					g_IndexBytecodeArray++;
-				}
-
-				paramU2 = 7; // = 6 + 1 ( + 1 perchè comprende il byte dell'istruzione if_icmpge o ifge )
-				//paramU2 = -5;
-				if ( !isBigEndian() )
-				{
-					ARRAY_TO_U2(buff, paramU2);
-				}
-				memcpy(g_ArrayCode + g_IndexBytecodeArray, &paramU2, 2);
-				g_code_length += 2;
-				g_IndexBytecodeArray += 2;
-
-				bytecode = jvm_iconst_1;
-				memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-				g_code_length++;
-				g_IndexBytecodeArray++;
-
-				bytecode = jvm_goto;
-				memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-				g_code_length++;
-				g_IndexBytecodeArray++;
-
-				paramU2 = 4; // = 3 + 1 ( + 1 perchè comprende il byte dell'istruzione goto )
-				//paramU2 = -4;
-				if ( !isBigEndian() )
-				{
-					ARRAY_TO_U2(buff, paramU2);
-				}
-				memcpy(g_ArrayCode + g_IndexBytecodeArray, &paramU2, 2);
-				g_code_length += 2;
-				g_IndexBytecodeArray += 2;
-
-				bytecode = jvm_iconst_0;
-				memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-				g_code_length++;
-				g_IndexBytecodeArray++;
-
-				return;
-			case T_OP_LE:
-				LoadArray(p->opr.op[0], pHT, pScope);
-				MakeBytecodeMain(p->opr.op[0], pHT, pScope);
-				jvmTypeCheck(p->type1, p->opr.op[0]->type1);
-
-				LoadArray(p->opr.op[1], pHT, pScope);
-				MakeBytecodeMain(p->opr.op[1], pHT, pScope);
-				jvmTypeCheck(p->type1, p->opr.op[1]->type1);
-
-				if ( p->type1 == T_INTEGER )
-				{
-					bytecode = jvm_if_icmpgt;
-					memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-					g_code_length++;
-					g_IndexBytecodeArray++;
-				}
-				else if ( p->type1 == T_REAL )
-				{
-					bytecode = jvm_dcmpl;
-					memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-					g_code_length++;
-					g_IndexBytecodeArray++;
-
-					bytecode = jvm_ifgt;
-					memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-					g_code_length++;
-					g_IndexBytecodeArray++;
-				}
-
-				paramU2 = 7; // = 6 + 1 ( + 1 perchè comprende il byte dell'istruzione if_icmpge o ifge )
-				//paramU2 = -5;
-				if ( !isBigEndian() )
-				{
-					ARRAY_TO_U2(buff, paramU2);
-				}
-				memcpy(g_ArrayCode + g_IndexBytecodeArray, &paramU2, 2);
-				g_code_length += 2;
-				g_IndexBytecodeArray += 2;
-
-				bytecode = jvm_iconst_1;
-				memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-				g_code_length++;
-				g_IndexBytecodeArray++;
-
-				bytecode = jvm_goto;
-				memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-				g_code_length++;
-				g_IndexBytecodeArray++;
-
-				paramU2 = 4; // = 3 + 1 ( + 1 perchè comprende il byte dell'istruzione goto )
-				//paramU2 = -4;
-				if ( !isBigEndian() )
-				{
-					ARRAY_TO_U2(buff, paramU2);
-				}
-				memcpy(g_ArrayCode + g_IndexBytecodeArray, &paramU2, 2);
-				g_code_length += 2;
-				g_IndexBytecodeArray += 2;
-
-				bytecode = jvm_iconst_0;
-				memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-				g_code_length++;
-				g_IndexBytecodeArray++;
-
-				return;
-			case T_OP_NE:
-				LoadArray(p->opr.op[0], pHT, pScope);
-				MakeBytecodeMain(p->opr.op[0], pHT, pScope);
-				jvmTypeCheck(p->type1, p->opr.op[0]->type1);
-
-				LoadArray(p->opr.op[1], pHT, pScope);
-				MakeBytecodeMain(p->opr.op[1], pHT, pScope);
-				jvmTypeCheck(p->type1, p->opr.op[1]->type1);
-
-				if ( p->type1 == T_INTEGER )
-				{
-					bytecode = jvm_if_icmpeq;
-					memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-					g_code_length++;
-					g_IndexBytecodeArray++;
-				}
-				else if ( p->type1 == T_REAL )
-				{
-					bytecode = jvm_dcmpl;
-					memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-					g_code_length++;
-					g_IndexBytecodeArray++;
-
-					bytecode = jvm_ifeq;
-					memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-					g_code_length++;
-					g_IndexBytecodeArray++;
-				}
-
-				paramU2 = 7; // = 6 + 1 ( + 1 perchè comprende il byte dell'istruzione if_icmpge o ifge )
-				//paramU2 = -5;
-				if ( !isBigEndian() )
-				{
-					ARRAY_TO_U2(buff, paramU2);
-				}
-				memcpy(g_ArrayCode + g_IndexBytecodeArray, &paramU2, 2);
-				g_code_length += 2;
-				g_IndexBytecodeArray += 2;
-
-				bytecode = jvm_iconst_1;
-				memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-				g_code_length++;
-				g_IndexBytecodeArray++;
-
-				bytecode = jvm_goto;
-				memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-				g_code_length++;
-				g_IndexBytecodeArray++;
-
-				paramU2 = 4; // = 3 + 1 ( + 1 perchè comprende il byte dell'istruzione goto )
-				//paramU2 = -4;
-				if ( !isBigEndian() )
-				{
-					ARRAY_TO_U2(buff, paramU2);
-				}
-				memcpy(g_ArrayCode + g_IndexBytecodeArray, &paramU2, 2);
-				g_code_length += 2;
-				g_IndexBytecodeArray += 2;
-
-				bytecode = jvm_iconst_0;
-				memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-				g_code_length++;
-				g_IndexBytecodeArray++;
-
-				return;
-			case T_OP_EQ:
-				LoadArray(p->opr.op[0], pHT, pScope);
-				MakeBytecodeMain(p->opr.op[0], pHT, pScope);
-				jvmTypeCheck(p->type1, p->opr.op[0]->type1);
-
-				LoadArray(p->opr.op[1], pHT, pScope);
-				MakeBytecodeMain(p->opr.op[1], pHT, pScope);
-				jvmTypeCheck(p->type1, p->opr.op[1]->type1);
-
-				if ( p->type1 == T_INTEGER )
-				{
-					bytecode = jvm_if_icmpne;
-					memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-					g_code_length++;
-					g_IndexBytecodeArray++;
-				}
-				else if ( p->type1 == T_REAL )
-				{
-					bytecode = jvm_dcmpl;
-					memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-					g_code_length++;
-					g_IndexBytecodeArray++;
-
-					bytecode = jvm_ifne;
-					memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-					g_code_length++;
-					g_IndexBytecodeArray++;
-				}
-
-				paramU2 = 7; // = 6 + 1 ( + 1 perchè comprende il byte dell'istruzione if_icmpge o ifge )
-				//paramU2 = -5;
-				if ( !isBigEndian() )
-				{
-					ARRAY_TO_U2(buff, paramU2);
-				}
-				memcpy(g_ArrayCode + g_IndexBytecodeArray, &paramU2, 2);
-				g_code_length += 2;
-				g_IndexBytecodeArray += 2;
-
-				bytecode = jvm_iconst_1;
-				memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-				g_code_length++;
-				g_IndexBytecodeArray++;
-
-				bytecode = jvm_goto;
-				memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-				g_code_length++;
-				g_IndexBytecodeArray++;
-
-				paramU2 = 4; // = 3 + 1 ( + 1 perchè comprende il byte dell'istruzione goto )
-				//paramU2 = -4;
-				if ( !isBigEndian() )
-				{
-					ARRAY_TO_U2(buff, paramU2);
-				}
-				memcpy(g_ArrayCode + g_IndexBytecodeArray, &paramU2, 2);
-				g_code_length += 2;
-				g_IndexBytecodeArray += 2;
-
-				bytecode = jvm_iconst_0;
-				memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-				g_code_length++;
-				g_IndexBytecodeArray++;
-
-				return;
-			case T_OP_AND:
-				LoadArray(p->opr.op[0], pHT, pScope);
-				MakeBytecodeMain(p->opr.op[0], pHT, pScope);
-				jvmTypeCheck(p->type1, p->opr.op[0]->type1);
-
-				bytecode = jvm_ifeq;
-				memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-				g_code_length++;
-				g_IndexBytecodeArray++;
-				segnaposto1 = g_IndexBytecodeArray;
-
-				paramU2 = 0;
-				//paramU2 = -5;
-				if ( !isBigEndian() )
-				{
-					ARRAY_TO_U2(buff, paramU2);
-				}
-				memcpy(g_ArrayCode + g_IndexBytecodeArray, &paramU2, 2);
-				g_code_length += 2;
-				g_IndexBytecodeArray += 2;
-
-				LoadArray(p->opr.op[1], pHT, pScope);
-				MakeBytecodeMain(p->opr.op[1], pHT, pScope);
-				jvmTypeCheck(p->type1, p->opr.op[1]->type1);
-
-				bytecode = jvm_ifeq;
-				memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-				g_code_length++;
-				g_IndexBytecodeArray++;
-				segnaposto2 = g_IndexBytecodeArray;
-
-				paramU2 = 0;
-				//paramU2 = -5;
-				if ( !isBigEndian() )
-				{
-					ARRAY_TO_U2(buff, paramU2);
-				}
-				memcpy(g_ArrayCode + g_IndexBytecodeArray, &paramU2, 2);
-				g_code_length += 2;
-				g_IndexBytecodeArray += 2;
-
-				bytecode = jvm_iconst_1;
-				memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-				g_code_length++;
-				g_IndexBytecodeArray++;
-
-				bytecode = jvm_goto;
-				memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-				g_code_length++;
-				g_IndexBytecodeArray++;
-
-				paramU2 = 4; // = 3 + 1 ( + 1 perchè comprende il byte dell'istruzione goto )
-				//paramU2 = -4;
-				if ( !isBigEndian() )
-				{
-					ARRAY_TO_U2(buff, paramU2);
-				}
-				memcpy(g_ArrayCode + g_IndexBytecodeArray, &paramU2, 2);
-				g_code_length += 2;
-				g_IndexBytecodeArray += 2;
-
-				paramU2 = g_IndexBytecodeArray - segnaposto1 + 1;
-				if ( !isBigEndian() )
-				{
-					ARRAY_TO_U2(buff, paramU2);
-				}
-				memcpy(g_ArrayCode + segnaposto1, &paramU2, 2);
-
-				paramU2 = g_IndexBytecodeArray - segnaposto2 + 1;
-				if ( !isBigEndian() )
-				{
-					ARRAY_TO_U2(buff, paramU2);
-				}
-				memcpy(g_ArrayCode + segnaposto2, &paramU2, 2);
-
-				bytecode = jvm_iconst_0;
-				memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-				g_code_length++;
-				g_IndexBytecodeArray++;
-
-				return;
-			case T_OP_OR:
-				LoadArray(p->opr.op[0], pHT, pScope);
-				MakeBytecodeMain(p->opr.op[0], pHT, pScope);
-				jvmTypeCheck(p->type1, p->opr.op[0]->type1);
-
-				bytecode = jvm_ifne;
-				memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-				g_code_length++;
-				g_IndexBytecodeArray++;
-				segnaposto1 = g_IndexBytecodeArray;
-
-				paramU2 = 0;
-				//paramU2 = -5;
-				if ( !isBigEndian() )
-				{
-					ARRAY_TO_U2(buff, paramU2);
-				}
-				memcpy(g_ArrayCode + g_IndexBytecodeArray, &paramU2, 2);
-				g_code_length += 2;
-				g_IndexBytecodeArray += 2;
-
-				LoadArray(p->opr.op[1], pHT, pScope);
-				MakeBytecodeMain(p->opr.op[1], pHT, pScope);
-				jvmTypeCheck(p->type1, p->opr.op[1]->type1);
-
-				bytecode = jvm_ifeq;
-				memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-				g_code_length++;
-				g_IndexBytecodeArray++;
-				segnaposto2 = g_IndexBytecodeArray;
-
-				paramU2 = 0;
-				//paramU2 = -5;
-				if ( !isBigEndian() )
-				{
-					ARRAY_TO_U2(buff, paramU2);
-				}
-				memcpy(g_ArrayCode + g_IndexBytecodeArray, &paramU2, 2);
-				g_code_length += 2;
-				g_IndexBytecodeArray += 2;
-
-				paramU2 = g_IndexBytecodeArray - segnaposto1 + 1;
-				if ( !isBigEndian() )
-				{
-					ARRAY_TO_U2(buff, paramU2);
-				}
-				memcpy(g_ArrayCode + segnaposto1, &paramU2, 2);
-
-				bytecode = jvm_iconst_1;
-				memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-				g_code_length++;
-				g_IndexBytecodeArray++;
-
-				bytecode = jvm_goto;
-				memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-				g_code_length++;
-				g_IndexBytecodeArray++;
-
-				paramU2 = 4; // = 3 + 1 ( + 1 perchè comprende il byte dell'istruzione goto )
-				//paramU2 = -4;
-				if ( !isBigEndian() )
-				{
-					ARRAY_TO_U2(buff, paramU2);
-				}
-				memcpy(g_ArrayCode + g_IndexBytecodeArray, &paramU2, 2);
-				g_code_length += 2;
-				g_IndexBytecodeArray += 2;
-
-				paramU2 = g_IndexBytecodeArray - segnaposto2 + 1;
-				if ( !isBigEndian() )
-				{
-					ARRAY_TO_U2(buff, paramU2);
-				}
-				memcpy(g_ArrayCode + segnaposto2, &paramU2, 2);
-
-				bytecode = jvm_iconst_0;
-				memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-				g_code_length++;
-				g_IndexBytecodeArray++;
-
-				return;
-			case T_OP_NOT:
-				LoadArray(p->opr.op[0], pHT, pScope);
-				MakeBytecodeMain(p->opr.op[0], pHT, pScope);
-				jvmTypeCheck(p->type1, p->opr.op[0]->type1);
-
-				bytecode = jvm_ifne;
-				memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-				g_code_length++;
-				g_IndexBytecodeArray++;
-
-				paramU2 = 7; // = 6 + 1 ( + 1 perchè comprende il byte dell'istruzione if_icmpge o ifge )
-				//paramU2 = -5;
-				if ( !isBigEndian() )
-				{
-					ARRAY_TO_U2(buff, paramU2);
-				}
-				memcpy(g_ArrayCode + g_IndexBytecodeArray, &paramU2, 2);
-				g_code_length += 2;
-				g_IndexBytecodeArray += 2;
-
-				bytecode = jvm_iconst_1;
-				memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-				g_code_length++;
-				g_IndexBytecodeArray++;
-
-				bytecode = jvm_goto;
-				memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-				g_code_length++;
-				g_IndexBytecodeArray++;
-
-				paramU2 = 4; // = 3 + 1 ( + 1 perchè comprende il byte dell'istruzione goto )
-				//paramU2 = -4;
-				if ( !isBigEndian() )
-				{
-					ARRAY_TO_U2(buff, paramU2);
-				}
-				memcpy(g_ArrayCode + g_IndexBytecodeArray, &paramU2, 2);
-				g_code_length += 2;
-				g_IndexBytecodeArray += 2;
-
-				bytecode = jvm_iconst_0;
-				memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-				g_code_length++;
-				g_IndexBytecodeArray++;
-
-				return;
-			}
-		}
-		break;
-    }
-
-	//bytecode = jvm_return;
-	//memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-	//g_code_length++;
-
-	// return;
+	(void)p;
+	(void)pHT;
+	(void)pScope;
 }
 
-void jvmStart(char *szInputFileName, nodeType *pTree, Scope *pScope)
+void jvmStart(char *szInputFileName, nodeType **ppTree, Scope *pScope, int optLevel)
 {
 	FILE *fp;
 	U2 constant_pool_count;
 	U2 attributes_count = 0;
-	//int indexConstantPool;
-
-	U1 bytecode;
-
-	//char *szFileName = "PrintDemo.class";
 
 	char szOutputFileName[512];
 	char szFileNameWithoutExt[512];
@@ -3669,89 +1593,74 @@ void jvmStart(char *szInputFileName, nodeType *pTree, Scope *pScope)
 	char szSourceFile[512];
 	char szClassName[512];
 
-	//unsigned char *buff;
 	BYTE *buff;
-	U1 fb[8]; // Necessario per usare le macro;
+	U1 fb[8];
 
 	jvmHashTable **pHT;
 	int x;
+	TACList tac;
 
 	MakeOutputFileName(szInputFileName, szOutputFileName, szFileNameWithoutExt, szExt);
 	strcpy(szSourceFile, szFileNameWithoutExt);
-	strcat(szSourceFile, ".");
-	strcat(szSourceFile, szExt);
-
+	if (szExt[0] != '\0') {
+		strcat(szSourceFile, ".");
+		strcat(szSourceFile, szExt);
+	}
 	strcpy(szClassName, szFileNameWithoutExt);
 
 	fp = fopen(szOutputFileName, "wb");
-	if ( !fp )
-	{
+	if (!fp) {
 		printf("Errore. Impossibile creare il file %s.\n", szOutputFileName);
 		return;
 	}
 
-	/*
-	pHT = (jvmHashTable**)malloc(sizeof(jvmHashTable*) * JVM_HT_SIZE);
-	if ( pHT != NULL )
-	{
-		for ( x = 0; x < JVM_HT_SIZE; x++ )
-		{
-			pHT[x] = (jvmHashTable*)malloc(sizeof(jvmHashTable));
-			if ( pHT[x] == NULL )
-			{
-				printf("Memoria non sufficiente.\n");
-				return;
-			}
-			//pHT[x] = NULL;
-		}
-	}
-	else
-	{
-		printf("Memoria non sufficiente.\n");
-		return;
-	}
-	*/
-	
 	pHT = (jvmHashTable**)calloc(JVM_HT_SIZE, sizeof(jvmHashTable*));
-	if ( pHT == NULL )
-	{
+	if (pHT == NULL) {
 		printf("Memoria non sufficiente.\n");
+		fclose(fp);
 		return;
 	}
 
+	/* 1) Costruisce e ottimizza il TAC (-O0 .. -O3) */
+	tacBuild(ppTree, pScope, optLevel, &tac);
+
+	/* 2) Inizializza stato del generatore JVM */
+	g_ConstantPoolCount = 68;
+	g_IndexBytecodeArray = 0;
+	g_code_length = 0;
+	g_max_stack = 1;
+	g_cur_stack = 0;
 
 	jvmWriteHeader(fp);
 	g_IndexConstantPool = jvmMakeConstantPool(szSourceFile, szClassName);
 
+	/* 3) Inizializza variabili dichiarate/array ed emette bytecode dal TAC */
 	MakeBytecodeDeclInitMain(pHT, pScope);
-	MakeBytecodeMain(pTree, pHT, pScope);
+	MakeBytecodeFromTAC(&tac, pHT, pScope);
 
-	bytecode = jvm_return;
-	memcpy(g_ArrayCode + g_IndexBytecodeArray, &bytecode, 1);
-	g_code_length++;
+	jvmEmitU1(jvm_return, 0);
 
+	tacFree(&tac);
 
-	constant_pool_count = g_ConstantPoolCount + 1;
-	if ( !isBigEndian() )
-	{
+	constant_pool_count = (U2)(g_ConstantPoolCount + 1);
+	if (!isBigEndian()) {
 		ARRAY_TO_U2(buff, constant_pool_count);
 	}
 	fwrite(&constant_pool_count, sizeof(U2), 1, fp);
-	fwrite(g_ArrayConstantPool, g_IndexConstantPool, 1, fp);
+	fwrite(g_ArrayConstantPool, (size_t)g_IndexConstantPool, 1, fp);
 
 	jvmWriteInfo(fp);
 	jvmWriteInitMethod(fp);
-	jvmWriteMainMethod(fp, pTree, pHT);
+	jvmWriteMainMethod(fp, *ppTree, pHT);
 
-	if ( !isBigEndian() )
-	{
+	if (!isBigEndian()) {
 		ARRAY_TO_U2(buff, attributes_count);
 	}
 	fwrite(&attributes_count, sizeof(U2), 1, fp);
 
 	fclose(fp);
 
-	for ( x = 0; x < JVM_HT_SIZE; x++)
+	for (x = 0; x < JVM_HT_SIZE; x++)
 		jvmhtFree(pHT[x]);
 	free(pHT);
 }

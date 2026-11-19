@@ -505,6 +505,7 @@ void jvmWriteMainMethod(FILE *fp, nodeType *pTree, jvmHashTable **pHT);
 void MakeOutputFileName(char *szInputFileName, char *szOutputFileName, char *szFileNameWithoutExt, char *szExt);
 void jvmTypeCheck(int t1, int t2);
 void MakeBytecodeMain(nodeType *p, jvmHashTable **pHT, Scope *pScope);
-void jvmStart(char *szInputFileName, nodeType *pTree, Scope *pScope);
+int jvmAddClassConstant(const char *szClassName, int index);
+void jvmStart(char *szInputFileName, nodeType **ppTree, Scope *pScope, int optLevel);
 
 #endif // JVM_H

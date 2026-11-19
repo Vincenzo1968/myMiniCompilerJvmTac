@@ -467,6 +467,29 @@ static char *emitTAC(TACList *tac, Scope *pScope, nodeType *p)
     return NULL;
 }
 
+typedef struct {
+    int start;
+    int end;
+    int *preds;
+    int numPreds;
+    int capPreds;
+    int *succs;
+    int numSuccs;
+    int capSuccs;
+    int reachable;
+} BasicBlock;
+
+typedef struct {
+    BasicBlock *blocks;
+    int numBlocks;
+} CFG;
+
+static void tacCompact(TACList *tac);
+static void cfgBuild(const TACList *tac, CFG *cfg);
+static void cfgFree(CFG *cfg);
+static int cfgEliminateUnreachable(TACList *tac, CFG *cfg);
+static int cfgGlobalLivenessDCE(TACList *tac, const CFG *cfg);
+
 /* =========================================================================
  * PASSAGGIO 3: Ottimizzatore -O1 su TACList
  * ========================================================================= */
@@ -793,8 +816,19 @@ void tacOptimizeO1(TACList *tac)
                 changed = 1;
             }
         }
+
+        /* 4) CFG: eliminazione codice irraggiungibile e liveness DCE globale */
+        tacCompact(tac);
+        if (tac->count > 0) {
+            CFG cfg;
+            cfgBuild(tac, &cfg);
+            if (cfgEliminateUnreachable(tac, &cfg)) changed = 1;
+            if (cfgGlobalLivenessDCE(tac, &cfg))    changed = 1;
+            cfgFree(&cfg);
+        }
     } while (changed);
 
+    tacCompact(tac);
     envFree(&env);
 }
 
@@ -832,56 +866,51 @@ void tacPrint(const TACList *list)
     }
 }
 
-void tacGenerate(nodeType *pTree, Scope *pScope, int optLevel)
+void tacBuild(nodeType **ppTree, Scope *pScope, int optLevel, TACList *outTac)
 {
-    TACList tac;
+    nodeType *pTree = ppTree ? *ppTree : NULL;
+
     s_label = 1;
     s_temp = 1;
-    tacInit(&tac);
+    tacInit(outTac);
+
+    if (!pTree) {
+        return;
+    }
 
     if (optLevel >= 1) {
         pTree = tacOptimizeAST(pTree);
+        if (ppTree) {
+            *ppTree = pTree;
+        }
     }
 
-    free(emitTAC(&tac, pScope, pTree));
+    free(emitTAC(outTac, pScope, pTree));
 
     if (optLevel >= 1) {
-        tacOptimizeO1(&tac);
+        tacOptimizeO1(outTac);
     }
 
-	if (optLevel >= 2) {
-        tacOptimizeO2(&tac);
+    if (optLevel >= 2) {
+        tacOptimizeO2(outTac);
     }
-    
+
     if (optLevel >= 3) {
-        tacOptimizeO3(&tac);
+        tacOptimizeO3(outTac);
     }
+}
 
+void tacGenerate(nodeType *pTree, Scope *pScope, int optLevel)
+{
+    TACList tac;
+    tacBuild(&pTree, pScope, optLevel, &tac);
     tacPrint(&tac);
-    
     tacFree(&tac);
 }
 
 /* =========================================================================
  * PASSAGGIO 4: Ottimizzatore -O2 (Basic Blocks, CFG, CSE, Global Liveness)
  * ========================================================================= */
-
-typedef struct {
-    int start;
-    int end;
-    int *preds;
-    int numPreds;
-    int capPreds;
-    int *succs;
-    int numSuccs;
-    int capSuccs;
-    int reachable;
-} BasicBlock;
-
-typedef struct {
-    BasicBlock *blocks;
-    int numBlocks;
-} CFG;
 
 static void tacCompact(TACList *tac)
 {

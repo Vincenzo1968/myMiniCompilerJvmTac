@@ -80,4 +80,6 @@ void tacOptimizeO1(TACList *list);
 void tacOptimizeO2(TACList *list);
 void tacOptimizeO3(TACList *list);
 
+void tacBuild(nodeType **ppTree, Scope *pScope, int optLevel, TACList *outTac);
+
 #endif /* TAC_H */

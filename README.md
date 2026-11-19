@@ -1,22 +1,22 @@
 # myMiniCompilerJvmTac
 
-An educational compiler written in ANSI/C99 featuring a recursive descent parser, an optimizing Three-Address Code (TAC) intermediate representation (`-O0` through `-O3`), and a native JVM bytecode (`.class`) backend.
+An educational compiler written in ANSI/C99 featuring a recursive descent parser, an optimizing Three-Address Code (TAC) intermediate representation (`-O0` through `-O3`), an AST interpreter, and a native JVM bytecode (`.class`) backend driven by the optimized TAC.
 
 ## Features
 
-- **Frontend:** Hand-written lexical analyzer (`scanner.c`), recursive descent parser (`parser.c`), AST builder (`ast.c`), and scoped symbol table (`symtab.c`).
+- **Frontend:** Hand-written lexical analyzer (`scanner.c`), recursive descent parser (`parser.c`) with panic-mode error recovery, AST builder (`ast.c`), and scoped symbol table (`symtab.c`).
 - **Data Types & Control Flow:**
   - Primitive types: `int`, `real` (64-bit IEEE 754 `double`), `bool`, and `string`.
   - Multidimensional arrays (`array name[N][M] of type`).
   - Control structures: `if-else`, `while`, `do-while`, compound blocks (`begin ... end`), `read`, and `print`.
-  - Short-circuit boolean operators (`&`, `|`, `!`) and relational/arithmetic expressions.
+  - Boolean operators (`&`, `|`, `!`) and relational/arithmetic expressions.
 - **Three-Address Code (TAC) & Optimizer (`tac.c`):**
   - `-O0`: Raw TAC generation.
   - `-O1`: AST/TAC constant folding, algebraic simplifications, copy propagation, local dead code elimination, and peephole jump optimizations.
   - `-O2`: Control Flow Graph (CFG) construction, unreachable block elimination, Global Common Subexpression Elimination (CSE) with commutativity, and Global Liveness-based Dead Code Elimination.
   - `-O3`: Strength reduction, jump threading, dominator-tree Loop-Invariant Code Motion (LICM), and bounded loop unrolling.
 - **JVM Bytecode Backend (`jvm.c`):**
-  - Generates standalone Java `.class` files (Java 6 / major version 50) directly in C without external dependencies, supporting multidimensional arrays (`multianewarray`), console I/O, and string concatenation via `StringBuilder`.
+  - Lowers the optimized TAC IR (`-O3` by default, configurable via `-O0`..`-O3`) directly into standalone Java `.class` files (Java 6 / major version 50) in C with zero external dependencies, supporting linearized multidimensional arrays, console I/O, `ldc`/`ldc_w` constants, and string concatenation via `StringBuilder`.
 
 ## Language Grammar (EBNF)
 
@@ -56,33 +56,145 @@ expr4      : T_INT_LITERAL
 
 ## Build
 
-Compile with `gcc`:
+Using Autotools / `make`:
 
 ```bash
-gcc -Wall -W -pedantic -O2 ast.c endianess.c jvm.c main.c parser.c scanner.c symtab.c tac.c -o myCompiler
-```
-
-Or using `make`:
-
-```bash
+./configure
 make
 ```
 
-## Usage
-
-### Generate Three-Address Code (TAC)
+Or compile directly with `gcc`:
 
 ```bash
-./myCompiler prg_test/test_licm.prg tac -O0
-./myCompiler prg_test/test_licm.prg tac -O1
-./myCompiler prg_test/test_licm.prg tac -O2
-./myCompiler prg_test/test_licm.prg tac -O3
+gcc -Wall -W -pedantic -O2 src/ast.c src/endianess.c src/jvm.c src/main.c src/parser.c src/scanner.c src/symtab.c src/tac.c -o src/myCompiler
 ```
 
-### Compile to JVM Bytecode and Run
+## Usage & Examples
+
+### 1. Run Directly with the Built-in Interpreter
+
+Without `tac` or `jvm`, the compiler executes the program via its AST interpreter:
 
 ```bash
-./myCompiler prg_test/myprog_01.prg jvm
-java myprog_01
+src/myCompiler prg_test/test_licm.prg
 ```
 
+```text
+Inserisci n: 5
+Inserisci a: 2
+Inserisci b: 3
+Eqque qua: 55
+```
+
+### 2. Generate Three-Address Code (TAC) (`-O0` .. `-O3`)
+
+Comparing `-O1` and `-O2`/`-O3` on `prg_test/myprog_02.prg` (which contains a dead `if (1 > 2)` branch and commutative expressions `a * b` and `b * a`):
+
+```bash
+src/myCompiler prg_test/myprog_02.prg tac -O1
+```
+
+```text
+print "Inserisci a: "
+read a
+print "Inserisci b: "
+read b
+t2 = a * b
+t3 = t2 + 1
+t4 = b * a
+t5 = t4 + 2
+print "Eqque qua:
+"
+print t3
+print t5
+```
+
+With `-O2` (and `-O3`), Global CSE recognizes `b * a` as equivalent to `a * b` and reuses `t2`:
+
+```bash
+src/myCompiler prg_test/myprog_02.prg tac -O2
+```
+
+```text
+print "Inserisci a: "
+read a
+print "Inserisci b: "
+read b
+t2 = a * b
+t3 = t2 + 1
+t5 = t2 + 2
+print "Eqque qua:
+"
+print t3
+print t5
+```
+
+### 3. Compile to JVM Bytecode (`.class`) and Run
+
+The `jvm` target generates the TAC, optimizes it (`-O3` by default, or an explicit `-O0`..`-O3` flag), and emits `<program>.class`:
+
+```bash
+src/myCompiler prg_test/myprog_01.prg jvm && java myprog_01
+```
+
+```text
+-7.85
+```
+
+```bash
+src/myCompiler prg_test/myprog_02.prg jvm && java myprog_02
+```
+
+```text
+Inserisci a: 
+5
+Inserisci b: 
+8
+Eqque qua:
+
+41
+42
+```
+
+```bash
+src/myCompiler prg_test/test_licm.prg jvm && java test_licm
+```
+
+```text
+Inserisci n: 
+10
+Inserisci a: 
+5
+Inserisci b: 
+3
+Eqque qua: 
+250
+```
+
+You can also choose a specific optimization level when compiling for the JVM:
+
+```bash
+src/myCompiler prg_test/myprog_02.prg jvm -O0
+```
+
+### 4. Syntax & Semantic Error Reporting
+
+The parser reports line/column diagnostics and uses panic-mode recovery to continue checking the rest of the file:
+
+```bash
+src/myCompiler prg_test/myprog_err.prg tac -O0
+```
+
+```text
+Linea 5 Colonna 5: Errore stmt. Atteso semicolon ';'.
+Linea 10 Colonna 2: Errore stmt. Atteso operatore '='.
+Linea 18 Colonna 4: Errore expr4. Identificatore 'a' non inizializzato.
+Linea 19 Colonna 4: Errore decl. Attesa keyword 'begin'.
+Linea 21 Colonna 2: Errore decl. Attesa keyword 'begin'.
+Linea 23 Colonna 6: Errore decl. Attesa keyword 'begin'.
+Linea 24 Colonna 6: Errore decl. Attesa keyword 'begin'.
+Linea 25 Colonna 6: Errore decl. Attesa keyword 'begin'.
+Linea 26 Colonna 4: Errore decl. Attesa keyword 'begin'.
+Errori: 9
+Warnings: 0
+```
