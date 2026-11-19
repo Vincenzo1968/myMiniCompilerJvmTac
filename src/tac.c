@@ -1830,13 +1830,13 @@ static int cfgLICM(TACList *tac, const CFG *cfg)
             for (i = cfg->blocks[b].start; i <= cfg->blocks[b].end; i++) {
                 const TACInstr *in = &tac->items[i];
                 int resId, id1, id2, u, safe;
-                double d2;
-                int i2;
+                //double d2;
+                //int i2;
 
                 if (in->dead) continue;
                 if (!isPureExprOp(in->op) && in->op != TAC_ASSIGN) continue;
                 if (!in->res || !in->arg1) continue;
-                if (in->op == TAC_DIV && !(isNumericLit(in->arg2, &d2, &i2) && d2 != 0.0)) continue;
+                //if (in->op == TAC_DIV && !(isNumericLit(in->arg2, &d2, &i2) && d2 != 0.0)) continue;
 
                 id1 = findOrAddVar(&vars, &numVars, &numVars, in->arg1, 0);
                 if (id1 >= 0 && defInLoop[id1] > 0) continue;
