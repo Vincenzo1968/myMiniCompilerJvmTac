@@ -1320,6 +1320,14 @@ int stmt(CompilerContext *ctx)
 						line, column, szIdName);
 				ctx->g_numWarnings++;
 			}
+			else if ( left->type1 == T_REAL && right->type1 == T_INTEGER )
+			{
+				/* Promozione implicita int -> real consentita */
+			}
+			else if ( left->type1 == T_BOOLEAN && (right->type1 == T_INTEGER || right->type1 == T_REAL) )
+			{
+				/* Conversione implicita numerico -> bool consentita */
+			}
 			else
 			{
 				if ( left->type1 == T_INTEGER && right->type1 == T_BOOLEAN )

@@ -194,3 +194,26 @@ Linea 17 Colonna 6: Errore. Token inattesi dopo la fine del programma.
 Errori: 4
 Warnings: 0
 ```
+### 5. Global Constant Propagation (`-O2`)
+
+On `prg_test/test_gcp.prg`, `-O2` propagates `a = 10` across both `if`/`else` branches and folds `print x` into `print 10`:
+
+```bash
+src/myCompiler prg_test/test_gcp.prg tac -O1
+src/myCompiler prg_test/test_gcp.prg tac -O2
+```
+
+### 6. In-Process Thread-Safety Test (`pthread`)
+
+After building the compiler (`./configure && make`), you can build and run the concurrent in-process test (14 simultaneous threads using independent `CompilerContext` instances for both `tac` and `jvm` targets):
+
+```bash
+gcc -Wall -Wextra -pedantic -O2 -pthread -Isrc \
+    prg_test/test_pthread_inproc.c \
+    src/ast.o src/context.o src/endianess.o src/jvm.o \
+    src/parser.o src/scanner.o src/symtab.o src/tac.o \
+    -lm -o test_pthread_inproc
+
+./test_pthread_inproc ./prg_test
+rm -f test_pthread_inproc *.class
+```

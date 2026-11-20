@@ -261,7 +261,7 @@ Valore interpret(CompilerContext *ctx, nodeType *p)
 {
 	char szInput[1024];
 
-	static Valore valZero;
+	Valore valZero = {0};
 	valZero.iVal = 0;
 
     if (!p)
@@ -636,7 +636,7 @@ Valore GenThreeAddressCode(CompilerContext *ctx, nodeType *p)
 	Valore retVal;
 	Valore leftVal, rightVal;
 
-	static Valore valZero;
+	Valore valZero = {0};
 	valZero.iVal = 0;
 	valZero.dblVal = 0.0;
 	valZero.bVal = FALSE;

@@ -29,9 +29,6 @@ along with mypdfsearch. If not, see <http://www.gnu.org/licenses/>.
 #include "context.h"
 #include "tac.h"
 
-static int s_label = 1;
-static int s_temp = 1;
-
 static char *tacStrdup(CompilerContext *ctx, const char *s)
 {
 	(void)ctx;
@@ -47,14 +44,14 @@ static char *tacStrdup(CompilerContext *ctx, const char *s)
 static char *newTemp(CompilerContext *ctx)
 {
     char buf[32];
-    sprintf(buf, "t%d", s_temp++);
+    sprintf(buf, "t%d", ctx->g_temp++);
     return tacStrdup(ctx, buf);
 }
 
 static char *newLabel(CompilerContext *ctx)
 {
     char buf[32];
-    sprintf(buf, "L%03d", s_label++);
+    sprintf(buf, "L%03d", ctx->g_label++);
     return tacStrdup(ctx, buf);
 }
 
@@ -886,8 +883,8 @@ void tacBuild(CompilerContext *ctx, nodeType **ppTree, Scope *pScope, int optLev
 {
     nodeType *pTree = ppTree ? *ppTree : NULL;
 
-    s_label = 1;
-    s_temp = 1;
+    ctx->g_label = 1;
+    ctx->g_temp = 1;
     tacInit(ctx, outTac);
 
     if (!pTree) {
@@ -1545,6 +1542,319 @@ static int cfgGlobalLivenessDCE(CompilerContext *ctx, TACList *tac, const CFG *c
     return changed;
 }
 
+/* --- Global Constant Propagation (Dataflow su CFG per -O2) --- */
+
+typedef enum {
+    LAT_UNDEF = 0,
+    LAT_CONST = 1,
+    LAT_NAC   = 2
+} LatKind;
+
+typedef struct {
+    LatKind kind;
+    char lit[64];
+} ConstVal;
+
+static int constValEqual(const ConstVal *a, const ConstVal *b)
+{
+    if (a->kind != b->kind) return 0;
+    if (a->kind != LAT_CONST) return 1;
+    return strcmp(a->lit, b->lit) == 0;
+}
+
+static ConstVal constValMeet(CompilerContext *ctx, ConstVal a, ConstVal b)
+{
+    ConstVal nac;
+    nac.kind = LAT_NAC;
+    nac.lit[0] = '\0';
+
+    if (a.kind == LAT_UNDEF) return b;
+    if (b.kind == LAT_UNDEF) return a;
+    if (a.kind == LAT_NAC || b.kind == LAT_NAC) return nac;
+
+    if (strcmp(a.lit, b.lit) == 0) return a;
+
+    {
+        double da, db;
+        int ia, ib;
+        if (isNumericLit(ctx, a.lit, &da, &ia) &&
+            isNumericLit(ctx, b.lit, &db, &ib) && da == db) {
+            return (ia && !ib) ? b : a;
+        }
+    }
+    return nac;
+}
+
+static ConstVal resolveOperandConst(CompilerContext *ctx, const char *s,
+                                    const ConstVal *state,
+                                    char *const *vars, int numVars)
+{
+    ConstVal res;
+    double d;
+    int isInt, bVal;
+    int i;
+
+    res.kind = LAT_NAC;
+    res.lit[0] = '\0';
+
+    if (!s || !*s) return res;
+
+    if ((isBoolLit(ctx, s, &bVal) || isNumericLit(ctx, s, &d, &isInt)) &&
+        strlen(s) < sizeof(res.lit)) {
+        res.kind = LAT_CONST;
+        strcpy(res.lit, s);
+        return res;
+    }
+
+    for (i = 0; i < numVars; i++) {
+        if (strcmp(vars[i], s) == 0) {
+            return state[i];
+        }
+    }
+    return res;
+}
+
+static ConstVal evalInstrConst(CompilerContext *ctx, const TACInstr *in,
+                               const ConstVal *state,
+                               char *const *vars, int numVars)
+{
+    ConstVal out;
+    ConstVal c1, c2;
+    double d1, d2;
+    int i1, i2, b1, b2;
+
+    out.kind = LAT_NAC;
+    out.lit[0] = '\0';
+
+    if (in->op == TAC_ASSIGN && in->arg1) {
+        return resolveOperandConst(ctx, in->arg1, state, vars, numVars);
+    }
+
+    if (!in->arg1) return out;
+    c1 = resolveOperandConst(ctx, in->arg1, state, vars, numVars);
+
+    if (in->op == TAC_NEG) {
+        if (c1.kind == LAT_CONST && isNumericLit(ctx, c1.lit, &d1, &i1)) {
+            out.kind = LAT_CONST;
+            if (i1 && in->type1 != T_REAL) sprintf(out.lit, "%d", -(int)d1);
+            else                             sprintf(out.lit, "%.15g", -d1);
+        }
+        return out;
+    }
+
+    if (in->op == TAC_NOT) {
+        if (c1.kind == LAT_CONST && isBoolLit(ctx, c1.lit, &b1)) {
+            out.kind = LAT_CONST;
+            strcpy(out.lit, b1 ? "false" : "true");
+        }
+        return out;
+    }
+
+    if (!in->arg2) return out;
+    c2 = resolveOperandConst(ctx, in->arg2, state, vars, numVars);
+    if (c1.kind != LAT_CONST || c2.kind != LAT_CONST) return out;
+
+    if (in->op >= TAC_ADD && in->op <= TAC_NE &&
+        isNumericLit(ctx, c1.lit, &d1, &i1) &&
+        isNumericLit(ctx, c2.lit, &d2, &i2)) {
+        int isInt = i1 && i2 && (in->type1 != T_REAL);
+        if (in->op <= TAC_DIV) {
+            double rv = 0.0;
+            if (in->op == TAC_ADD)      rv = d1 + d2;
+            else if (in->op == TAC_SUB) rv = d1 - d2;
+            else if (in->op == TAC_MUL) rv = d1 * d2;
+            else {
+                if (d2 == 0.0) return out;
+                rv = isInt ? (double)((int)d1 / (int)d2) : (d1 / d2);
+            }
+            out.kind = LAT_CONST;
+            if (isInt) sprintf(out.lit, "%d", (int)rv);
+            else       sprintf(out.lit, "%.15g", rv);
+            return out;
+        } else {
+            int br = 0;
+            if (in->op == TAC_LT)      br = (d1 < d2);
+            else if (in->op == TAC_LE) br = (d1 <= d2);
+            else if (in->op == TAC_GT) br = (d1 > d2);
+            else if (in->op == TAC_GE) br = (d1 >= d2);
+            else if (in->op == TAC_EQ) br = (d1 == d2);
+            else if (in->op == TAC_NE) br = (d1 != d2);
+            out.kind = LAT_CONST;
+            sprintf(out.lit, "%d", br);
+            return out;
+        }
+    }
+
+    if ((in->op == TAC_AND || in->op == TAC_OR) &&
+        (isBoolLit(ctx, c1.lit, &b1) || (isNumericLit(ctx, c1.lit, &d1, &i1) && ((b1 = (d1 != 0.0)), 1))) &&
+        (isBoolLit(ctx, c2.lit, &b2) || (isNumericLit(ctx, c2.lit, &d2, &i2) && ((b2 = (d2 != 0.0)), 1)))) {
+        int br = (in->op == TAC_AND) ? (b1 && b2) : (b1 || b2);
+        out.kind = LAT_CONST;
+        strcpy(out.lit, br ? "true" : "false");
+        return out;
+    }
+
+    return out;
+}
+
+static void constPropSimulateBlock(CompilerContext *ctx, const TACList *tac, const CFG *cfg, int b,
+                                   char *const *vars, int numVars,
+                                   const ConstVal *inState, ConstVal *outState)
+{
+    int i, v;
+    memcpy(outState, inState, (size_t)numVars * sizeof(ConstVal));
+
+    for (i = cfg->blocks[b].start; i <= cfg->blocks[b].end; i++) {
+        const TACInstr *in = &tac->items[i];
+        int resId = -1;
+
+        if (in->dead) continue;
+        if (!in->res || !isScalarWriteOp(ctx, in->op)) continue;
+
+        for (v = 0; v < numVars; v++) {
+            if (strcmp(vars[v], in->res) == 0) { resId = v; break; }
+        }
+        if (resId < 0) continue;
+
+        if (in->op == TAC_READ || in->op == TAC_LOAD_IDX) {
+            outState[resId].kind = LAT_NAC;
+            outState[resId].lit[0] = '\0';
+        } else if (isPureExprOp(ctx, in->op) || in->op == TAC_ASSIGN) {
+            outState[resId] = evalInstrConst(ctx, in, outState, vars, numVars);
+        } else {
+            outState[resId].kind = LAT_NAC;
+            outState[resId].lit[0] = '\0';
+        }
+    }
+}
+
+static int cfgGlobalConstProp(CompilerContext *ctx, TACList *tac, const CFG *cfg)
+{
+    char **vars = NULL;
+    int numVars = 0, capVars = 0;
+    ConstVal *inSets = NULL, *outSets = NULL, *curSet = NULL;
+    int i, b, v, dfChanged, changed = 0;
+
+    if (cfg->numBlocks == 0) return 0;
+
+    for (i = 0; i < tac->count; i++) {
+        const TACInstr *in = &tac->items[i];
+        if (in->dead) continue;
+        findOrAddVar(ctx, &vars, &numVars, &capVars, in->arg1, 1);
+        findOrAddVar(ctx, &vars, &numVars, &capVars, in->arg2, 1);
+        if (in->res && isScalarWriteOp(ctx, in->op)) {
+            findOrAddVar(ctx, &vars, &numVars, &capVars, in->res, 1);
+        }
+    }
+    if (numVars == 0) return 0;
+
+    inSets  = (ConstVal *)calloc((size_t)cfg->numBlocks * (size_t)numVars, sizeof(ConstVal));
+    outSets = (ConstVal *)calloc((size_t)cfg->numBlocks * (size_t)numVars, sizeof(ConstVal));
+    curSet  = (ConstVal *)calloc((size_t)numVars, sizeof(ConstVal));
+    if (!inSets || !outSets || !curSet) {
+        free(inSets); free(outSets); free(curSet);
+        for (v = 0; v < numVars; v++) free(vars[v]);
+        free(vars);
+        return 0;
+    }
+
+    do {
+        dfChanged = 0;
+        for (b = 0; b < cfg->numBlocks; b++) {
+            ConstVal *inB  = inSets  + (size_t)b * (size_t)numVars;
+            ConstVal *outB = outSets + (size_t)b * (size_t)numVars;
+
+            if (b == 0 || cfg->blocks[b].numPreds == 0) {
+                for (v = 0; v < numVars; v++) {
+                    inB[v].kind = LAT_NAC;
+                    inB[v].lit[0] = '\0';
+                }
+            } else {
+                int p;
+                int p0 = cfg->blocks[b].preds[0];
+                memcpy(inB, outSets + (size_t)p0 * (size_t)numVars, (size_t)numVars * sizeof(ConstVal));
+                for (p = 1; p < cfg->blocks[b].numPreds; p++) {
+                    int pk = cfg->blocks[b].preds[p];
+                    const ConstVal *outPk = outSets + (size_t)pk * (size_t)numVars;
+                    for (v = 0; v < numVars; v++) {
+                        inB[v] = constValMeet(ctx, inB[v], outPk[v]);
+                    }
+                }
+            }
+
+            constPropSimulateBlock(ctx, tac, cfg, b, vars, numVars, inB, curSet);
+            for (v = 0; v < numVars; v++) {
+                if (!constValEqual(&outB[v], &curSet[v])) {
+                    memcpy(outB, curSet, (size_t)numVars * sizeof(ConstVal));
+                    dfChanged = 1;
+                    break;
+                }
+            }
+        }
+    } while (dfChanged);
+
+    for (b = 0; b < cfg->numBlocks; b++) {
+        memcpy(curSet, inSets + (size_t)b * (size_t)numVars, (size_t)numVars * sizeof(ConstVal));
+
+        for (i = cfg->blocks[b].start; i <= cfg->blocks[b].end; i++) {
+            TACInstr *in = &tac->items[i];
+            int resId = -1;
+
+            if (in->dead) continue;
+
+            if (in->arg1 && !isLiteralStr(ctx, in->arg1)) {
+                for (v = 0; v < numVars; v++) {
+                    if (strcmp(vars[v], in->arg1) == 0) {
+                        if (curSet[v].kind == LAT_CONST) {
+                            free(in->arg1);
+                            in->arg1 = tacStrdup(ctx, curSet[v].lit);
+                            changed = 1;
+                        }
+                        break;
+                    }
+                }
+            }
+
+            if (in->arg2 && !isLiteralStr(ctx, in->arg2)) {
+                for (v = 0; v < numVars; v++) {
+                    if (strcmp(vars[v], in->arg2) == 0) {
+                        if (curSet[v].kind == LAT_CONST) {
+                            free(in->arg2);
+                            in->arg2 = tacStrdup(ctx, curSet[v].lit);
+                            changed = 1;
+                        }
+                        break;
+                    }
+                }
+            }
+
+            if (in->res && isScalarWriteOp(ctx, in->op)) {
+                for (v = 0; v < numVars; v++) {
+                    if (strcmp(vars[v], in->res) == 0) { resId = v; break; }
+                }
+                if (resId >= 0) {
+                    if (in->op == TAC_READ || in->op == TAC_LOAD_IDX) {
+                        curSet[resId].kind = LAT_NAC;
+                        curSet[resId].lit[0] = '\0';
+                    } else if (isPureExprOp(ctx, in->op) || in->op == TAC_ASSIGN) {
+                        curSet[resId] = evalInstrConst(ctx, in, curSet, vars, numVars);
+                    } else {
+                        curSet[resId].kind = LAT_NAC;
+                        curSet[resId].lit[0] = '\0';
+                    }
+                }
+            }
+        }
+    }
+
+    free(inSets);
+    free(outSets);
+    free(curSet);
+    for (v = 0; v < numVars; v++) free(vars[v]);
+    free(vars);
+    return changed;
+}
+
 void tacOptimizeO2(CompilerContext *ctx, TACList *tac)
 {
     int changed;
@@ -1557,6 +1867,7 @@ void tacOptimizeO2(CompilerContext *ctx, TACList *tac)
 
         cfgBuild(ctx, tac, &cfg);
         stepChanged |= cfgEliminateUnreachable(ctx, tac, &cfg);
+        stepChanged |= cfgGlobalConstProp(ctx, tac, &cfg);
         stepChanged |= cfgGlobalCSE(ctx, tac, &cfg);
         stepChanged |= cfgGlobalLivenessDCE(ctx, tac, &cfg);
         cfgFree(ctx, &cfg);
@@ -2087,7 +2398,7 @@ static int tacTryUnrollFirstLoop(CompilerContext *ctx, TACList *tac)
     TACList scratch;
     int peel;
     
-    int savedLabel = s_label;
+    int savedLabel = ctx->g_label;
 
     tacCloneList(ctx, tac, &scratch);
 
@@ -2101,12 +2412,12 @@ static int tacTryUnrollFirstLoop(CompilerContext *ctx, TACList *tac)
         int condConst = 0, condTrue = 0;
 
         tacCompact(ctx, &scratch);
-        if (scratch.count == 0) { tacFree(ctx, &scratch); s_label = savedLabel; return 0; }
+        if (scratch.count == 0) { tacFree(ctx, &scratch); ctx->g_label = savedLabel; return 0; }
 
         cfgBuild(ctx, &scratch, &cfg);
         n = cfg.numBlocks;
         dom = cfgComputeDominators(ctx, &cfg);
-        if (!dom) { cfgFree(ctx, &cfg); tacFree(ctx, &scratch); s_label = savedLabel; return 0; }
+        if (!dom) { cfgFree(ctx, &cfg); tacFree(ctx, &scratch); ctx->g_label = savedLabel; return 0; }
 
         /* Cerca un ciclo `while` semplice e piccolo */
         for (bH = 1; bH < n; bH++) {
@@ -2174,7 +2485,7 @@ static int tacTryUnrollFirstLoop(CompilerContext *ctx, TACList *tac)
             }
             tacFree(ctx, &scratch);
             
-            s_label = savedLabel;
+            ctx->g_label = savedLabel;
             
             return 0;
         }
@@ -2228,7 +2539,7 @@ static int tacTryUnrollFirstLoop(CompilerContext *ctx, TACList *tac)
         if (condConst != 1) {
             free(dom); cfgFree(ctx, &cfg); tacFree(ctx, &scratch);
             
-            s_label = savedLabel;
+            ctx->g_label = savedLabel;
             
             return 0;
         }
@@ -2300,7 +2611,7 @@ static int tacTryUnrollFirstLoop(CompilerContext *ctx, TACList *tac)
 
     tacFree(ctx, &scratch);
     
-    s_label = savedLabel;
+    ctx->g_label = savedLabel;
     
     return 0;
 }
