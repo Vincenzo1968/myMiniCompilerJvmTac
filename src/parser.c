@@ -354,9 +354,11 @@ int TypeCheck(Valore *value, const Token *pToken)
 			else if ( g_currConstType == T_BOOLEAN )
 			{
 				if ( g_currConstValue.bVal )
-					(*value).iVal = 1;
+					(*value).dblVal = 1.0;
+					//(*value).iVal = 1;
 				else
-					(*value).iVal = 0;
+					//(*value).iVal = 0;
+					(*value).dblVal = 0.0;
 			}
 			else if ( g_currConstType == T_STRING )
 			{
@@ -752,44 +754,53 @@ int decl()
 	return 1;
 }
 
-//var_list : T_ID ['=' expr] {',' T_ID['=' expr]};
-int var_list()
+static void reset_var_value(Valore *val, enumTipo1 tipo)
+{
+	memset(val, 0, sizeof(*val));
+	if ( tipo == T_INTEGER )
+		val->iVal = 0;
+	else if ( tipo == T_REAL )
+		val->dblVal = 0.0;
+	else if ( tipo == T_STRING )
+		val->strVal = NULL;
+	else
+		val->bVal = 0;
+}
+
+static int parse_var_item(void)
 {
 	Token token = g_Token;
 	Valore value;
 	HashTable hashTable;
-    char szVarName[256] = "";
-    char szLexeme[256];
+	char szVarName[256] = "";
+	char szLexeme[256] = "";
 
-    if ( g_Token.Type == T_ID )
-        strcpy(szVarName, g_Token.Value.vString);
-    token.Value.vString = szVarName;   // nome in buffer locale: sicuro dopo match() 
+	reset_var_value(&value, (enumTipo1)g_currType);
 
-    if ( !match(T_ID) )
+	if ( g_Token.Type == T_ID && g_Token.Value.vString != NULL )
+	{
+		snprintf(szVarName, sizeof(szVarName), "%s", g_Token.Value.vString);
+	}
+	token.Value.vString = szVarName;
+
+	if ( !match(T_ID) )
 	{
 		printf("Linea %d Colonna %d: Errore var_list. Atteso identificatore.\n",
-				g_Token.line,
-				g_Token.column);
+		       g_Token.line, g_Token.column);
+		g_numErrors++;
 		return 0;
 	}
-	if ( scopeFind(&g_Scope,token.Value.vString, &hashTable) )
+
+	if ( scopeFind(&g_Scope, token.Value.vString, &hashTable) )
 	{
 		printf("Linea %d Colonna %d: Errore var_list. Identificatore '%s' già dichiarato.\n",
-				token.line,
-				token.column,
-				token.Value.vString);
+		       token.line, token.column, token.Value.vString);
+		g_numErrors++;
 		return 0;
 	}
-	if ( g_currType == T_INTEGER )
-		value.iVal = 0;
-	else if ( g_currType == T_REAL )
-		value.dblVal = 0;
-	else if ( g_currType == T_STRING )
-		value.strVal = NULL;
-	else
-		value.bVal = 0;
 
-	scopeInsert(&g_Scope, token.Value.vString, T_SIMPLE, g_currType, T_VAR, value, 0, g_NextFrameIndex);
+	scopeInsert(&g_Scope, token.Value.vString, T_SIMPLE, (enumTipo1)g_currType,
+	            T_VAR, value, 0, g_NextFrameIndex);
 	if ( g_genJVM )
 	{
 		if ( g_currType == T_REAL )
@@ -801,134 +812,63 @@ int var_list()
 
 	if ( g_Token.Type == T_OP_ASSIGN )
 	{
-		//if ( !match(T_OP_ASSIGN) )
-		//	return 0;
 		GetNextToken(&g_Token);
-
-		strcpy(szLexeme, g_Token.lexeme);
+		snprintf(szLexeme, sizeof(szLexeme), "%s", g_Token.lexeme);
 
 		if ( !expr() )
+		{
+			g_numErrors++;
 			return 0;
+		}
 
 		if ( g_currConstType != -1 )
 		{
-			// controlla la consistenza dei tipi ed
-			// eventualmente effettua un casting implicito
 			if ( !TypeCheck(&value, &token) )
-				return 0;
-
-			if ( g_currConstType == T_BOOLEAN )
 			{
-				if ( strcmp(g_Token.Value.vString, "true") == 0 )
-					value.bVal = 1;
-				else
-					value.bVal = 0;
+				g_numErrors++;
+				return 0;
 			}
 
-			//value = g_currConstValue;
-			//scopeUpdateValue(&g_Scope, token.Value.vString, T_SIMPLE, g_currType, T_VAR, value, 1);
-			scopeUpdateValue(&g_Scope, szVarName, T_SIMPLE, g_currType, T_VAR, value, 1, 1);
+			scopeUpdateValue(&g_Scope, szVarName, T_SIMPLE, (enumTipo1)g_currType,
+			                 T_VAR, value, 1, 1);
 
 			if ( g_genTAC )
 			{
 				printf("%s = %s\n", szVarName, szLexeme);
 			}
-			else if ( g_genJVM )
-			{
-			}
 		}
 		else
 		{
 			printf("Linea %d Colonna %d: Errore var_list. In fase di dichiarazione è possibile assegnare solo valori costanti.\n",
-					token.line,
-					token.column);
+			       token.line, token.column);
+			g_numErrors++;
 			return 0;
 		}
 	}
 
+	return 1;
+}
+
+//var_list : T_ID ['=' expr] {',' T_ID['=' expr]};
+int var_list(void)
+{
+	if ( !parse_var_item() )
+	{
+		while ( g_Token.Type != T_EOF && g_Token.Type != T_COMMA && g_Token.Type != T_SEMICOLON )
+			GetNextToken(&g_Token);
+		if ( g_Token.Type != T_COMMA )
+			return 0;
+	}
+
 	while ( g_Token.Type == T_COMMA )
 	{
-		//if ( !match(T_COMMA) )
-		//	return 0;
 		GetNextToken(&g_Token);
-
-        token = g_Token;
-
-        if ( g_Token.Type == T_ID )
-            strcpy(szVarName, g_Token.Value.vString);
-        token.Value.vString = szVarName;   // nome in buffer locale: sicuro dopo match() 
-
-        if ( !match(T_ID) )
-        {
-			printf("Linea %d Colonna %d: Errore var_list. Atteso identificatore.\n",
-				g_Token.line,
-				g_Token.column);
-			return 0;
-		}
-		if ( scopeFind(&g_Scope, token.Value.vString, &hashTable) )
+		if ( !parse_var_item() )
 		{
-			printf("Linea %d Colonna %d: Errore var_list. Identificatore '%s' già dichiarato.\n",
-					token.line,
-					token.column,
-					token.Value.vString);
-			return 0;
-		}
-		//scopeInsert(&g_Scope, token.Value.vString, T_SIMPLE, g_currType, T_VAR, value, 0);
-		scopeInsert(&g_Scope, szVarName, T_SIMPLE, g_currType, T_VAR, value, 0, g_NextFrameIndex);
-		if ( g_genJVM )
-		{
-			if ( g_currType == T_REAL )
-				g_NextFrameIndex += 2;
-			else
-				g_NextFrameIndex++;
-			jvmSetNumberLocals(g_NextFrameIndex);
-		}
-
-		if ( g_Token.Type == T_OP_ASSIGN )
-		{
-			//if ( !match(T_OP_ASSIGN) )
-			//	return 0;
-			GetNextToken(&g_Token);
-
-			strcpy(szLexeme, g_Token.lexeme);
-
-			if ( !expr() )
+			while ( g_Token.Type != T_EOF && g_Token.Type != T_COMMA && g_Token.Type != T_SEMICOLON )
+				GetNextToken(&g_Token);
+			if ( g_Token.Type != T_COMMA )
 				return 0;
-
-			if ( g_currConstType != -1 )
-			{
-				// controlla qui la consistenza dei tipi ed
-				// eventualmente effettua un casting implicito
-				if ( !TypeCheck(&value, &token) )
-					return 0;
-
-				if ( g_currConstType == T_BOOLEAN )
-				{
-					if ( strcmp(g_Token.Value.vString, "true") == 0 )
-						value.bVal = 1;
-					else
-						value.bVal = 0;
-				}
-
-				//value = g_currConstValue;
-				//scopeUpdateValue(&g_Scope, token.Value.vString, T_SIMPLE, g_currType, T_VAR, value, 1);
-				scopeUpdateValue(&g_Scope, szVarName, T_SIMPLE, g_currType, T_VAR, value, 1, 1);
-
-				if ( g_genTAC )
-				{
-					printf("%s = %s\n", szVarName, szLexeme);
-				}
-				else if ( g_genJVM )
-				{
-				}
-			}
-			else
-			{
-				printf("Linea %d Colonna %d: Errore var_list. In fase di dichiarazione è possibile assegnare solo valori costanti.\n",
-						token.line,
-						token.column);
-				return 0;
-			}
 		}
 	}
 
@@ -1163,7 +1103,8 @@ int stmt()
 			freeNode(g_stack[g_top--]);
 			return 0;
 		}
-		if ( g_top < 1 || g_stack[g_top]->type1 == T_STRING )
+		//if ( g_top < 1 || g_stack[g_top]->type1 == T_STRING )
+		if ( g_top < 0 || g_stack[g_top]->type1 == T_STRING )
 		{
 			printf("Linea %d Colonna %d: Errore stmt. L' espressione tra "
 					"parentesi tonde deve restituire un valore booleano.\n",
@@ -1672,6 +1613,29 @@ int expr3()
 	return 1;
 }
 
+static void cleanupArrayExprError(int currArrayIndex, Valore *val, nodeType *pNode)
+{
+	int i = currArrayIndex - 1;
+
+	while ( i >= 0 )
+	{
+		if ( g_top >= 0 )
+			freeNode(g_stack[g_top--]);
+		i--;
+	}
+
+	if ( val != NULL && val->pArrayDef != NULL )
+	{
+		free(val->pArrayDef->indexes);
+		val->pArrayDef->indexes = NULL;
+		free(val->pArrayDef);
+		val->pArrayDef = NULL;
+	}
+
+	if ( pNode != NULL )
+		freeNode(pNode);
+}
+
 //expr4 : T_INT_LITERAL
 //		| T_REAL_LITERAL
 //		| T_STRING_LITERAL
@@ -1704,8 +1668,6 @@ int expr4()
 			g_currConstValue.iVal = g_Token.Value.vInt;
 		}
 
-		//if ( !match(T_INT_LITERAL) )
-		//	return 0;
 		GetNextToken(&g_Token);
 		break;
 	case T_REAL_LITERAL:
@@ -1721,8 +1683,6 @@ int expr4()
 			g_currConstValue.dblVal = g_Token.Value.vDouble;
 		}
 
-		//if ( !match(T_REAL_LITERAL) )
-		//	return 0;
 		GetNextToken(&g_Token);
 		break;
 	case T_STRING_LITERAL:
@@ -1750,49 +1710,39 @@ int expr4()
 			strcpy(g_currConstValue.strVal, g_Token.Value.vString);
 		}
 
-		//if ( !match(T_STRING_LITERAL) )
-		//	return 0;
 		GetNextToken(&g_Token);
 		break;
 	case T_KW_TRUE:
 		if ( g_isCodeBlock )
 		{
 			Valore value;
-			//value.bVal = TRUE;
 			value.bVal = 1;
 			g_stack[++g_top] = con(T_BOOLEAN, "true", value);
 		}
 		else
 		{
 			g_currConstType = T_BOOLEAN;
-			g_currConstValue.bVal = g_Token.Value.vInt;
+			g_currConstValue.bVal = 1;
 		}
 
-		//if ( !match(T_KW_TRUE) )
-		//	return 0;
 		GetNextToken(&g_Token);
 		break;
 	case T_KW_FALSE:
 		if ( g_isCodeBlock )
 		{
 			Valore value;
-			//value.bVal = FALSE;
 			value.bVal = 0;
 			g_stack[++g_top] = con(T_BOOLEAN, "false", value);
 		}
 		else
 		{
 			g_currConstType = T_BOOLEAN;
-			g_currConstValue.bVal = g_Token.Value.vInt;
+			g_currConstValue.bVal = 0;
 		}
 
-		//if ( !match(T_KW_FALSE) )
-		//	return 0;
 		GetNextToken(&g_Token);
 		break;
 	case T_OPAREN:
-		//if ( !match(T_OPAREN) )
-		//	return 0;
 		GetNextToken(&g_Token);
 		if ( !expr() )
 			return 0;
@@ -1805,8 +1755,6 @@ int expr4()
 		}
 		break;
 	case T_OP_MINUS:
-		//if ( !match(T_OP_MINUS) )
-		//	return 0;
 		GetNextToken(&g_Token);
 		if ( !expr() )
 			return 0;
@@ -1821,12 +1769,10 @@ int expr4()
 		pNode = g_stack[g_top--];
 		g_stack[++g_top] = opr(T_OP_UMINUS, 1, pNode);
 		g_stack[g_top]->type0 = T_SIMPLE;
-		g_stack[g_top]->type1 = pNode->type1;   /* il meno unario conserva il tipo dell'operando */
+		g_stack[g_top]->type1 = pNode->type1;
 		g_stack[g_top]->type2 = T_VAR;
 		break;
 	case T_OP_NOT:
-		//if ( !match(T_OP_NOT) )
-		//	return 0;
 		GetNextToken(&g_Token);
 		if ( !expr() )
 			return 0;
@@ -1837,13 +1783,13 @@ int expr4()
 					g_Token.line,
 					g_Token.column);
 			return 0;
-		}		
+		}
 		pNode = g_stack[g_top--];
 		g_stack[++g_top] = opr(T_OP_NOT, 1, pNode);
 		g_stack[g_top]->type0 = T_SIMPLE;
-		g_stack[g_top]->type1 = T_BOOLEAN;      /* il not restituisce un booleano */
+		g_stack[g_top]->type1 = T_BOOLEAN;
 		g_stack[g_top]->type2 = T_VAR;
-		break;		
+		break;
 	case T_ID:
 		if ( !scopeFind(&g_Scope, g_Token.Value.vString, &hashTable) )
 		{
@@ -1881,13 +1827,15 @@ int expr4()
 			value.pArrayDef->countIndexes = hashTable.Value.pArrayDef->countIndexes;
 			value.pArrayDef->pArray = hashTable.Value.pArrayDef->pArray;
 			value.pArrayDef->sizes = hashTable.Value.pArrayDef->sizes;
-			value.pArrayDef->indexes = (nodeType**)malloc(sizeof(nodeType*)*hashTable.Value.pArrayDef->countIndexes);
+			value.pArrayDef->indexes = (nodeType**)malloc(sizeof(nodeType*)*(size_t)hashTable.Value.pArrayDef->countIndexes);
 			if ( !value.pArrayDef->indexes )
 			{
 				printf("Errore pArrayDef->indexes: memoria insufficiente.\n");
+				free(value.pArrayDef);
+				value.pArrayDef = NULL;
 				return 0;
 			}
-			memset(value.pArrayDef->indexes, 0, (size_t)hashTable.Value.pArrayDef->countIndexes);
+			memset(value.pArrayDef->indexes, 0, sizeof(nodeType*)*(size_t)hashTable.Value.pArrayDef->countIndexes);
 		}
 		else
 		{
@@ -1896,56 +1844,30 @@ int expr4()
 
 		g_stack[++g_top] = id(g_Token.Value.vString, "a", hashTable.Tipo0, hashTable.Tipo1, hashTable.Tipo2, value, hashTable.bInizializzato);
 
-		//if ( !match(T_ID) )
-		//	return 0;
 		GetNextToken(&g_Token);
 
+		pNode = NULL;
+		currArrayIndex = 0;
 		if ( g_Token.Type == T_QOPAREN )
 		{
 			pNode = g_stack[g_top--];
-			currArrayIndex = 0;
 		}
 		while ( g_Token.Type == T_QOPAREN )
 		{
-			if ( currArrayIndex > hashTable.Value.pArrayDef->countIndexes )
+			if ( currArrayIndex >= hashTable.Value.pArrayDef->countIndexes )
 			{
 				printf("Linea %d Colonna %d: Errore stmt. "
 						"Numero di indici non corrispondente.\n",
 						g_Token.line,
 						g_Token.column);
-
-				currArrayIndex--;
-				while ( currArrayIndex >= 0 )
-				{
-					freeNode(g_stack[g_top--]);
-					currArrayIndex--;
-				}
-				free(value.pArrayDef->indexes);
-				value.pArrayDef->indexes = NULL;
-				free(value.pArrayDef);
-				value.pArrayDef = NULL;
-				freeNode(pNode);
-
+				cleanupArrayExprError(currArrayIndex, &value, pNode);
 				return 0;
 			}
 
-			//if ( !match(T_QOPAREN) )
-			//	return 0;
 			GetNextToken(&g_Token);
 			if ( !expr() )
 			{
-				currArrayIndex--;
-				while ( currArrayIndex >= 0 )
-				{
-					freeNode(g_stack[g_top--]);
-					currArrayIndex--;
-				}
-				free(value.pArrayDef->indexes);
-				value.pArrayDef->indexes = NULL;
-				free(value.pArrayDef);
-				value.pArrayDef = NULL;
-				freeNode(pNode);
-
+				cleanupArrayExprError(currArrayIndex, &value, pNode);
 				return 0;
 			}
 
@@ -1955,19 +1877,7 @@ int expr4()
 						"Gli array vanno indicizzati con espressioni di tipo int.\n",
 						g_Token.line,
 						g_Token.column);
-
-				currArrayIndex--;
-				while ( currArrayIndex >= 0 )
-				{
-					freeNode(g_stack[g_top--]);
-					currArrayIndex--;
-				}
-				free(value.pArrayDef->indexes);
-				value.pArrayDef->indexes = NULL;
-				free(value.pArrayDef);
-				value.pArrayDef = NULL;
-				freeNode(pNode);
-
+				cleanupArrayExprError(currArrayIndex + 1, &value, pNode);
 				return 0;
 			}
 
@@ -1976,19 +1886,7 @@ int expr4()
 				printf("Linea %d Colonna %d: Errore expr4. Attesa parentesi ']'.\n",
 						g_Token.line,
 						g_Token.column);
-
-				currArrayIndex--;
-				while ( currArrayIndex >= 0 )
-				{
-					freeNode(g_stack[g_top--]);
-					currArrayIndex--;
-				}
-				free(value.pArrayDef->indexes);
-				value.pArrayDef->indexes = NULL;
-				free(value.pArrayDef);
-				value.pArrayDef = NULL;
-				freeNode(pNode);
-
+				cleanupArrayExprError(currArrayIndex + 1, &value, pNode);
 				return 0;
 			}
 
@@ -2002,19 +1900,7 @@ int expr4()
 						"Numero di indici non corrispondente.\n",
 						g_Token.line,
 						g_Token.column);
-
-				currArrayIndex--;
-				while ( currArrayIndex >= 0 )
-				{
-					freeNode(g_stack[g_top--]);
-					currArrayIndex--;
-				}
-				free(value.pArrayDef->indexes);
-				value.pArrayDef->indexes = NULL;
-				free(value.pArrayDef);
-				value.pArrayDef = NULL;
-				freeNode(pNode);
-
+				cleanupArrayExprError(currArrayIndex, &value, pNode);
 				return 0;
 			}
 
@@ -2023,15 +1909,6 @@ int expr4()
 				pNode->id.value.pArrayDef->indexes[currArrayIndex] = g_stack[g_top--];
 			}
 			g_stack[++g_top] = pNode;
-
-			/*
-			printf("%s", g_stack[g_top]->id.name);
-			for ( currArrayIndex = 0; currArrayIndex < hashTable.Value.pArrayDef->countIndexes; currArrayIndex++ )
-			{
-				printf("[%d]", g_stack[g_top]->id.value.pArrayDef->indexes[currArrayIndex]->con.value.iVal);
-			}
-			printf("\n\n");
-			*/
 		}
 
 		break;
@@ -2045,8 +1922,3 @@ int expr4()
 
 	return 1;
 }
-
-/*
-	{
-	}
-*/
