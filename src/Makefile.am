@@ -1,7 +1,7 @@
 bin_PROGRAMS = myCompiler
 myCompiler_SOURCES = \
     ast.c ast.h \
-    context.c context.h \
+    context.c context.h version.h \
     endianess.c endianess.h \
     jvm.c jvm.h \
     main.c \

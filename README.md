@@ -67,7 +67,7 @@ make
 Or compile directly with `gcc`:
 
 ```bash
-gcc -Wall -Wextra -pedantic -O2 src/ast.c src/endianess.c src/jvm.c src/main.c src/parser.c src/scanner.c src/symtab.c src/tac.c -o src/myCompiler
+gcc -Wall -Wextra -pedantic -O2 src/ast.c src/context.c src/endianess.c src/jvm.c src/main.c src/parser.c src/scanner.c src/symtab.c src/tac.c -o src/myCompiler
 ```
 
 ## Usage & Examples

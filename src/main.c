@@ -35,6 +35,15 @@ Architettura :
 #  include "config.h"
 #endif
 
+#include "version.h"
+
+#ifndef PACKAGE_NAME
+#  define PACKAGE_NAME APP_NAME
+#endif
+#ifndef PACKAGE_VERSION
+#  define PACKAGE_VERSION APP_VERSION
+#endif
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <malloc.h>
