@@ -22,6 +22,9 @@ along with mypdfsearch. If not, see <http://www.gnu.org/licenses/>.
 #ifndef __MYSCANNER__
 #define __MYSCANNER__
 
+
+struct CompilerContext;
+typedef struct CompilerContext CompilerContext;
 typedef enum tagTokenType
 {
 	T_ERROR,
@@ -120,11 +123,11 @@ typedef enum tagStates
 	S21
 } States;
 
-int GetDepth();
-void SetDepth(int depth);
-int LeggiFile(char *szFileName);
-void FreeInputbuffer();
+int GetDepth(CompilerContext *ctx);
+void SetDepth(CompilerContext *ctx, int depth);
+int LeggiFile(CompilerContext *ctx, char *szFileName);
+void FreeInputbuffer(CompilerContext *ctx);
 
-void GetNextToken(Token *pToken);
+void GetNextToken(CompilerContext *ctx, Token *pToken);
 
 #endif /* __MYSCANNER__ */

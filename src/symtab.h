@@ -22,6 +22,9 @@ along with mypdfsearch. If not, see <http://www.gnu.org/licenses/>.
 #ifndef SYMTAB_H
 #define SYMTAB_H
 
+
+struct CompilerContext;
+typedef struct CompilerContext CompilerContext;
 #define HT_SIZE 251
 //#define HT_SIZE 509
 //#define HT_SIZE 1021
@@ -92,20 +95,20 @@ typedef struct tagScope
 	HashTable **stack[SCOPE_SIZE];
 } Scope;
 
-HashTable* htNewNode(char *Key, enumTipo0 t0, enumTipo1 t1, enumTipo2 t2, Valore v, char bInizializzato, char bDecl, int frameIndex);
-int htFind(HashTable **pHashTable, char *Key, HashTable *pDati);
-void htInsert(HashTable **pHashTable, char *Key, enumTipo0 t0, enumTipo1 t1, enumTipo2 t2, Valore v, char bInizializzato, char bDecl, int frameIndex);
-void htFree(HashTable* first);
-void htPrint(HashTable **pHashTable);
-void htPrintTAC(HashTable **pHashTable);
+HashTable* htNewNode(CompilerContext *ctx, char *Key, enumTipo0 t0, enumTipo1 t1, enumTipo2 t2, Valore v, char bInizializzato, char bDecl, int frameIndex);
+int htFind(CompilerContext *ctx, HashTable **pHashTable, char *Key, HashTable *pDati);
+void htInsert(CompilerContext *ctx, HashTable **pHashTable, char *Key, enumTipo0 t0, enumTipo1 t1, enumTipo2 t2, Valore v, char bInizializzato, char bDecl, int frameIndex);
+void htFree(CompilerContext *ctx, HashTable* first);
+void htPrint(CompilerContext *ctx, HashTable **pHashTable);
+void htPrintTAC(CompilerContext *ctx, HashTable **pHashTable);
 
-void scopeInit(Scope *pScope);
-void scopePush(Scope *pScope);
-int  scopePop(Scope *pScope);
-void scopeFree(Scope *pScope);
-int  scopeFind(Scope* pScope, char *Key, HashTable *pDati);
-int  scopeInsert(Scope *pScope, char *Key, enumTipo0 t0, enumTipo1 t1, enumTipo2 t2, Valore v, char bInizializzato, int frameIndex);
-int scopeUpdateValue(Scope *pScope, char *Key, enumTipo0 t0, enumTipo1 t1, enumTipo2 t2, Valore v, char bInizializzato, char bDecl);
+void scopeInit(CompilerContext *ctx, Scope *pScope);
+void scopePush(CompilerContext *ctx, Scope *pScope);
+int  scopePop(CompilerContext *ctx, Scope *pScope);
+void scopeFree(CompilerContext *ctx, Scope *pScope);
+int  scopeFind(CompilerContext *ctx, Scope* pScope, char *Key, HashTable *pDati);
+int  scopeInsert(CompilerContext *ctx, Scope *pScope, char *Key, enumTipo0 t0, enumTipo1 t1, enumTipo2 t2, Valore v, char bInizializzato, int frameIndex);
+int scopeUpdateValue(CompilerContext *ctx, Scope *pScope, char *Key, enumTipo0 t0, enumTipo1 t1, enumTipo2 t2, Valore v, char bInizializzato, char bDecl);
 
 
 #endif // SYMTAB_H

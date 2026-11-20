@@ -40,6 +40,7 @@ Architettura :
 #include <malloc.h>
 #include <string.h>
 //#include "scanner.h"
+#include "context.h"
 #include "parser.h"
 #include "symtab.h"
 //#include "endianess.h"
@@ -55,14 +56,11 @@ atom:	'(' expr ')'
 		| number
 */
 
-Scope g_Scope;
-enumTipo1 g_t1 = T_INTEGER;
 
-static int g_label = 1;
-static int g_temp = 1;
 
-char convertToBoolean(enumTipo1 t1, Valore value)
+char convertToBoolean(CompilerContext *ctx, enumTipo1 t1, Valore value)
 {
+	(void)ctx;
 	char ret = 0;
 
 	switch ( t1 )
@@ -83,8 +81,9 @@ char convertToBoolean(enumTipo1 t1, Valore value)
 	return ret;
 }
 
-void AssignTypeChecking(enumTipo1 lhsT1, Valore *lhsValue, enumTipo1 rhsT1, Valore rhsValue)
+void AssignTypeChecking(CompilerContext *ctx, enumTipo1 lhsT1, Valore *lhsValue, enumTipo1 rhsT1, Valore rhsValue)
 {
+	(void)ctx;
 	if ( lhsT1 == rhsT1 )
 	{
 		(*lhsValue) = rhsValue;
@@ -118,7 +117,7 @@ void AssignTypeChecking(enumTipo1 lhsT1, Valore *lhsValue, enumTipo1 rhsT1, Valo
 	}
 }
 
-Valore BinopValue(int op, enumTipo1 lhsT1, Valore lhsValue, enumTipo1 rhsT1, Valore rhsValue)
+Valore BinopValue(CompilerContext *ctx, int op, enumTipo1 lhsT1, Valore lhsValue, enumTipo1 rhsT1, Valore rhsValue)
 {
 	Valore retVal;
 	enumTipo1 t1;
@@ -245,11 +244,11 @@ Valore BinopValue(int op, enumTipo1 lhsT1, Valore lhsValue, enumTipo1 rhsT1, Val
 		break;
 	}
 
-	g_t1 = t1;
+	ctx->g_t1 = t1;
 	return retVal;
 }
 
-Valore interpret(nodeType *p)
+Valore interpret(CompilerContext *ctx, nodeType *p)
 {
 	char szInput[1024];
 
@@ -262,15 +261,15 @@ Valore interpret(nodeType *p)
     switch(p->type)
 	{
     case typeConst:
-		g_t1 = p->type1;
+		ctx->g_t1 = p->type1;
 		return p->con.value;
     case typeId:
 		{
 			HashTable Dati;
 			Valore retVal;
-			if ( scopeFind(&g_Scope, p->id.name, &Dati) )
+			if ( scopeFind(ctx, &ctx->g_Scope, p->id.name, &Dati) )
 			{
-				g_t1 = Dati.Tipo1;
+				ctx->g_t1 = Dati.Tipo1;
 				retVal = Dati.Value;
 
 				if ( Dati.Tipo0 == T_ARRAY )
@@ -279,15 +278,15 @@ Valore interpret(nodeType *p)
 					int loc;
 					if ( Dati.Value.pArrayDef->countIndexes == 1 )
 					{
-						loc = interpret(p->id.value.pArrayDef->indexes[0]).iVal;
+						loc = interpret(ctx, p->id.value.pArrayDef->indexes[0]).iVal;
 					}
 					else
 					{
-						loc = interpret(p->id.value.pArrayDef->indexes[0]).iVal * Dati.Value.pArrayDef->sizes[1] + interpret(p->id.value.pArrayDef->indexes[1]).iVal;
+						loc = interpret(ctx, p->id.value.pArrayDef->indexes[0]).iVal * Dati.Value.pArrayDef->sizes[1] + interpret(ctx, p->id.value.pArrayDef->indexes[1]).iVal;
 						for ( k = 1; k < Dati.Value.pArrayDef->countIndexes - 1; k++ )
 						{
 							loc *= Dati.Value.pArrayDef->sizes[k+1];
-							loc += interpret(p->id.value.pArrayDef->indexes[k+1]).iVal;
+							loc += interpret(ctx, p->id.value.pArrayDef->indexes[k+1]).iVal;
 						}
 					}
 
@@ -316,7 +315,7 @@ Valore interpret(nodeType *p)
 			else
 			{
 				printf("Errore: X identificatore '%s' non dichiarato\n", p->id.name);
-				g_t1 = T_INTEGER;
+				ctx->g_t1 = T_INTEGER;
 				retVal = valZero;
 			}
 			return retVal;
@@ -328,26 +327,26 @@ Valore interpret(nodeType *p)
 			switch(p->opr.oper)
 			{
 			case T_KW_WHILE:
-				while( convertToBoolean(p->type1, interpret(p->opr.op[0])) )
-					interpret(p->opr.op[1]);
-				g_t1 = T_INTEGER;
+				while( convertToBoolean(ctx, p->type1, interpret(ctx, p->opr.op[0])) )
+					interpret(ctx, p->opr.op[1]);
+				ctx->g_t1 = T_INTEGER;
 				return valZero;
 			case T_KW_DO: // do-while
 				do
 				{
-					interpret(p->opr.op[0]);
-				} while( convertToBoolean(p->type1, interpret(p->opr.op[1])) );
-				g_t1 = T_INTEGER;
+					interpret(ctx, p->opr.op[0]);
+				} while( convertToBoolean(ctx, p->type1, interpret(ctx, p->opr.op[1])) );
+				ctx->g_t1 = T_INTEGER;
 				return valZero;
 			case T_KW_IF:
-				if ( convertToBoolean(p->type1, interpret(p->opr.op[0])) )
-					interpret(p->opr.op[1]);
+				if ( convertToBoolean(ctx, p->type1, interpret(ctx, p->opr.op[0])) )
+					interpret(ctx, p->opr.op[1]);
 				else if ( p->opr.nops > 2 )
-					interpret(p->opr.op[2]);
-				g_t1 = T_INTEGER;
+					interpret(ctx, p->opr.op[2]);
+				ctx->g_t1 = T_INTEGER;
 				return valZero;
 			case T_KW_PRINT:
-				retVal = interpret(p->opr.op[0]);
+				retVal = interpret(ctx, p->opr.op[0]);
 				if ( p->opr.op[0]->type1 == T_INTEGER )
 					printf("%d", retVal.iVal);
 				else if ( p->opr.op[0]->type1 == T_REAL )
@@ -358,12 +357,12 @@ Valore interpret(nodeType *p)
 					printf("%s", retVal.strVal);
 				else
 				{
-					if ( g_t1 == T_INTEGER)
+					if ( ctx->g_t1 == T_INTEGER)
 						printf("%d", retVal.iVal);
-					else if (g_t1 == T_REAL)
+					else if (ctx->g_t1 == T_REAL)
 						printf("%f", retVal.dblVal);
 				}
-				g_t1 = T_INTEGER;
+				ctx->g_t1 = T_INTEGER;
 				return valZero;
 			case T_KW_READ:
 				if (fgets(szInput, 1023, stdin) == NULL)
@@ -399,19 +398,19 @@ Valore interpret(nodeType *p)
 
 					retVal.pArrayDef = p->opr.op[0]->id.value.pArrayDef;
 
-					scopeFind(&g_Scope, p->opr.op[0]->id.name, &Dati);
+					scopeFind(ctx, &ctx->g_Scope, p->opr.op[0]->id.name, &Dati);
 
 					if ( Dati.Value.pArrayDef->countIndexes == 1 )
 					{
-						loc = interpret(p->opr.op[0]->id.value.pArrayDef->indexes[0]).iVal;
+						loc = interpret(ctx, p->opr.op[0]->id.value.pArrayDef->indexes[0]).iVal;
 					}
 					else
 					{
-						loc = interpret(p->opr.op[0]->id.value.pArrayDef->indexes[0]).iVal * Dati.Value.pArrayDef->sizes[1] + interpret(p->opr.op[0]->id.value.pArrayDef->indexes[1]).iVal;
+						loc = interpret(ctx, p->opr.op[0]->id.value.pArrayDef->indexes[0]).iVal * Dati.Value.pArrayDef->sizes[1] + interpret(ctx, p->opr.op[0]->id.value.pArrayDef->indexes[1]).iVal;
 						for ( k = 1; k < Dati.Value.pArrayDef->countIndexes - 1; k++ )
 						{
 							loc *= Dati.Value.pArrayDef->sizes[k+1];
-							loc += interpret(p->opr.op[0]->id.value.pArrayDef->indexes[k+1]).iVal;
+							loc += interpret(ctx, p->opr.op[0]->id.value.pArrayDef->indexes[k+1]).iVal;
 						}
 					}
 
@@ -446,7 +445,7 @@ Valore interpret(nodeType *p)
 				}
 				else
 				{
-					scopeUpdateValue(&g_Scope,
+					scopeUpdateValue(ctx, &ctx->g_Scope,
 									p->opr.op[0]->id.name,
 									p->opr.op[0]->type0,
 									p->opr.op[0]->type1,
@@ -456,15 +455,15 @@ Valore interpret(nodeType *p)
 									0);
 				}
 
-				g_t1 = T_INTEGER;
+				ctx->g_t1 = T_INTEGER;
 				return valZero;
 			case T_STMT_LIST:
-				interpret(p->opr.op[0]);
-				return interpret(p->opr.op[1]);
+				interpret(ctx, p->opr.op[0]);
+				return interpret(ctx, p->opr.op[1]);
 			case T_CODE_BLOCK:
-				return interpret(p->opr.op[0]);
+				return interpret(ctx, p->opr.op[0]);
 			case T_OP_ASSIGN:
-				AssignTypeChecking(p->opr.op[0]->type1, &leftVal, g_t1, interpret(p->opr.op[1]));
+				AssignTypeChecking(ctx, p->opr.op[0]->type1, &leftVal, ctx->g_t1, interpret(ctx, p->opr.op[1]));
 				if ( p->opr.op[0]->type0 == T_ARRAY )
 				{
 					int k;
@@ -473,19 +472,19 @@ Valore interpret(nodeType *p)
 
 					retVal.pArrayDef = p->opr.op[0]->id.value.pArrayDef;
 
-					scopeFind(&g_Scope, p->opr.op[0]->id.name, &Dati);
+					scopeFind(ctx, &ctx->g_Scope, p->opr.op[0]->id.name, &Dati);
 
 					if ( Dati.Value.pArrayDef->countIndexes == 1 )
 					{
-						loc = interpret(p->opr.op[0]->id.value.pArrayDef->indexes[0]).iVal;
+						loc = interpret(ctx, p->opr.op[0]->id.value.pArrayDef->indexes[0]).iVal;
 					}
 					else
 					{
-						loc = interpret(p->opr.op[0]->id.value.pArrayDef->indexes[0]).iVal * Dati.Value.pArrayDef->sizes[1] + interpret(p->opr.op[0]->id.value.pArrayDef->indexes[1]).iVal;
+						loc = interpret(ctx, p->opr.op[0]->id.value.pArrayDef->indexes[0]).iVal * Dati.Value.pArrayDef->sizes[1] + interpret(ctx, p->opr.op[0]->id.value.pArrayDef->indexes[1]).iVal;
 						for ( k = 1; k < Dati.Value.pArrayDef->countIndexes - 1; k++ )
 						{
 							loc *= Dati.Value.pArrayDef->sizes[k+1];
-							loc += interpret(p->opr.op[0]->id.value.pArrayDef->indexes[k+1]).iVal;
+							loc += interpret(ctx, p->opr.op[0]->id.value.pArrayDef->indexes[k+1]).iVal;
 						}
 					}
 
@@ -525,7 +524,7 @@ Valore interpret(nodeType *p)
 				{
 					retVal = leftVal;
 				}
-				scopeUpdateValue(&g_Scope,
+				scopeUpdateValue(ctx, &ctx->g_Scope,
 								p->opr.op[0]->id.name,
 								p->opr.op[0]->type0,
 								p->opr.op[0]->type1,
@@ -536,80 +535,80 @@ Valore interpret(nodeType *p)
 
 				return retVal;
 			case T_OP_UMINUS:
-				retVal = interpret(p->opr.op[0]);
+				retVal = interpret(ctx, p->opr.op[0]);
 				if ( p->opr.op[0]->type1 == T_INTEGER )
 				{
-					g_t1 = T_INTEGER;
+					ctx->g_t1 = T_INTEGER;
 					retVal.iVal = -retVal.iVal;
 				}
 				else if ( p->opr.op[0]->type1 == T_REAL )
 				{
-					g_t1 = T_REAL;
+					ctx->g_t1 = T_REAL;
 					retVal.dblVal = -retVal.dblVal;
 				}
 				return retVal;
 			case T_OP_PLUS:
-				leftVal = interpret(p->opr.op[0]);
-				rightVal = interpret(p->opr.op[1]);
-				retVal = BinopValue(T_OP_PLUS, p->opr.op[0]->type1, leftVal, p->opr.op[1]->type1, rightVal);
+				leftVal = interpret(ctx, p->opr.op[0]);
+				rightVal = interpret(ctx, p->opr.op[1]);
+				retVal = BinopValue(ctx, T_OP_PLUS, p->opr.op[0]->type1, leftVal, p->opr.op[1]->type1, rightVal);
 				return retVal;
 			case T_OP_MINUS:
-				leftVal = interpret(p->opr.op[0]);
-				rightVal = interpret(p->opr.op[1]);
-				retVal = BinopValue(T_OP_MINUS, p->opr.op[0]->type1, leftVal, p->opr.op[1]->type1, rightVal);
+				leftVal = interpret(ctx, p->opr.op[0]);
+				rightVal = interpret(ctx, p->opr.op[1]);
+				retVal = BinopValue(ctx, T_OP_MINUS, p->opr.op[0]->type1, leftVal, p->opr.op[1]->type1, rightVal);
 				return retVal;
 			case T_OP_MULT:
-				leftVal = interpret(p->opr.op[0]);
-				rightVal = interpret(p->opr.op[1]);
-				retVal = BinopValue(T_OP_MULT, p->opr.op[0]->type1, leftVal, p->opr.op[1]->type1, rightVal);
+				leftVal = interpret(ctx, p->opr.op[0]);
+				rightVal = interpret(ctx, p->opr.op[1]);
+				retVal = BinopValue(ctx, T_OP_MULT, p->opr.op[0]->type1, leftVal, p->opr.op[1]->type1, rightVal);
 				return retVal;
 			case T_OP_DIV:
-				leftVal = interpret(p->opr.op[0]);
-				rightVal = interpret(p->opr.op[1]);
-				retVal = BinopValue(T_OP_DIV, p->opr.op[0]->type1, leftVal, p->opr.op[1]->type1, rightVal);
+				leftVal = interpret(ctx, p->opr.op[0]);
+				rightVal = interpret(ctx, p->opr.op[1]);
+				retVal = BinopValue(ctx, T_OP_DIV, p->opr.op[0]->type1, leftVal, p->opr.op[1]->type1, rightVal);
 				return retVal;
 			case T_OP_LT:
-				leftVal = interpret(p->opr.op[0]);
-				rightVal = interpret(p->opr.op[1]);
-				retVal = BinopValue(T_OP_LT, p->opr.op[0]->type1, leftVal, p->opr.op[1]->type1, rightVal);
+				leftVal = interpret(ctx, p->opr.op[0]);
+				rightVal = interpret(ctx, p->opr.op[1]);
+				retVal = BinopValue(ctx, T_OP_LT, p->opr.op[0]->type1, leftVal, p->opr.op[1]->type1, rightVal);
 				return retVal;
 			case T_OP_GT:
-				leftVal = interpret(p->opr.op[0]);
-				rightVal = interpret(p->opr.op[1]);
-				retVal = BinopValue(T_OP_GT, p->opr.op[0]->type1, leftVal, p->opr.op[1]->type1, rightVal);
+				leftVal = interpret(ctx, p->opr.op[0]);
+				rightVal = interpret(ctx, p->opr.op[1]);
+				retVal = BinopValue(ctx, T_OP_GT, p->opr.op[0]->type1, leftVal, p->opr.op[1]->type1, rightVal);
 				return retVal;
 			case T_OP_GE:
-				leftVal = interpret(p->opr.op[0]);
-				rightVal = interpret(p->opr.op[1]);
-				retVal = BinopValue(T_OP_GE, p->opr.op[0]->type1, leftVal, p->opr.op[1]->type1, rightVal);
+				leftVal = interpret(ctx, p->opr.op[0]);
+				rightVal = interpret(ctx, p->opr.op[1]);
+				retVal = BinopValue(ctx, T_OP_GE, p->opr.op[0]->type1, leftVal, p->opr.op[1]->type1, rightVal);
 				return retVal;
 			case T_OP_LE:
-				leftVal = interpret(p->opr.op[0]);
-				rightVal = interpret(p->opr.op[1]);
-				retVal = BinopValue(T_OP_LE, p->opr.op[0]->type1, leftVal, p->opr.op[1]->type1, rightVal);
+				leftVal = interpret(ctx, p->opr.op[0]);
+				rightVal = interpret(ctx, p->opr.op[1]);
+				retVal = BinopValue(ctx, T_OP_LE, p->opr.op[0]->type1, leftVal, p->opr.op[1]->type1, rightVal);
 				return retVal;
 			case T_OP_NE:
-				leftVal = interpret(p->opr.op[0]);
-				rightVal = interpret(p->opr.op[1]);
-				retVal = BinopValue(T_OP_NE, p->opr.op[0]->type1, leftVal, p->opr.op[1]->type1, rightVal);
+				leftVal = interpret(ctx, p->opr.op[0]);
+				rightVal = interpret(ctx, p->opr.op[1]);
+				retVal = BinopValue(ctx, T_OP_NE, p->opr.op[0]->type1, leftVal, p->opr.op[1]->type1, rightVal);
 				return retVal;
 			case T_OP_EQ:
-				leftVal = interpret(p->opr.op[0]);
-				rightVal = interpret(p->opr.op[1]);
-				retVal = BinopValue(T_OP_EQ, p->opr.op[0]->type1, leftVal, p->opr.op[1]->type1, rightVal);
+				leftVal = interpret(ctx, p->opr.op[0]);
+				rightVal = interpret(ctx, p->opr.op[1]);
+				retVal = BinopValue(ctx, T_OP_EQ, p->opr.op[0]->type1, leftVal, p->opr.op[1]->type1, rightVal);
 				return retVal;
 			case T_OP_AND:
-				leftVal.bVal = convertToBoolean(p->opr.op[0]->type1, interpret(p->opr.op[0]));
-				rightVal.bVal = convertToBoolean(p->opr.op[1]->type1, interpret(p->opr.op[1]));
+				leftVal.bVal = convertToBoolean(ctx, p->opr.op[0]->type1, interpret(ctx, p->opr.op[0]));
+				rightVal.bVal = convertToBoolean(ctx, p->opr.op[1]->type1, interpret(ctx, p->opr.op[1]));
 				retVal.bVal = leftVal.bVal && rightVal.bVal;
 				return retVal;
 			case T_OP_OR:
-				leftVal.bVal = convertToBoolean(p->opr.op[0]->type1, interpret(p->opr.op[0]));
-				rightVal.bVal = convertToBoolean(p->opr.op[1]->type1, interpret(p->opr.op[1]));
+				leftVal.bVal = convertToBoolean(ctx, p->opr.op[0]->type1, interpret(ctx, p->opr.op[0]));
+				rightVal.bVal = convertToBoolean(ctx, p->opr.op[1]->type1, interpret(ctx, p->opr.op[1]));
 				retVal.bVal = leftVal.bVal || rightVal.bVal;
 				return retVal;
 			case T_OP_NOT:
-				retVal.bVal = convertToBoolean(p->opr.op[0]->type1, interpret(p->opr.op[0]));
+				retVal.bVal = convertToBoolean(ctx, p->opr.op[0]->type1, interpret(ctx, p->opr.op[0]));
 				retVal.bVal = !retVal.bVal;
 				return retVal;
 			}
@@ -618,7 +617,7 @@ Valore interpret(nodeType *p)
     return valZero;
 }
 
-Valore GenThreeAddressCode(nodeType *p)
+Valore GenThreeAddressCode(CompilerContext *ctx, nodeType *p)
 {
 	char szTemp[128];
 	char szTemp2[128];
@@ -662,7 +661,7 @@ Valore GenThreeAddressCode(nodeType *p)
 	{
     case typeConst:
 		{
-			g_t1 = p->type1;
+			ctx->g_t1 = p->type1;
 
 			switch( p->type1 )
 			{
@@ -696,9 +695,9 @@ Valore GenThreeAddressCode(nodeType *p)
     case typeId:
 		{
 			HashTable Dati;
-			if ( scopeFind(&g_Scope, p->id.name, &Dati) )
+			if ( scopeFind(ctx, &ctx->g_Scope, p->id.name, &Dati) )
 			{
-				g_t1 = Dati.Tipo1;
+				ctx->g_t1 = Dati.Tipo1;
 				retVal = Dati.Value;
 
 				if ( Dati.Tipo0 == T_ARRAY )
@@ -726,11 +725,11 @@ Valore GenThreeAddressCode(nodeType *p)
 
 					if ( Dati.Value.pArrayDef->countIndexes == 1 )
 					{
-						leftVal = GenThreeAddressCode(p->id.value.pArrayDef->indexes[0]);
-						sprintf(szTemp, "t%d", g_temp++);
+						leftVal = GenThreeAddressCode(ctx, p->id.value.pArrayDef->indexes[0]);
+						sprintf(szTemp, "t%d", ctx->g_temp++);
 						printf("%s = %s * %d\n", szTemp, leftVal.strVal, size);
 						strcpy(retVal.strVal, szTemp);
-						sprintf(szTemp, "t%d", g_temp++);
+						sprintf(szTemp, "t%d", ctx->g_temp++);
 						printf("%s = %s[%s]\n", szTemp, p->id.name, retVal.strVal);
 						strcpy(retVal.strVal, szTemp);
 					}
@@ -738,8 +737,8 @@ Valore GenThreeAddressCode(nodeType *p)
 					{
 						loc = size * Dati.Value.pArrayDef->sizes[1];
 
-						leftVal = GenThreeAddressCode(p->id.value.pArrayDef->indexes[0]);
-						sprintf(szTemp, "t%d", g_temp++);
+						leftVal = GenThreeAddressCode(ctx, p->id.value.pArrayDef->indexes[0]);
+						sprintf(szTemp, "t%d", ctx->g_temp++);
 						printf("%s = %s * %d\n", szTemp, leftVal.strVal, loc);
 						strcpy(retVal.strVal, szTemp);
 
@@ -750,16 +749,16 @@ Valore GenThreeAddressCode(nodeType *p)
 							else
 								loc = size;
 
-							leftVal = GenThreeAddressCode(p->id.value.pArrayDef->indexes[k]);
-							sprintf(szTemp, "t%d", g_temp++);
+							leftVal = GenThreeAddressCode(ctx, p->id.value.pArrayDef->indexes[k]);
+							sprintf(szTemp, "t%d", ctx->g_temp++);
 							strcpy(szTemp2, szTemp);
 							printf("%s = %s * %d\n", szTemp, leftVal.strVal, loc);
-							sprintf(szTemp, "t%d", g_temp++);
+							sprintf(szTemp, "t%d", ctx->g_temp++);
 							printf("%s = %s + %s\n", szTemp, retVal.strVal, szTemp2);
 						}
 
 						strcpy(retVal.strVal, szTemp);
-						sprintf(szTemp, "t%d", g_temp++);
+						sprintf(szTemp, "t%d", ctx->g_temp++);
 
 						printf("%s = %s[%s]\n", szTemp, p->id.name, retVal.strVal);
 						strcpy(retVal.strVal, szTemp);
@@ -779,7 +778,7 @@ Valore GenThreeAddressCode(nodeType *p)
 			else
 			{
 				printf("Errore: X identificatore '%s' non dichiarato\n", p->id.name);
-				g_t1 = T_INTEGER;
+				ctx->g_t1 = T_INTEGER;
 				retVal = valZero;
 			}
 
@@ -793,164 +792,164 @@ Valore GenThreeAddressCode(nodeType *p)
 			switch(p->opr.oper)
 			{
 			case T_KW_WHILE:
-				printf("L%03d:\n", label1 = g_label++);
-				retVal = GenThreeAddressCode(p->opr.op[0]);
-				printf("if not %s goto L%03d\n", retVal.strVal, label2 = g_label++);
-				retVal = GenThreeAddressCode(p->opr.op[1]);
+				printf("L%03d:\n", label1 = ctx->g_label++);
+				retVal = GenThreeAddressCode(ctx, p->opr.op[0]);
+				printf("if not %s goto L%03d\n", retVal.strVal, label2 = ctx->g_label++);
+				retVal = GenThreeAddressCode(ctx, p->opr.op[1]);
 				printf("goto L%03d\n", label1);
 				printf("L%03d:\n", label2);
 				return retVal;
 			case T_KW_DO: // do-while
-				printf("L%03d:\n", label1 = g_label++);
-				retVal = GenThreeAddressCode(p->opr.op[0]);
-				retVal = GenThreeAddressCode(p->opr.op[1]);
+				printf("L%03d:\n", label1 = ctx->g_label++);
+				retVal = GenThreeAddressCode(ctx, p->opr.op[0]);
+				retVal = GenThreeAddressCode(ctx, p->opr.op[1]);
 				printf("if %s goto L%03d\n", retVal.strVal, label1);
 				return retVal;
 			case T_KW_IF:
-				retVal = GenThreeAddressCode(p->opr.op[0]);
+				retVal = GenThreeAddressCode(ctx, p->opr.op[0]);
 				if (p->opr.nops > 2)
 				{
 					// if else
-					printf("ifFalse %s goto L%03d\n", retVal.strVal, label1 = g_label++);
-					GenThreeAddressCode(p->opr.op[1]);
-					printf("goto L%03d\n", label2 = g_label++);
+					printf("ifFalse %s goto L%03d\n", retVal.strVal, label1 = ctx->g_label++);
+					GenThreeAddressCode(ctx, p->opr.op[1]);
+					printf("goto L%03d\n", label2 = ctx->g_label++);
 					printf("L%03d:\n", label1);
-					retVal = GenThreeAddressCode(p->opr.op[2]);
+					retVal = GenThreeAddressCode(ctx, p->opr.op[2]);
 					printf("L%03d:\n", label2);
 				}
 				else
 				{
 					// if
-					printf("ifFalse %s goto L%03d\n", retVal.strVal, label1 = g_label++);
-					retVal = GenThreeAddressCode(p->opr.op[1]);
+					printf("ifFalse %s goto L%03d\n", retVal.strVal, label1 = ctx->g_label++);
+					retVal = GenThreeAddressCode(ctx, p->opr.op[1]);
 					printf("L%03d:\n", label1);
 				}
 				return retVal;
 			case T_KW_PRINT:
-				retVal = GenThreeAddressCode(p->opr.op[0]);
+				retVal = GenThreeAddressCode(ctx, p->opr.op[0]);
 				printf("print %s\n", retVal.strVal);
 				return retVal;
 			case T_KW_READ:
-				retVal = GenThreeAddressCode(p->opr.op[0]);
+				retVal = GenThreeAddressCode(ctx, p->opr.op[0]);
 				printf("read %s\n", retVal.strVal);
 				return retVal;
 			case T_STMT_LIST:
-				GenThreeAddressCode(p->opr.op[0]);
-				return GenThreeAddressCode(p->opr.op[1]);
+				GenThreeAddressCode(ctx, p->opr.op[0]);
+				return GenThreeAddressCode(ctx, p->opr.op[1]);
 			case T_CODE_BLOCK:
-				return GenThreeAddressCode(p->opr.op[0]);
+				return GenThreeAddressCode(ctx, p->opr.op[0]);
 			case T_OP_ASSIGN:
-				leftVal = GenThreeAddressCode(p->opr.op[0]);
-				rightVal = GenThreeAddressCode(p->opr.op[1]);
+				leftVal = GenThreeAddressCode(ctx, p->opr.op[0]);
+				rightVal = GenThreeAddressCode(ctx, p->opr.op[1]);
 
 				printf("%s = %s\n", leftVal.strVal, rightVal.strVal);
 				retVal.strVal = szTemp;
 				return retVal;
 			case T_OP_UMINUS:
-				leftVal = GenThreeAddressCode(p->opr.op[0]);
-				sprintf(szTemp, "t%d", g_temp++);
+				leftVal = GenThreeAddressCode(ctx, p->opr.op[0]);
+				sprintf(szTemp, "t%d", ctx->g_temp++);
 				printf("%s = neg %s\n", szTemp, leftVal.strVal);
 				retVal.strVal = szTemp;
 				return retVal;
 			case T_OP_PLUS:
-				leftVal = GenThreeAddressCode(p->opr.op[0]);
-				rightVal = GenThreeAddressCode(p->opr.op[1]);
+				leftVal = GenThreeAddressCode(ctx, p->opr.op[0]);
+				rightVal = GenThreeAddressCode(ctx, p->opr.op[1]);
 
-				sprintf(szTemp, "t%d", g_temp++);
+				sprintf(szTemp, "t%d", ctx->g_temp++);
 				printf("%s = %s + %s\n", szTemp, leftVal.strVal, rightVal.strVal);
 				retVal.strVal = szTemp;
 				return retVal;
 			case T_OP_MINUS:
-				leftVal = GenThreeAddressCode(p->opr.op[0]);
-				rightVal = GenThreeAddressCode(p->opr.op[1]);
+				leftVal = GenThreeAddressCode(ctx, p->opr.op[0]);
+				rightVal = GenThreeAddressCode(ctx, p->opr.op[1]);
 
-				sprintf(szTemp, "t%d", g_temp++);
+				sprintf(szTemp, "t%d", ctx->g_temp++);
 				printf("%s = %s - %s\n", szTemp, leftVal.strVal, rightVal.strVal);
 				retVal.strVal = szTemp;
 				return retVal;
 			case T_OP_MULT:
-				leftVal = GenThreeAddressCode(p->opr.op[0]);
-				rightVal = GenThreeAddressCode(p->opr.op[1]);
+				leftVal = GenThreeAddressCode(ctx, p->opr.op[0]);
+				rightVal = GenThreeAddressCode(ctx, p->opr.op[1]);
 
-				sprintf(szTemp, "t%d", g_temp++);
+				sprintf(szTemp, "t%d", ctx->g_temp++);
 				printf("%s = %s * %s\n", szTemp, leftVal.strVal, rightVal.strVal);
 				retVal.strVal = szTemp;
 				return retVal;
 			case T_OP_DIV:
-				leftVal = GenThreeAddressCode(p->opr.op[0]);
-				rightVal = GenThreeAddressCode(p->opr.op[1]);
+				leftVal = GenThreeAddressCode(ctx, p->opr.op[0]);
+				rightVal = GenThreeAddressCode(ctx, p->opr.op[1]);
 
-				sprintf(szTemp, "t%d", g_temp++);
+				sprintf(szTemp, "t%d", ctx->g_temp++);
 				printf("%s = %s / %s\n", szTemp, leftVal.strVal, rightVal.strVal);
 				retVal.strVal = szTemp;
 				return retVal;
 			case T_OP_LT:
-				leftVal = GenThreeAddressCode(p->opr.op[0]);
-				rightVal = GenThreeAddressCode(p->opr.op[1]);
+				leftVal = GenThreeAddressCode(ctx, p->opr.op[0]);
+				rightVal = GenThreeAddressCode(ctx, p->opr.op[1]);
 
-				sprintf(szTemp, "t%d", g_temp++);
+				sprintf(szTemp, "t%d", ctx->g_temp++);
 				printf("%s = %s < %s\n", szTemp, leftVal.strVal, rightVal.strVal);
 				retVal.strVal = szTemp;
 				return retVal;
 			case T_OP_GT:
-				leftVal = GenThreeAddressCode(p->opr.op[0]);
-				rightVal = GenThreeAddressCode(p->opr.op[1]);
+				leftVal = GenThreeAddressCode(ctx, p->opr.op[0]);
+				rightVal = GenThreeAddressCode(ctx, p->opr.op[1]);
 
-				sprintf(szTemp, "t%d", g_temp++);
+				sprintf(szTemp, "t%d", ctx->g_temp++);
 				printf("%s = %s > %s\n", szTemp, leftVal.strVal, rightVal.strVal);
 				retVal.strVal = szTemp;
 				return retVal;
 			case T_OP_GE:
-				leftVal = GenThreeAddressCode(p->opr.op[0]);
-				rightVal = GenThreeAddressCode(p->opr.op[1]);
+				leftVal = GenThreeAddressCode(ctx, p->opr.op[0]);
+				rightVal = GenThreeAddressCode(ctx, p->opr.op[1]);
 
-				sprintf(szTemp, "t%d", g_temp++);
+				sprintf(szTemp, "t%d", ctx->g_temp++);
 				printf("%s = %s >= %s\n", szTemp, leftVal.strVal, rightVal.strVal);
 				retVal.strVal = szTemp;
 				return retVal;
 			case T_OP_LE:
-				leftVal = GenThreeAddressCode(p->opr.op[0]);
-				rightVal = GenThreeAddressCode(p->opr.op[1]);
+				leftVal = GenThreeAddressCode(ctx, p->opr.op[0]);
+				rightVal = GenThreeAddressCode(ctx, p->opr.op[1]);
 
-				sprintf(szTemp, "t%d", g_temp++);
+				sprintf(szTemp, "t%d", ctx->g_temp++);
 				printf("%s = %s <= %s\n", szTemp, leftVal.strVal, rightVal.strVal);
 				retVal.strVal = szTemp;
 				return retVal;
 			case T_OP_NE:
-				leftVal = GenThreeAddressCode(p->opr.op[0]);
-				rightVal = GenThreeAddressCode(p->opr.op[1]);
+				leftVal = GenThreeAddressCode(ctx, p->opr.op[0]);
+				rightVal = GenThreeAddressCode(ctx, p->opr.op[1]);
 
-				sprintf(szTemp, "t%d", g_temp++);
+				sprintf(szTemp, "t%d", ctx->g_temp++);
 				printf("%s = %s != %s\n", szTemp, leftVal.strVal, rightVal.strVal);
 				retVal.strVal = szTemp;
 				return retVal;
 			case T_OP_EQ:
-				leftVal = GenThreeAddressCode(p->opr.op[0]);
-				rightVal = GenThreeAddressCode(p->opr.op[1]);
+				leftVal = GenThreeAddressCode(ctx, p->opr.op[0]);
+				rightVal = GenThreeAddressCode(ctx, p->opr.op[1]);
 
-				sprintf(szTemp, "t%d", g_temp++);
+				sprintf(szTemp, "t%d", ctx->g_temp++);
 				printf("%s = %s == %s\n", szTemp, leftVal.strVal, rightVal.strVal);
 				retVal.strVal = szTemp;
 				return retVal;
 			case T_OP_AND:
-				leftVal = GenThreeAddressCode(p->opr.op[0]);
-				rightVal = GenThreeAddressCode(p->opr.op[1]);
+				leftVal = GenThreeAddressCode(ctx, p->opr.op[0]);
+				rightVal = GenThreeAddressCode(ctx, p->opr.op[1]);
 
-				sprintf(szTemp, "t%d", g_temp++);
+				sprintf(szTemp, "t%d", ctx->g_temp++);
 				printf("%s = %s and %s\n", szTemp, leftVal.strVal, rightVal.strVal);
 				retVal.strVal = szTemp;
 				return retVal;
 			case T_OP_OR:
-				leftVal = GenThreeAddressCode(p->opr.op[0]);
-				rightVal = GenThreeAddressCode(p->opr.op[1]);
+				leftVal = GenThreeAddressCode(ctx, p->opr.op[0]);
+				rightVal = GenThreeAddressCode(ctx, p->opr.op[1]);
 
-				sprintf(szTemp, "t%d", g_temp++);
+				sprintf(szTemp, "t%d", ctx->g_temp++);
 				printf("%s = %s or %s\n", szTemp, leftVal.strVal, rightVal.strVal);
 				retVal.strVal = szTemp;
 				return retVal;
 			case T_OP_NOT:
-				leftVal = GenThreeAddressCode(p->opr.op[0]);
-				sprintf(szTemp, "t%d", g_temp++);
+				leftVal = GenThreeAddressCode(ctx, p->opr.op[0]);
+				sprintf(szTemp, "t%d", ctx->g_temp++);
 				printf("%s = not %s\n", szTemp, leftVal.strVal);
 				retVal.strVal = szTemp;
 				return retVal;
@@ -1011,6 +1010,9 @@ java myprog_01
 
 int main(int argc, char **argv)
 {
+	CompilerContext ctx;
+	ctx_init(&ctx);
+
 	//char *szInput = "expr:	term { ('+'|'-') term };\n"
 	//				"term:	factor { ('*'|'/') factor };\n"
 	//				"factor:	['-'] expon;\n"
@@ -1058,10 +1060,10 @@ int main(int argc, char **argv)
 	if (optLevel < 0)
 		optLevel = genJVM ? 3 : 0;
 	
-	scopeInit(&g_Scope);
+	scopeInit(&ctx, &ctx.g_Scope);
 
 	//printf("\n");
-	ret = Parse(argv[1], &pTree, genTAC, genJVM);
+	ret = Parse(&ctx, argv[1], &pTree, genTAC, genJVM);
 	printf("\n");
 	
 	if ( ret && pTree )
@@ -1069,22 +1071,22 @@ int main(int argc, char **argv)
 		if ( genTAC )
 		{
 			//GenThreeAddressCode(pTree);
-			tacGenerate(pTree, &g_Scope, optLevel);
+			tacGenerate(&ctx, pTree, &ctx.g_Scope, optLevel);
 		}
 		else if ( genJVM )
 		{
-			jvmStart(argv[1], &pTree, &g_Scope, optLevel);
+			jvmStart(&ctx, argv[1], &pTree, &ctx.g_Scope, optLevel);
 		}
 		else
 		{
-			interpret(pTree);
+			interpret(&ctx, pTree);
 		}
 	}
 
 	//printf("\n");
 
-	scopeFree(&g_Scope);
-	freeNode(pTree);
+	scopeFree(&ctx, &ctx.g_Scope);
+	freeNode(&ctx, pTree);
 	
 	return 0;
 }

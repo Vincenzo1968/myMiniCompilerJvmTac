@@ -23,13 +23,15 @@ along with mypdfsearch. If not, see <http://www.gnu.org/licenses/>.
 #  include "config.h"
 #endif
 
+#include "context.h"
 #include "endianess.h"
 
 /*
 ritorna 1 se la macchina è big-endian, 0 se little-endian
 */
-char isBigEndian()
+char isBigEndian(CompilerContext *ctx)
 {
+	(void)ctx;
 	unsigned short i = 0xABCD;
 	unsigned char *buff;
 

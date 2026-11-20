@@ -22,6 +22,9 @@ along with mypdfsearch. If not, see <http://www.gnu.org/licenses/>.
 #ifndef TAC_H
 #define TAC_H
 
+
+struct CompilerContext;
+typedef struct CompilerContext CompilerContext;
 #include "ast.h"
 #include "scanner.h"
 
@@ -67,19 +70,19 @@ typedef struct {
 } TACList;
 
 /* API principale chiamata da main.c */
-void tacGenerate(nodeType *pTree, Scope *pScope, int optLevel);
+void tacGenerate(CompilerContext *ctx, nodeType *pTree, Scope *pScope, int optLevel);
 
 /* Funzioni di utilita' per la IR (usate anche nei livelli -O2/-O3) */
-void tacInit(TACList *list);
-void tacFree(TACList *list);
-void tacEmit(TACList *list, TACOp op, const char *arg1, const char *arg2, const char *res, enumTipo1 t1);
-void tacPrint(const TACList *list);
+void tacInit(CompilerContext *ctx, TACList *list);
+void tacFree(CompilerContext *ctx, TACList *list);
+void tacEmit(CompilerContext *ctx, TACList *list, TACOp op, const char *arg1, const char *arg2, const char *res, enumTipo1 t1);
+void tacPrint(CompilerContext *ctx, const TACList *list);
 
-nodeType *tacOptimizeAST(nodeType *p);
-void tacOptimizeO1(TACList *list);
-void tacOptimizeO2(TACList *list);
-void tacOptimizeO3(TACList *list);
+nodeType *tacOptimizeAST(CompilerContext *ctx, nodeType *p);
+void tacOptimizeO1(CompilerContext *ctx, TACList *list);
+void tacOptimizeO2(CompilerContext *ctx, TACList *list);
+void tacOptimizeO3(CompilerContext *ctx, TACList *list);
 
-void tacBuild(nodeType **ppTree, Scope *pScope, int optLevel, TACList *outTac);
+void tacBuild(CompilerContext *ctx, nodeType **ppTree, Scope *pScope, int optLevel, TACList *outTac);
 
 #endif /* TAC_H */

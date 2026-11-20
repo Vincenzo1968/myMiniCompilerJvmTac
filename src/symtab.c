@@ -28,13 +28,15 @@ along with mypdfsearch. If not, see <http://www.gnu.org/licenses/>.
 #include <string.h>
 #include <malloc.h>
 
+#include "context.h"
 #include "symtab.h"
 
 
 // -------------------------- HashTable -----------------------------------------
 
-HashTable* htNewNode(char *Key, enumTipo0 t0, enumTipo1 t1, enumTipo2 t2, Valore v, char bInizializzato, char bDecl, int frameIndex)
+HashTable* htNewNode(CompilerContext *ctx, char *Key, enumTipo0 t0, enumTipo1 t1, enumTipo2 t2, Valore v, char bInizializzato, char bDecl, int frameIndex)
 {
+	(void)ctx;
 	HashTable *n = NULL;
 
 	n = (HashTable*)malloc(sizeof(HashTable));
@@ -88,8 +90,9 @@ HashTable* htNewNode(char *Key, enumTipo0 t0, enumTipo1 t1, enumTipo2 t2, Valore
 	return n;
 }
 
-int htFind(HashTable **pHashTable, char *Key, HashTable *pDati)
+int htFind(CompilerContext *ctx, HashTable **pHashTable, char *Key, HashTable *pDati)
 {
+	(void)ctx;
 	int index = 0;
 	HashTable *t = NULL;
 	int a = 31415;
@@ -121,7 +124,7 @@ int htFind(HashTable **pHashTable, char *Key, HashTable *pDati)
 	return -1;
 }
 
-void htInsert(HashTable **pHashTable, char *Key, enumTipo0 t0, enumTipo1 t1, enumTipo2 t2, Valore v, char bInizializzato, char bDecl, int frameIndex)
+void htInsert(CompilerContext *ctx, HashTable **pHashTable, char *Key, enumTipo0 t0, enumTipo1 t1, enumTipo2 t2, Valore v, char bInizializzato, char bDecl, int frameIndex)
 {
 	int index = 0;
 	HashTable *t = NULL;
@@ -137,7 +140,7 @@ void htInsert(HashTable **pHashTable, char *Key, enumTipo0 t0, enumTipo1 t1, enu
 	t = pHashTable[index];
 	if ( t == NULL )
 	{
-		pHashTable[index] = htNewNode(Key, t0, t1, t2, v, bInizializzato, bDecl, frameIndex);
+		pHashTable[index] = htNewNode(ctx, Key, t0, t1, t2, v, bInizializzato, bDecl, frameIndex);
 		return;
 	}
 
@@ -151,7 +154,7 @@ void htInsert(HashTable **pHashTable, char *Key, enumTipo0 t0, enumTipo1 t1, enu
 		}
 		if ( t->next == NULL )
 		{
-			t->next = htNewNode(Key, t0, t1, t2, v, bInizializzato, bDecl, frameIndex);
+			t->next = htNewNode(ctx, Key, t0, t1, t2, v, bInizializzato, bDecl, frameIndex);
 			//t = t->next;
 			//t->next = NULL;
 			return;
@@ -160,8 +163,9 @@ void htInsert(HashTable **pHashTable, char *Key, enumTipo0 t0, enumTipo1 t1, enu
 	}
 }
 
-void htFree(HashTable* first)
+void htFree(CompilerContext *ctx, HashTable* first)
 {
+	(void)ctx;
 	HashTable *n1 = first, *n2 = NULL;
 	while ( n1 != NULL )
 	{
@@ -217,8 +221,9 @@ void htFree(HashTable* first)
 	}
 }
 
-void htPrint(HashTable **pHashTable)
+void htPrint(CompilerContext *ctx, HashTable **pHashTable)
 {
+	(void)ctx;
 	int index;
 	HashTable *t = NULL;
 
@@ -283,8 +288,9 @@ void htPrint(HashTable **pHashTable)
 	}
 }
 
-void htPrintTAC(HashTable **pHashTable)
+void htPrintTAC(CompilerContext *ctx, HashTable **pHashTable)
 {
+	(void)ctx;
 	int index;
 	HashTable *t = NULL;
 
@@ -323,8 +329,9 @@ void htPrintTAC(HashTable **pHashTable)
 
 // -------------------------- Scope stack -----------------------------------------
 
-void scopeInit(Scope *pScope)
+void scopeInit(CompilerContext *ctx, Scope *pScope)
 {
+	(void)ctx;
 	HashTable **pHT = NULL;
 	int x;
 
@@ -350,8 +357,9 @@ void scopeInit(Scope *pScope)
 		pScope->stack[x] = NULL;
 }
 
-void scopePush(Scope *pScope)
+void scopePush(CompilerContext *ctx, Scope *pScope)
 {
+	(void)ctx;
 	HashTable **pHT = NULL;
 	int x;
 
@@ -380,7 +388,7 @@ void scopePush(Scope *pScope)
 	pScope->stack[pScope->top] = pHT;
 }
 
-int scopePop(Scope *pScope)
+int scopePop(CompilerContext *ctx, Scope *pScope)
 {
 	HashTable **pHT = NULL;
 	int x;
@@ -390,7 +398,7 @@ int scopePop(Scope *pScope)
 
 	pHT = pScope->stack[pScope->top];
 	for ( x = 0; x < HT_SIZE; x++)
-		htFree(pHT[x]);
+		htFree(ctx, pHT[x]);
 	free(pHT);
 	pHT = NULL;
 	pScope->stack[pScope->top] = NULL;
@@ -399,13 +407,13 @@ int scopePop(Scope *pScope)
 	return pScope->top;
 }
 
-void scopeFree(Scope *pScope)
+void scopeFree(CompilerContext *ctx, Scope *pScope)
 {
-	while ( scopePop(pScope) >= 0 )
+	while ( scopePop(ctx, pScope) >= 0 )
 		;
 }
 
-int scopeFind(Scope* pScope, char *Key, HashTable *pDati)
+int scopeFind(CompilerContext *ctx, Scope* pScope, char *Key, HashTable *pDati)
 {
 	HashTable **pHT = NULL;
 	int x;
@@ -413,7 +421,7 @@ int scopeFind(Scope* pScope, char *Key, HashTable *pDati)
 	for ( x = pScope->top; x >= 0; x-- )
 	{
 		pHT = pScope->stack[x];
-		if ( htFind(pHT, Key, pDati) >= 0 )
+		if ( htFind(ctx, pHT, Key, pDati) >= 0 )
 		{
 			return 1;
 		}
@@ -422,25 +430,25 @@ int scopeFind(Scope* pScope, char *Key, HashTable *pDati)
 	return 0;
 }
 
-int scopeInsert(Scope *pScope, char *Key, enumTipo0 t0, enumTipo1 t1, enumTipo2 t2, Valore v, char bInizializzato, int frameIndex)
+int scopeInsert(CompilerContext *ctx, Scope *pScope, char *Key, enumTipo0 t0, enumTipo1 t1, enumTipo2 t2, Valore v, char bInizializzato, int frameIndex)
 {
 	HashTable **pHT = NULL;
 	HashTable Dati;
 
 	pHT = pScope->stack[pScope->top];
 
-	if ( htFind(pHT, Key, &Dati) >= 0 )
+	if ( htFind(ctx, pHT, Key, &Dati) >= 0 )
 	{
 		printf("Errore: la variabile '%s' e' gia' stata dichiarata nello scope %d\n", Key, pScope->top);
 		return 0;
 	}
 
-	htInsert(pHT, Key, t0, t1, t2, v, bInizializzato, 0, frameIndex);
+	htInsert(ctx, pHT, Key, t0, t1, t2, v, bInizializzato, 0, frameIndex);
 
 	return 1;
 }
 
-int scopeUpdateValue(Scope *pScope, char *Key, enumTipo0 t0, enumTipo1 t1, enumTipo2 t2, Valore v, char bInizializzato, char bDecl)
+int scopeUpdateValue(CompilerContext *ctx, Scope *pScope, char *Key, enumTipo0 t0, enumTipo1 t1, enumTipo2 t2, Valore v, char bInizializzato, char bDecl)
 {
 	HashTable **pHT = NULL;
 	HashTable Dati;
@@ -451,7 +459,7 @@ int scopeUpdateValue(Scope *pScope, char *Key, enumTipo0 t0, enumTipo1 t1, enumT
 	{
 		pHT = pScope->stack[x];
 
-		index = htFind(pHT, Key, &Dati);
+		index = htFind(ctx, pHT, Key, &Dati);
 		if ( index >= 0 )
 		{
 			HashTable *pTable = pHT[index];

@@ -27,12 +27,14 @@ along with mypdfsearch. If not, see <http://www.gnu.org/licenses/>.
 #include <stdlib.h>
 #include <stdarg.h>
 #include <string.h>
+#include "context.h"
 #include "ast.h"
 
 #include <stddef.h>
 
-nodeType *con(enumTipo1 t1, char *lexeme, Valore value)
+nodeType *con(CompilerContext *ctx, enumTipo1 t1, char *lexeme, Valore value)
 {
+	(void)ctx;
     nodeType *p = NULL;
     size_t nodeSize;
 
@@ -57,8 +59,9 @@ nodeType *con(enumTipo1 t1, char *lexeme, Valore value)
     return p;
 }
 
-nodeType *id(char *name, char *uniqueName, enumTipo0 t0, enumTipo1 t1, enumTipo2 t2, Valore value, char bInizializzato)
+nodeType *id(CompilerContext *ctx, char *name, char *uniqueName, enumTipo0 t0, enumTipo1 t1, enumTipo2 t2, Valore value, char bInizializzato)
 {
+	(void)ctx;
     nodeType *p = NULL;
     size_t nodeSize;
 
@@ -83,8 +86,9 @@ nodeType *id(char *name, char *uniqueName, enumTipo0 t0, enumTipo1 t1, enumTipo2
     return p;
 }
 
-nodeType *opr(int oper, int nops, ...)
+nodeType *opr(CompilerContext *ctx, int oper, int nops, ...)
 {
+	(void)ctx;
     va_list ap;
     nodeType *p = NULL;
     size_t nodeSize;
@@ -112,7 +116,7 @@ nodeType *opr(int oper, int nops, ...)
     return p;
 }
 
-void freeNode(nodeType *p)
+void freeNode(CompilerContext *ctx, nodeType *p)
 {
     int i;
 
@@ -122,7 +126,7 @@ void freeNode(nodeType *p)
     if (p->type == typeOperator)
 	{
         for (i = 0; i < p->opr.nops; i++)
-            freeNode(p->opr.op[i]);
+            freeNode(ctx, p->opr.op[i]);
     }
 
 	if ( p->type == typeId )
@@ -138,7 +142,7 @@ void freeNode(nodeType *p)
 			{
 				for ( i = 0; i < p->id.value.pArrayDef->countIndexes; i++ )
 				{
-					freeNode(p->id.value.pArrayDef->indexes[i]);
+					freeNode(ctx, p->id.value.pArrayDef->indexes[i]);
 				}
 				free(p->id.value.pArrayDef->indexes);
 				p->id.value.pArrayDef->indexes = NULL;

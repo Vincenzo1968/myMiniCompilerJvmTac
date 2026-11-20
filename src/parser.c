@@ -27,6 +27,7 @@ along with mypdfsearch. If not, see <http://www.gnu.org/licenses/>.
 #include <stdlib.h>
 #include <math.h>
 #include <string.h>
+#include "context.h"
 #include "parser.h"
 #include "symtab.h"
 #include "ast.h"
@@ -66,37 +67,22 @@ expr4 : T_INT_LITERAL
 		;
 */
 
-static Token g_Token;
 
-static int g_isCodeBlock = 0;
-static int g_isStmtList = 0;
-static int g_isREAD = 0;
 
-static int g_numErrors = 0;
-static int g_numWarnings = 0;
 
-extern Scope g_Scope;
-static int g_currType = 0;
 
-static Valore g_currConstValue;
-static int g_currConstType = -1;
 
-static nodeType *g_stack[4096];
-static int g_top = -1;
 
-static int g_genTAC = 0;
-static int g_genJVM = 0;
 
-static int g_NextFrameIndex = 1;
 
 /* Helper per creare una copia wrapper di ArrayDef per un nodo AST */
-static int allocArrayDefWrapper(const HashTable *pHT, Valore *pOutVal)
+static int allocArrayDefWrapper(CompilerContext *ctx, const HashTable *pHT, Valore *pOutVal)
 {
     ArrayDef *pArr = (ArrayDef*)malloc(sizeof(ArrayDef));
     if ( !pArr )
     {
         printf("Errore pArrayDef: memoria insufficiente.\n");
-        g_numErrors++;
+        ctx->g_numErrors++;
         return 0;
     }
 
@@ -111,7 +97,7 @@ static int allocArrayDefWrapper(const HashTable *pHT, Valore *pOutVal)
         if ( !pArr->indexes )
         {
             printf("Errore pArrayDef->indexes: memoria insufficiente.\n");
-            g_numErrors++;
+            ctx->g_numErrors++;
             free(pArr);
             return 0;
         }
@@ -122,7 +108,7 @@ static int allocArrayDefWrapper(const HashTable *pHT, Valore *pOutVal)
 }
 
 /* Libera un wrapper ArrayDef (inclusi eventuali indici gia' assegnati) */
-static void freeArrayDefWrapper(Valore *pVal)
+static void freeArrayDefWrapper(CompilerContext *ctx, Valore *pVal)
 {
     int i;
     if ( !pVal || !pVal->pArrayDef )
@@ -134,7 +120,7 @@ static void freeArrayDefWrapper(Valore *pVal)
         {
             if ( pVal->pArrayDef->indexes[i] )
             {
-                freeNode(pVal->pArrayDef->indexes[i]);
+                freeNode(ctx, pVal->pArrayDef->indexes[i]);
                 pVal->pArrayDef->indexes[i] = NULL;
             }
         }
@@ -147,18 +133,19 @@ static void freeArrayDefWrapper(Valore *pVal)
 }
 
 /* Rimuove dallo stack i nodi creati durante l'analisi degli indici array */
-static void popArrayIndexNodes(int count)
+static void popArrayIndexNodes(CompilerContext *ctx, int count)
 {
-    while ( count > 0 && g_top >= 0 )
+    while ( count > 0 && ctx->g_top >= 0 )
     {
-        freeNode(g_stack[g_top--]);
+        freeNode(ctx, ctx->g_stack[ctx->g_top--]);
         count--;
     }
 }
 
 // Token che possono iniziare una istruzione (FIRST(stmt)). 
-static int isStmtStart(int t)
+static int isStmtStart(CompilerContext *ctx, int t)
 {
+	(void)ctx;
     return t == T_KW_PRINT || t == T_KW_READ || t == T_KW_WHILE ||
            t == T_KW_DO    || t == T_KW_IF   || t == T_KW_BEGIN ||
            t == T_ID;
@@ -167,19 +154,19 @@ static int isStmtStart(int t)
 /* Gestisce il ';' finale di uno statement: se manca ma il token corrente
    e' gia' l'inizio di una nuova istruzione o la fine di un blocco,
    recupera senza mangiare il token successivo. */
-static int expectStmtSemicolon(void)
+static int expectStmtSemicolon(CompilerContext *ctx)
 {
-    if ( match(T_SEMICOLON) )
+    if ( match(ctx, T_SEMICOLON) )
         return 1;
 
     printf("Linea %d Colonna %d: Errore stmt. Atteso semicolon ';'.\n",
-           g_Token.line, g_Token.column);
-    g_numErrors++;
+           ctx->g_Token.line, ctx->g_Token.column);
+    ctx->g_numErrors++;
 
-    if ( isStmtStart(g_Token.Type) ||
-         g_Token.Type == T_KW_END ||
-         g_Token.Type == T_KW_ELSE ||
-         g_Token.Type == T_EOF )
+    if ( isStmtStart(ctx, ctx->g_Token.Type) ||
+         ctx->g_Token.Type == T_KW_END ||
+         ctx->g_Token.Type == T_KW_ELSE ||
+         ctx->g_Token.Type == T_EOF )
     {
         return 1;
     }
@@ -190,101 +177,101 @@ static int expectStmtSemicolon(void)
 /* Gestisce ')' in intestazioni come if/while: se manca ma siamo gia'
    su un possibile inizio di istruzione o 'begin', recupera senza
    perdere il corpo dell'istruzione. */
-static int expectCondRParen(void)
+static int expectCondRParen(CompilerContext *ctx)
 {
-    if ( match(T_CPAREN) )
+    if ( match(ctx, T_CPAREN) )
         return 1;
 
     printf("Linea %d Colonna %d: Errore stmt. Attesa parentesi ')'.\n",
-           g_Token.line, g_Token.column);
-    g_numErrors++;
+           ctx->g_Token.line, ctx->g_Token.column);
+    ctx->g_numErrors++;
 
-    if ( isStmtStart(g_Token.Type) || g_Token.Type == T_EOF )
+    if ( isStmtStart(ctx, ctx->g_Token.Type) || ctx->g_Token.Type == T_EOF )
         return 1;
 
     return 0;
 }
 
-void Panic()
+void Panic(CompilerContext *ctx)
 {
-	g_numErrors++;
+	ctx->g_numErrors++;
 
-	while ( g_Token.Type != T_SEMICOLON && g_Token.Type != T_KW_END && g_Token.Type != T_EOF )
+	while ( ctx->g_Token.Type != T_SEMICOLON && ctx->g_Token.Type != T_KW_END && ctx->g_Token.Type != T_EOF )
 	{
-		GetNextToken(&g_Token);
+		GetNextToken(ctx, &ctx->g_Token);
 	}
 
-	if ( g_Token.Type == T_SEMICOLON || g_Token.Type == T_KW_END )
+	if ( ctx->g_Token.Type == T_SEMICOLON || ctx->g_Token.Type == T_KW_END )
 	{
-		GetNextToken(&g_Token);
-		SetDepth(0);
+		GetNextToken(ctx, &ctx->g_Token);
+		SetDepth(ctx, 0);
 	}
 }
 
-int Parse(char *szFileName, nodeType **pTree, int genTAC, int genJVM)
+int Parse(CompilerContext *ctx, char *szFileName, nodeType **pTree, int genTAC, int genJVM)
 {
     int ret;
 
-    g_genTAC = genTAC;
-    g_genJVM = genJVM;
-    g_Token.Value.vString = NULL;
+    ctx->g_genTAC = genTAC;
+    ctx->g_genJVM = genJVM;
+    ctx->g_Token.Value.vString = NULL;
 
-    if ( !LeggiFile(szFileName) )
+    if ( !LeggiFile(ctx, szFileName) )
         return 0;
 
-    GetNextToken(&g_Token);
+    GetNextToken(ctx, &ctx->g_Token);
 
     /* Un programma = dichiarazioni + un solo blocco begin...end. */
-    ret = program();
+    ret = program(ctx);
 
     /* Parsing riuscito ma token residui: codice fuori dal programma. */
-    if ( ret && g_Token.Type != T_EOF )
+    if ( ret && ctx->g_Token.Type != T_EOF )
     {
         printf("Linea %d Colonna %d: Errore. Token inattesi dopo la fine del programma.\n",
-               g_Token.line, g_Token.column);
-        g_numErrors++;
+               ctx->g_Token.line, ctx->g_Token.column);
+        ctx->g_numErrors++;
         ret = 0;
     }
 
     /* Svuota il buffer fino a EOF (mai oltre: dopo EOF lo scanner
        restituirebbe T_ERROR all'infinito). */
-    while ( g_Token.Type != T_EOF )
-        GetNextToken(&g_Token);
+    while ( ctx->g_Token.Type != T_EOF )
+        GetNextToken(ctx, &ctx->g_Token);
 
-    FreeInputbuffer();
+    FreeInputbuffer(ctx);
 
     /* Se program() ha fallito, garantisce almeno un errore conteggiato:
        evita ret=1 con stack vuoto (lettura di g_stack[-1]). */
-    if ( !ret && g_numErrors == 0 )
-        g_numErrors++;
+    if ( !ret && ctx->g_numErrors == 0 )
+        ctx->g_numErrors++;
 
-    ret = g_numErrors ? 0 : 1;
+    ret = ctx->g_numErrors ? 0 : 1;
 
-    if ( g_numErrors || g_numWarnings )
-        printf("Errori: %d\nWarnings: %d\n", g_numErrors, g_numWarnings);
+    if ( ctx->g_numErrors || ctx->g_numWarnings )
+        printf("Errori: %d\nWarnings: %d\n", ctx->g_numErrors, ctx->g_numWarnings);
 
     if ( !ret )
     {
         (*pTree) = NULL;
-        while ( g_top >= 0 )
+        while ( ctx->g_top >= 0 )
         {
-            freeNode(g_stack[g_top]);   // freeNode(NULL) e' sicuro 
-            g_top--;                    // decremento SEMPRE, anche se NULL 
+            freeNode(ctx, ctx->g_stack[ctx->g_top]);   // freeNode(NULL) e' sicuro 
+            ctx->g_top--;                    // decremento SEMPRE, anche se NULL 
         }
     }
     else
     {
-        (*pTree) = g_stack[g_top];
+        (*pTree) = ctx->g_stack[ctx->g_top];
     }
     
     return ret;
 }
 
-int match(TokenTypeEnum ExpectedToken)
+int match(CompilerContext *ctx, TokenTypeEnum ExpectedToken)
 {
-	if ( g_Token.Type == ExpectedToken )
+	if ( ctx->g_Token.Type == ExpectedToken )
 	{
-		GetNextToken(&g_Token);
+		GetNextToken(ctx, &ctx->g_Token);
 		return 1;
 	}
 	//else
@@ -298,11 +285,11 @@ int match(TokenTypeEnum ExpectedToken)
 	return 0;
 }
 
-int TypeCheck(Valore *value, const Token *pToken)
+int TypeCheck(CompilerContext *ctx, Valore *value, const Token *pToken)
 {
-	if ( g_currType == g_currConstType )
+	if ( ctx->g_currType == ctx->g_currConstType )
 	{
-		(*value) = g_currConstValue;
+		(*value) = ctx->g_currConstValue;
 
 		//if ( g_currType == T_BOOLEAN )
 		//{
@@ -312,10 +299,10 @@ int TypeCheck(Valore *value, const Token *pToken)
 	}
 	else
 	{
-		switch ( g_currType )
+		switch ( ctx->g_currType )
 		{
 		case T_INTEGER:
-			if ( g_currConstType == T_REAL )
+			if ( ctx->g_currConstType == T_REAL )
 			{
 				printf("Linea %d Colonna %d: "
 						"Warning var_list. "
@@ -324,17 +311,17 @@ int TypeCheck(Valore *value, const Token *pToken)
 						pToken->line,
 						pToken->column,
 						pToken->Value.vString);
-				g_numWarnings++;
-				(*value).iVal = (int)g_currConstValue.dblVal;
+				ctx->g_numWarnings++;
+				(*value).iVal = (int)ctx->g_currConstValue.dblVal;
 			}
-			else if ( g_currConstType == T_BOOLEAN )
+			else if ( ctx->g_currConstType == T_BOOLEAN )
 			{
-				if ( g_currConstValue.bVal )
+				if ( ctx->g_currConstValue.bVal )
 					(*value).iVal = 1;
 				else
 					(*value).iVal = 0;
 			}
-			else if ( g_currConstType == T_STRING )
+			else if ( ctx->g_currConstType == T_STRING )
 			{
 				printf("Linea %d Colonna %d: "
 						"Errore var_list. "
@@ -347,20 +334,20 @@ int TypeCheck(Valore *value, const Token *pToken)
 			}
 			break;
 		case T_REAL:
-			if ( g_currConstType == T_INTEGER )
+			if ( ctx->g_currConstType == T_INTEGER )
 			{
-				(*value).dblVal = (double)g_currConstValue.iVal;
+				(*value).dblVal = (double)ctx->g_currConstValue.iVal;
 			}
-			else if ( g_currConstType == T_BOOLEAN )
+			else if ( ctx->g_currConstType == T_BOOLEAN )
 			{
-				if ( g_currConstValue.bVal )
+				if ( ctx->g_currConstValue.bVal )
 					(*value).dblVal = 1.0;
 					//(*value).iVal = 1;
 				else
 					//(*value).iVal = 0;
 					(*value).dblVal = 0.0;
 			}
-			else if ( g_currConstType == T_STRING )
+			else if ( ctx->g_currConstType == T_STRING )
 			{
 				printf("Linea %d Colonna %d: "
 						"Errore var_list. "
@@ -373,7 +360,7 @@ int TypeCheck(Valore *value, const Token *pToken)
 			}
 			break;
 		case T_BOOLEAN:
-			if ( g_currConstType == T_INTEGER )
+			if ( ctx->g_currConstType == T_INTEGER )
 			{
 				printf("Linea %d Colonna %d: "
 						"Errore var_list. "
@@ -384,7 +371,7 @@ int TypeCheck(Valore *value, const Token *pToken)
 						pToken->Value.vString);
 				return 0;
 			}
-			else if ( g_currConstType == T_REAL )
+			else if ( ctx->g_currConstType == T_REAL )
 			{
 				printf("Linea %d Colonna %d: "
 						"Errore var_list. "
@@ -395,7 +382,7 @@ int TypeCheck(Valore *value, const Token *pToken)
 						pToken->Value.vString);
 				return 0;
 			}
-			else if ( g_currConstType == T_STRING )
+			else if ( ctx->g_currConstType == T_STRING )
 			{
 				printf("Linea %d Colonna %d: "
 						"Errore var_list. "
@@ -408,7 +395,7 @@ int TypeCheck(Valore *value, const Token *pToken)
 			}
 			break;
 		case T_STRING:
-			if ( g_currConstType == T_INTEGER )
+			if ( ctx->g_currConstType == T_INTEGER )
 			{
 				printf("Linea %d Colonna %d: "
 						"Errore var_list. "
@@ -419,7 +406,7 @@ int TypeCheck(Valore *value, const Token *pToken)
 						pToken->Value.vString);
 				return 0;
 			}
-			else if ( g_currConstType == T_REAL )
+			else if ( ctx->g_currConstType == T_REAL )
 			{
 				printf("Linea %d Colonna %d: "
 						"Errore var_list. "
@@ -430,7 +417,7 @@ int TypeCheck(Valore *value, const Token *pToken)
 						pToken->Value.vString);
 				return 0;
 			}
-			else if ( g_currConstType == T_BOOLEAN )
+			else if ( ctx->g_currConstType == T_BOOLEAN )
 			{
 				printf("Linea %d Colonna %d: "
 						"Errore var_list. "
@@ -450,56 +437,56 @@ int TypeCheck(Valore *value, const Token *pToken)
 
 
 // program : decl_list code_block;
-int program()
+int program(CompilerContext *ctx)
 {
-	if ( !decl_list() )
+	if ( !decl_list(ctx) )
 		return 0;
 
-	if ( !code_block() )
+	if ( !code_block(ctx) )
 		return 0;
 
 	return 1;
 }
 
 //decl_list : {decl};
-int decl_list()
+int decl_list(CompilerContext *ctx)
 {
-	while ( g_Token.Type == T_KW_ARRAY ||
-		g_Token.Type == T_KW_INT ||
-		g_Token.Type == T_KW_REAL ||
-		g_Token.Type == T_KW_BOOL ||
-		g_Token.Type == T_KW_STRING )
-		if ( !decl() )
+	while ( ctx->g_Token.Type == T_KW_ARRAY ||
+		ctx->g_Token.Type == T_KW_INT ||
+		ctx->g_Token.Type == T_KW_REAL ||
+		ctx->g_Token.Type == T_KW_BOOL ||
+		ctx->g_Token.Type == T_KW_STRING )
+		if ( !decl(ctx) )
 			return 0;
 
 	return 1;
 }
 
 //type : T_KW_INT | T_KW_REAL | T_KW_BOOL | T_KW_STRING;
-int type(void)
+int type(CompilerContext *ctx)
 {
-	switch ( g_Token.Type )
+	switch ( ctx->g_Token.Type )
 	{
 	case T_KW_INT:
-		g_currType = T_INTEGER;
-		GetNextToken(&g_Token);
+		ctx->g_currType = T_INTEGER;
+		GetNextToken(ctx, &ctx->g_Token);
 		return 1;
 	case T_KW_REAL:
-		g_currType = T_REAL;
-		GetNextToken(&g_Token);
+		ctx->g_currType = T_REAL;
+		GetNextToken(ctx, &ctx->g_Token);
 		return 1;
 	case T_KW_BOOL:
-		g_currType = T_BOOLEAN;
-		GetNextToken(&g_Token);
+		ctx->g_currType = T_BOOLEAN;
+		GetNextToken(ctx, &ctx->g_Token);
 		return 1;
 	case T_KW_STRING:
-		g_currType = T_STRING;
-		GetNextToken(&g_Token);
+		ctx->g_currType = T_STRING;
+		GetNextToken(ctx, &ctx->g_Token);
 		return 1;
 	default:
 		printf("Linea %d Colonna %d: Errore type. Attesa keyword 'int' o 'real' o 'bool' o 'string'.\n",
-		       g_Token.line, g_Token.column);
-		g_numErrors++;
+		       ctx->g_Token.line, ctx->g_Token.column);
+		ctx->g_numErrors++;
 		return 0;
 	}
 }
@@ -507,9 +494,9 @@ int type(void)
 //decl : type var_list ';'
 //		| T_KW_ARRAY T_ID '[' T_INT_LITERAL ']' {'[' T_INT_LITERAL ']'} T_KW_OF type ';'
 //		;
-int decl()
+int decl(CompilerContext *ctx)
 {
-	if ( g_Token.Type == T_KW_ARRAY )
+	if ( ctx->g_Token.Type == T_KW_ARRAY )
 	{
 		Valore value;
 		Token token;
@@ -525,7 +512,7 @@ int decl()
 		if ( !value.pArrayDef )
 		{
 			printf("Errore: memoria insufficiente.\n");
-			g_numErrors++;
+			ctx->g_numErrors++;
 			return 0;
 		}
 
@@ -534,140 +521,140 @@ int decl()
 		value.pArrayDef->sizes = NULL;
 		value.pArrayDef->indexes = NULL;
 
-		GetNextToken(&g_Token);
+		GetNextToken(ctx, &ctx->g_Token);
 
-		token = g_Token;
-		if ( g_Token.Type == T_ID )
+		token = ctx->g_Token;
+		if ( ctx->g_Token.Type == T_ID )
 		{
-			if ( strlen(g_Token.Value.vString) >= sizeof(szIdName) )
+			if ( strlen(ctx->g_Token.Value.vString) >= sizeof(szIdName) )
 			{
 				printf("Linea %d Colonna %d: Errore decl. Identificatore troppo lungo.\n",
-						g_Token.line, g_Token.column);
-				g_numErrors++;
+						ctx->g_Token.line, ctx->g_Token.column);
+				ctx->g_numErrors++;
 				free(value.pArrayDef);
 				return 0;
 			}
-			strcpy(szIdName, g_Token.Value.vString);
+			strcpy(szIdName, ctx->g_Token.Value.vString);
 		}
 		token.Value.vString = szIdName;
 
-		if ( !match(T_ID) )
+		if ( !match(ctx, T_ID) )
 		{
 			printf("Linea %d Colonna %d: Errore decl. Atteso identificatore.\n",
-				g_Token.line, g_Token.column);
-			g_numErrors++;
+				ctx->g_Token.line, ctx->g_Token.column);
+			ctx->g_numErrors++;
 			free(value.pArrayDef);
 			return 0;
 		}
-		if ( scopeFind(&g_Scope, token.Value.vString, &hashTable) )
+		if ( scopeFind(ctx, &ctx->g_Scope, token.Value.vString, &hashTable) )
 		{
 			printf("Linea %d Colonna %d: Errore var_list. Identificatore '%s' già dichiarato.\n",
 					token.line, token.column, token.Value.vString);
-			g_numErrors++;
+			ctx->g_numErrors++;
 			free(value.pArrayDef);
 			return 0;
 		}
 
-		if ( !match(T_QOPAREN) )
+		if ( !match(ctx, T_QOPAREN) )
 		{
 			printf("Linea %d Colonna %d: Errore decl. Attesa parentesi '['.\n",
-				g_Token.line, g_Token.column);
-			g_numErrors++;
+				ctx->g_Token.line, ctx->g_Token.column);
+			ctx->g_numErrors++;
 			free(value.pArrayDef);
 			return 0;
 		}
 
-		if ( g_Token.Type == T_INT_LITERAL )
+		if ( ctx->g_Token.Type == T_INT_LITERAL )
 		{
-			if ( g_Token.Value.vInt <= 0 )
+			if ( ctx->g_Token.Value.vInt <= 0 )
 			{
 				printf("Linea %d Colonna %d: Errore decl. La dimensione dell'array deve essere positiva.\n",
-						g_Token.line, g_Token.column);
-				g_numErrors++;
+						ctx->g_Token.line, ctx->g_Token.column);
+				ctx->g_numErrors++;
 				free(value.pArrayDef);
 				return 0;
 			}
-			indici[value.pArrayDef->countIndexes++] = g_Token.Value.vInt;
-			array_size = g_Token.Value.vInt;
+			indici[value.pArrayDef->countIndexes++] = ctx->g_Token.Value.vInt;
+			array_size = ctx->g_Token.Value.vInt;
 		}
 
-		if ( !match(T_INT_LITERAL) )
+		if ( !match(ctx, T_INT_LITERAL) )
 		{
 			printf("Linea %d Colonna %d: Errore decl. Atteso int literal.\n",
-				g_Token.line, g_Token.column);
-			g_numErrors++;
+				ctx->g_Token.line, ctx->g_Token.column);
+			ctx->g_numErrors++;
 			free(value.pArrayDef);
 			return 0;
 		}
-		if ( !match(T_QCPAREN) )
+		if ( !match(ctx, T_QCPAREN) )
 		{
 			printf("Linea %d Colonna %d: Errore decl. Attesa parentesi ']'.\n",
-				g_Token.line, g_Token.column);
-			g_numErrors++;
+				ctx->g_Token.line, ctx->g_Token.column);
+			ctx->g_numErrors++;
 			free(value.pArrayDef);
 			return 0;
 		}
-		while ( g_Token.Type == T_QOPAREN )
+		while ( ctx->g_Token.Type == T_QOPAREN )
 		{
-			if ( !match(T_QOPAREN) )
+			if ( !match(ctx, T_QOPAREN) )
 			{
 				printf("Linea %d Colonna %d: Errore decl. Attesa parentesi '['.\n",
-					g_Token.line, g_Token.column);
-				g_numErrors++;
+					ctx->g_Token.line, ctx->g_Token.column);
+				ctx->g_numErrors++;
 				free(value.pArrayDef);
 				return 0;
 			}
 
-			if ( g_Token.Type == T_INT_LITERAL )
+			if ( ctx->g_Token.Type == T_INT_LITERAL )
 			{
 				if ( value.pArrayDef->countIndexes >= 89 )
 				{
 					printf("Linea %d Colonna %d: Errore decl. Troppe dimensioni per l'array.\n",
-							g_Token.line, g_Token.column);
-					g_numErrors++;
+							ctx->g_Token.line, ctx->g_Token.column);
+					ctx->g_numErrors++;
 					free(value.pArrayDef);
 					return 0;
 				}
-				if ( g_Token.Value.vInt <= 0 )
+				if ( ctx->g_Token.Value.vInt <= 0 )
 				{
 					printf("Linea %d Colonna %d: Errore decl. La dimensione dell'array deve essere positiva.\n",
-							g_Token.line, g_Token.column);
-					g_numErrors++;
+							ctx->g_Token.line, ctx->g_Token.column);
+					ctx->g_numErrors++;
 					free(value.pArrayDef);
 					return 0;
 				}
-				indici[value.pArrayDef->countIndexes++] = g_Token.Value.vInt;
-				array_size *= g_Token.Value.vInt;
+				indici[value.pArrayDef->countIndexes++] = ctx->g_Token.Value.vInt;
+				array_size *= ctx->g_Token.Value.vInt;
 			}
 
-			if ( !match(T_INT_LITERAL) )
+			if ( !match(ctx, T_INT_LITERAL) )
 			{
 				printf("Linea %d Colonna %d: Errore decl. Atteso int literal.\n",
-					g_Token.line, g_Token.column);
-				g_numErrors++;
+					ctx->g_Token.line, ctx->g_Token.column);
+				ctx->g_numErrors++;
 				free(value.pArrayDef);
 				return 0;
 			}
-			if ( !match(T_QCPAREN) )
+			if ( !match(ctx, T_QCPAREN) )
 			{
 				printf("Linea %d Colonna %d: Errore decl. Attesa parentesi ']'.\n",
-					g_Token.line, g_Token.column);
-				g_numErrors++;
+					ctx->g_Token.line, ctx->g_Token.column);
+				ctx->g_numErrors++;
 				free(value.pArrayDef);
 				return 0;
 			}
 		}
-		if ( !match(T_KW_OF) )
+		if ( !match(ctx, T_KW_OF) )
 		{
 			printf("Linea %d Colonna %d: Errore decl. Attesa keyword 'of'.\n",
-				g_Token.line, g_Token.column);
-			g_numErrors++;
+				ctx->g_Token.line, ctx->g_Token.column);
+			ctx->g_numErrors++;
 			free(value.pArrayDef);
 			return 0;
 		}
-		if ( !type() )
+		if ( !type(ctx) )
 		{
-			g_numErrors++;
+			ctx->g_numErrors++;
 			free(value.pArrayDef);
 			return 0;
 		}
@@ -675,21 +662,21 @@ int decl()
 		if ( array_size <= 0 )
 		{
 			printf("Linea %d Colonna %d: Errore decl. Dimensione totale array non valida.\n",
-					g_Token.line, g_Token.column);
-			g_numErrors++;
+					ctx->g_Token.line, ctx->g_Token.column);
+			ctx->g_numErrors++;
 			free(value.pArrayDef);
 			return 0;
 		}
 
-		if ( g_currType == T_INTEGER || g_currType == T_BOOLEAN )
+		if ( ctx->g_currType == T_INTEGER || ctx->g_currType == T_BOOLEAN )
 		{
 			value.pArrayDef->pArray = (int*)calloc((size_t)array_size, sizeof(int));
 		}
-		else if ( g_currType == T_REAL )
+		else if ( ctx->g_currType == T_REAL )
 		{
 			value.pArrayDef->pArray = (double*)calloc((size_t)array_size, sizeof(double));
 		}
-		else if ( g_currType == T_STRING )
+		else if ( ctx->g_currType == T_STRING )
 		{
 			value.pArrayDef->pArray = (char**)calloc((size_t)array_size, sizeof(char*));
 		}
@@ -697,16 +684,16 @@ int decl()
 		if ( !value.pArrayDef->pArray )
 		{
 			printf("Errore pArrayDef->pArray: memoria insufficiente.\n");
-			g_numErrors++;
+			ctx->g_numErrors++;
 			free(value.pArrayDef);
 			return 0;
 		}
 
-		if ( !match(T_SEMICOLON) )
+		if ( !match(ctx, T_SEMICOLON) )
 		{
 			printf("Linea %d Colonna %d: Errore decl. Atteso semicolon ';'.\n",
-				g_Token.line, g_Token.column);
-			g_numErrors++;
+				ctx->g_Token.line, ctx->g_Token.column);
+			ctx->g_numErrors++;
 			free(value.pArrayDef->pArray);
 			free(value.pArrayDef);
 			return 0;
@@ -716,7 +703,7 @@ int decl()
 		if ( !value.pArrayDef->sizes )
 		{
 			printf("Errore pArrayDef->sizes: memoria insufficiente.\n");
-			g_numErrors++;
+			ctx->g_numErrors++;
 			free(value.pArrayDef->pArray);
 			free(value.pArrayDef);
 			return 0;
@@ -726,27 +713,27 @@ int decl()
 			value.pArrayDef->sizes[currIndex] = indici[currIndex];
 
 		value.pArrayDef->indexes = NULL;
-		scopeInsert(&g_Scope, token.Value.vString, T_ARRAY, g_currType, T_VAR, value, 0, g_NextFrameIndex);
-		if ( g_genJVM )
+		scopeInsert(ctx, &ctx->g_Scope, token.Value.vString, T_ARRAY, ctx->g_currType, T_VAR, value, 0, ctx->g_NextFrameIndex);
+		if ( ctx->g_genJVM )
 		{
-			g_NextFrameIndex++;
-			jvmSetNumberLocals(g_NextFrameIndex);
+			ctx->g_NextFrameIndex++;
+			jvmSetNumberLocals(ctx, ctx->g_NextFrameIndex);
 		}
 	}
 	else
 	{
-		if ( !type() )
+		if ( !type(ctx) )
 		{
-			g_numErrors++;
+			ctx->g_numErrors++;
 			return 0;
 		}
-		if ( !var_list() )
+		if ( !var_list(ctx) )
 			return 0;
-		if ( !match(T_SEMICOLON) )
+		if ( !match(ctx, T_SEMICOLON) )
 		{
 			printf("Linea %d Colonna %d: Errore decl. Atteso semicolon ';'.\n",
-				g_Token.line, g_Token.column);
-			g_numErrors++;
+				ctx->g_Token.line, ctx->g_Token.column);
+			ctx->g_numErrors++;
 			return 0;
 		}
 	}
@@ -754,8 +741,9 @@ int decl()
 	return 1;
 }
 
-static void reset_var_value(Valore *val, enumTipo1 tipo)
+static void reset_var_value(CompilerContext *ctx, Valore *val, enumTipo1 tipo)
 {
+	(void)ctx;
 	memset(val, 0, sizeof(*val));
 	if ( tipo == T_INTEGER )
 		val->iVal = 0;
@@ -767,72 +755,72 @@ static void reset_var_value(Valore *val, enumTipo1 tipo)
 		val->bVal = 0;
 }
 
-static int parse_var_item(void)
+static int parse_var_item(CompilerContext *ctx)
 {
-	Token token = g_Token;
+	Token token = ctx->g_Token;
 	Valore value;
 	HashTable hashTable;
 	char szVarName[256] = "";
 	char szLexeme[256] = "";
 
-	reset_var_value(&value, (enumTipo1)g_currType);
+	reset_var_value(ctx, &value, (enumTipo1)ctx->g_currType);
 
-	if ( g_Token.Type == T_ID && g_Token.Value.vString != NULL )
+	if ( ctx->g_Token.Type == T_ID && ctx->g_Token.Value.vString != NULL )
 	{
-		snprintf(szVarName, sizeof(szVarName), "%s", g_Token.Value.vString);
+		snprintf(szVarName, sizeof(szVarName), "%s", ctx->g_Token.Value.vString);
 	}
 	token.Value.vString = szVarName;
 
-	if ( !match(T_ID) )
+	if ( !match(ctx, T_ID) )
 	{
 		printf("Linea %d Colonna %d: Errore var_list. Atteso identificatore.\n",
-		       g_Token.line, g_Token.column);
-		g_numErrors++;
+		       ctx->g_Token.line, ctx->g_Token.column);
+		ctx->g_numErrors++;
 		return 0;
 	}
 
-	if ( scopeFind(&g_Scope, token.Value.vString, &hashTable) )
+	if ( scopeFind(ctx, &ctx->g_Scope, token.Value.vString, &hashTable) )
 	{
 		printf("Linea %d Colonna %d: Errore var_list. Identificatore '%s' già dichiarato.\n",
 		       token.line, token.column, token.Value.vString);
-		g_numErrors++;
+		ctx->g_numErrors++;
 		return 0;
 	}
 
-	scopeInsert(&g_Scope, token.Value.vString, T_SIMPLE, (enumTipo1)g_currType,
-	            T_VAR, value, 0, g_NextFrameIndex);
-	if ( g_genJVM )
+	scopeInsert(ctx, &ctx->g_Scope, token.Value.vString, T_SIMPLE, (enumTipo1)ctx->g_currType,
+	            T_VAR, value, 0, ctx->g_NextFrameIndex);
+	if ( ctx->g_genJVM )
 	{
-		if ( g_currType == T_REAL )
-			g_NextFrameIndex += 2;
+		if ( ctx->g_currType == T_REAL )
+			ctx->g_NextFrameIndex += 2;
 		else
-			g_NextFrameIndex++;
-		jvmSetNumberLocals(g_NextFrameIndex);
+			ctx->g_NextFrameIndex++;
+		jvmSetNumberLocals(ctx, ctx->g_NextFrameIndex);
 	}
 
-	if ( g_Token.Type == T_OP_ASSIGN )
+	if ( ctx->g_Token.Type == T_OP_ASSIGN )
 	{
-		GetNextToken(&g_Token);
-		snprintf(szLexeme, sizeof(szLexeme), "%s", g_Token.lexeme);
+		GetNextToken(ctx, &ctx->g_Token);
+		snprintf(szLexeme, sizeof(szLexeme), "%s", ctx->g_Token.lexeme);
 
-		if ( !expr() )
+		if ( !expr(ctx) )
 		{
-			g_numErrors++;
+			ctx->g_numErrors++;
 			return 0;
 		}
 
-		if ( g_currConstType != -1 )
+		if ( ctx->g_currConstType != -1 )
 		{
-			if ( !TypeCheck(&value, &token) )
+			if ( !TypeCheck(ctx, &value, &token) )
 			{
-				g_numErrors++;
+				ctx->g_numErrors++;
 				return 0;
 			}
 
-			scopeUpdateValue(&g_Scope, szVarName, T_SIMPLE, (enumTipo1)g_currType,
+			scopeUpdateValue(ctx, &ctx->g_Scope, szVarName, T_SIMPLE, (enumTipo1)ctx->g_currType,
 			                 T_VAR, value, 1, 1);
 
-			if ( g_genTAC )
+			if ( ctx->g_genTAC )
 			{
 				printf("%s = %s\n", szVarName, szLexeme);
 			}
@@ -841,7 +829,7 @@ static int parse_var_item(void)
 		{
 			printf("Linea %d Colonna %d: Errore var_list. In fase di dichiarazione è possibile assegnare solo valori costanti.\n",
 			       token.line, token.column);
-			g_numErrors++;
+			ctx->g_numErrors++;
 			return 0;
 		}
 	}
@@ -850,24 +838,24 @@ static int parse_var_item(void)
 }
 
 //var_list : T_ID ['=' expr] {',' T_ID['=' expr]};
-int var_list(void)
+int var_list(CompilerContext *ctx)
 {
-	if ( !parse_var_item() )
+	if ( !parse_var_item(ctx) )
 	{
-		while ( g_Token.Type != T_EOF && g_Token.Type != T_COMMA && g_Token.Type != T_SEMICOLON )
-			GetNextToken(&g_Token);
-		if ( g_Token.Type != T_COMMA )
+		while ( ctx->g_Token.Type != T_EOF && ctx->g_Token.Type != T_COMMA && ctx->g_Token.Type != T_SEMICOLON )
+			GetNextToken(ctx, &ctx->g_Token);
+		if ( ctx->g_Token.Type != T_COMMA )
 			return 0;
 	}
 
-	while ( g_Token.Type == T_COMMA )
+	while ( ctx->g_Token.Type == T_COMMA )
 	{
-		GetNextToken(&g_Token);
-		if ( !parse_var_item() )
+		GetNextToken(ctx, &ctx->g_Token);
+		if ( !parse_var_item(ctx) )
 		{
-			while ( g_Token.Type != T_EOF && g_Token.Type != T_COMMA && g_Token.Type != T_SEMICOLON )
-				GetNextToken(&g_Token);
-			if ( g_Token.Type != T_COMMA )
+			while ( ctx->g_Token.Type != T_EOF && ctx->g_Token.Type != T_COMMA && ctx->g_Token.Type != T_SEMICOLON )
+				GetNextToken(ctx, &ctx->g_Token);
+			if ( ctx->g_Token.Type != T_COMMA )
 				return 0;
 		}
 	}
@@ -876,38 +864,38 @@ int var_list(void)
 }
 
 //code_block : T_KW_BEGIN stmt_list T_KW_END;
-int code_block()
+int code_block(CompilerContext *ctx)
 {
     nodeType *left = NULL;
 
-    g_isCodeBlock = 1;
+    ctx->g_isCodeBlock = 1;
 
-    if ( !match(T_KW_BEGIN) )
+    if ( !match(ctx, T_KW_BEGIN) )
     {
         printf("Linea %d Colonna %d: Errore decl. Attesa keyword 'begin'.\n",
-               g_Token.line, g_Token.column);
-        g_numErrors++;
+               ctx->g_Token.line, ctx->g_Token.column);
+        ctx->g_numErrors++;
         return 0;
     }
 
-    stmt_list();   /* gestisce i propri errori e ritorna sempre 1 */
+    stmt_list(ctx);   /* gestisce i propri errori e ritorna sempre 1 */
 
-    if ( !match(T_KW_END) )
+    if ( !match(ctx, T_KW_END) )
     {
         printf("Linea %d Colonna %d: Errore decl. Attesa keyword 'end'.\n",
-               g_Token.line, g_Token.column);
-        g_numErrors++;
+               ctx->g_Token.line, ctx->g_Token.column);
+        ctx->g_numErrors++;
         return 0;
     }
 
-    left = g_stack[g_top--];
-    g_stack[++g_top] = opr(T_CODE_BLOCK, 1, left);
+    left = ctx->g_stack[ctx->g_top--];
+    ctx->g_stack[++ctx->g_top] = opr(ctx, T_CODE_BLOCK, 1, left);
 
     return 1;
 }
 
 //stmt_list : {stmt};
-int stmt_list()
+int stmt_list(CompilerContext *ctx)
 {
     nodeType *left = NULL, *right = NULL, *root = NULL;
     int listDepth;
@@ -915,63 +903,63 @@ int stmt_list()
  
     TokenTypeEnum prevTokType;
 
-    g_isStmtList = 1;
+    ctx->g_isStmtList = 1;
 
-    root = opr(T_STMT_LIST, 2, NULL, NULL);
-    g_stack[++g_top] = root;
-    listDepth = g_top;
+    root = opr(ctx, T_STMT_LIST, 2, NULL, NULL);
+    ctx->g_stack[++ctx->g_top] = root;
+    listDepth = ctx->g_top;
 
-    while ( isStmtStart(g_Token.Type) )
+    while ( isStmtStart(ctx, ctx->g_Token.Type) )
     {
-        startLine   = g_Token.line;
-        startColumn = g_Token.column;
-        prevTokType = g_Token.Type;
+        startLine   = ctx->g_Token.line;
+        startColumn = ctx->g_Token.column;
+        prevTokType = ctx->g_Token.Type;
 
-        if ( !stmt() )
+        if ( !stmt(ctx) )
         {
-            while ( g_top > listDepth )
-                freeNode(g_stack[g_top--]);
+            while ( ctx->g_top > listDepth )
+                freeNode(ctx, ctx->g_stack[ctx->g_top--]);
 
-            if ( g_Token.Type == T_KW_END ||
-                 g_Token.Type == T_KW_ELSE ||
-                 g_Token.Type == T_EOF )
+            if ( ctx->g_Token.Type == T_KW_END ||
+                 ctx->g_Token.Type == T_KW_ELSE ||
+                 ctx->g_Token.Type == T_EOF )
                 break;
 
             /* Se stmt() non ha consumato nulla (es. identificatore non dichiarato
                o atteso '='), consumiamo il token errato se non e' gia' un nuovo
                stmtStart diverso da quello iniziale. */
-            if ( g_Token.line == startLine && g_Token.column == startColumn )
-                GetNextToken(&g_Token);
+            if ( ctx->g_Token.line == startLine && ctx->g_Token.column == startColumn )
+                GetNextToken(ctx, &ctx->g_Token);
 
-            while ( g_Token.Type != T_SEMICOLON &&
-                    g_Token.Type != T_KW_END &&
-                    g_Token.Type != T_KW_ELSE &&
-                    g_Token.Type != T_EOF &&
-                    !(isStmtStart(g_Token.Type) && g_Token.Type != prevTokType) )
+            while ( ctx->g_Token.Type != T_SEMICOLON &&
+                    ctx->g_Token.Type != T_KW_END &&
+                    ctx->g_Token.Type != T_KW_ELSE &&
+                    ctx->g_Token.Type != T_EOF &&
+                    !(isStmtStart(ctx, ctx->g_Token.Type) && ctx->g_Token.Type != prevTokType) )
             {
-                GetNextToken(&g_Token);
+                GetNextToken(ctx, &ctx->g_Token);
             }
 
-            if ( g_Token.Type == T_SEMICOLON )
-                GetNextToken(&g_Token);
+            if ( ctx->g_Token.Type == T_SEMICOLON )
+                GetNextToken(ctx, &ctx->g_Token);
 
-            if ( g_Token.Type == T_KW_END ||
-                 g_Token.Type == T_KW_ELSE ||
-                 g_Token.Type == T_EOF )
+            if ( ctx->g_Token.Type == T_KW_END ||
+                 ctx->g_Token.Type == T_KW_ELSE ||
+                 ctx->g_Token.Type == T_EOF )
                 break;
         }
         else
         {
-            if ( g_top >= listDepth + 1 )
+            if ( ctx->g_top >= listDepth + 1 )
             {
-                right = g_stack[g_top--];
-                left  = g_stack[g_top--];
-                g_stack[++g_top] = opr(T_STMT_LIST, 2, left, right);
+                right = ctx->g_stack[ctx->g_top--];
+                left  = ctx->g_stack[ctx->g_top--];
+                ctx->g_stack[++ctx->g_top] = opr(ctx, T_STMT_LIST, 2, left, right);
             }
         }
     }
 
-    g_isStmtList = 0;
+    ctx->g_isStmtList = 0;
     return 1;
 }
 
@@ -983,7 +971,7 @@ int stmt_list()
 //		| T_KW_BEGIN stmt_list T_END
 //		| T_ID {'[' expr ']'} '=' expr ';'
 //		;
-int stmt()
+int stmt(CompilerContext *ctx)
 {
 	nodeType *left, *right, *elseNode;
 	HashTable hashTable;
@@ -994,237 +982,237 @@ int stmt()
 
 	left = right = elseNode = NULL;
 
-	switch ( g_Token.Type )
+	switch ( ctx->g_Token.Type )
 	{
 	case T_KW_PRINT:
-		GetNextToken(&g_Token);
-		if ( !expr() )
+		GetNextToken(ctx, &ctx->g_Token);
+		if ( !expr(ctx) )
 			return 0;
-		if ( !expectStmtSemicolon() )
+		if ( !expectStmtSemicolon(ctx) )
 		{
-			freeNode(g_stack[g_top--]);
+			freeNode(ctx, ctx->g_stack[ctx->g_top--]);
 			return 0;
 		}
-		left = g_stack[g_top--];
-		g_stack[++g_top] = opr(T_KW_PRINT, 1, left);
+		left = ctx->g_stack[ctx->g_top--];
+		ctx->g_stack[++ctx->g_top] = opr(ctx, T_KW_PRINT, 1, left);
 		break;
 
 	case T_KW_READ:
-		GetNextToken(&g_Token);
-		g_isREAD = 1;
-		if ( !expr() )
+		GetNextToken(ctx, &ctx->g_Token);
+		ctx->g_isREAD = 1;
+		if ( !expr(ctx) )
 		{
-			g_isREAD = 0;
+			ctx->g_isREAD = 0;
 			return 0;
 		}
-		g_isREAD = 0;
-		if ( g_top < 0 || g_stack[g_top]->type != typeId )
+		ctx->g_isREAD = 0;
+		if ( ctx->g_top < 0 || ctx->g_stack[ctx->g_top]->type != typeId )
 		{
 			printf("Linea %d Colonna %d: Errore stmt. 'read' richiede un identificatore o elemento di array.\n",
-					g_Token.line, g_Token.column);
-			g_numErrors++;
-			if ( g_top >= 0 )
-				freeNode(g_stack[g_top--]);
+					ctx->g_Token.line, ctx->g_Token.column);
+			ctx->g_numErrors++;
+			if ( ctx->g_top >= 0 )
+				freeNode(ctx, ctx->g_stack[ctx->g_top--]);
 			return 0;
 		}
-		if ( !expectStmtSemicolon() )
+		if ( !expectStmtSemicolon(ctx) )
 		{
-			freeNode(g_stack[g_top--]);
+			freeNode(ctx, ctx->g_stack[ctx->g_top--]);
 			return 0;
 		}
-		left = g_stack[g_top--];
-		g_stack[++g_top] = opr(T_KW_READ, 1, left);
+		left = ctx->g_stack[ctx->g_top--];
+		ctx->g_stack[++ctx->g_top] = opr(ctx, T_KW_READ, 1, left);
 		break;
 
 	case T_KW_WHILE:
-		GetNextToken(&g_Token);
-		if ( !match(T_OPAREN) )
+		GetNextToken(ctx, &ctx->g_Token);
+		if ( !match(ctx, T_OPAREN) )
 		{
 			printf("Linea %d Colonna %d: Errore stmt. Attesa parentesi '('.\n",
-					g_Token.line, g_Token.column);
-			g_numErrors++;
+					ctx->g_Token.line, ctx->g_Token.column);
+			ctx->g_numErrors++;
 			return 0;
 		}
-		if ( !expr() )
+		if ( !expr(ctx) )
 			return 0;
-		if ( !expectCondRParen() )
+		if ( !expectCondRParen(ctx) )
 		{
-			freeNode(g_stack[g_top--]);
+			freeNode(ctx, ctx->g_stack[ctx->g_top--]);
 			return 0;
 		}
-		if ( g_top < 0 || g_stack[g_top]->type1 == T_STRING )
+		if ( ctx->g_top < 0 || ctx->g_stack[ctx->g_top]->type1 == T_STRING )
 		{
 			printf("Linea %d Colonna %d: Errore stmt. L' espressione tra "
 					"parentesi tonde deve restituire un valore booleano.\n",
-					g_Token.line, g_Token.column);
-			g_numErrors++;
-			if ( g_top >= 0 )
-				freeNode(g_stack[g_top--]);
+					ctx->g_Token.line, ctx->g_Token.column);
+			ctx->g_numErrors++;
+			if ( ctx->g_top >= 0 )
+				freeNode(ctx, ctx->g_stack[ctx->g_top--]);
 			return 0;
 		}
-		if ( !stmt() )
+		if ( !stmt(ctx) )
 		{
-			freeNode(g_stack[g_top--]);
+			freeNode(ctx, ctx->g_stack[ctx->g_top--]);
 			return 0;
 		}
-		right = g_stack[g_top--];
-		left = g_stack[g_top--];
-		g_stack[++g_top] = opr(T_KW_WHILE, 2, left, right);
+		right = ctx->g_stack[ctx->g_top--];
+		left = ctx->g_stack[ctx->g_top--];
+		ctx->g_stack[++ctx->g_top] = opr(ctx, T_KW_WHILE, 2, left, right);
 		break;
 
 	case T_KW_DO:
-		GetNextToken(&g_Token);
-		if ( !stmt() )
+		GetNextToken(ctx, &ctx->g_Token);
+		if ( !stmt(ctx) )
 			return 0;
-		if ( !match(T_KW_WHILE) )
+		if ( !match(ctx, T_KW_WHILE) )
 		{
 			printf("Linea %d Colonna %d: Errore stmt. Attesa keyword 'while'.\n",
-					g_Token.line, g_Token.column);
-			g_numErrors++;
-			freeNode(g_stack[g_top--]);
+					ctx->g_Token.line, ctx->g_Token.column);
+			ctx->g_numErrors++;
+			freeNode(ctx, ctx->g_stack[ctx->g_top--]);
 			return 0;
 		}
-		if ( !match(T_OPAREN) )
+		if ( !match(ctx, T_OPAREN) )
 		{
 			printf("Linea %d Colonna %d: Errore stmt. Attesa parentesi '('.\n",
-					g_Token.line, g_Token.column);
-			g_numErrors++;
-			freeNode(g_stack[g_top--]);
+					ctx->g_Token.line, ctx->g_Token.column);
+			ctx->g_numErrors++;
+			freeNode(ctx, ctx->g_stack[ctx->g_top--]);
 			return 0;
 		}
-		if ( !expr() )
+		if ( !expr(ctx) )
 		{
-			freeNode(g_stack[g_top--]);
+			freeNode(ctx, ctx->g_stack[ctx->g_top--]);
 			return 0;
 		}
-		if ( !expectCondRParen() )
+		if ( !expectCondRParen(ctx) )
 		{
-			freeNode(g_stack[g_top--]);
-			freeNode(g_stack[g_top--]);
+			freeNode(ctx, ctx->g_stack[ctx->g_top--]);
+			freeNode(ctx, ctx->g_stack[ctx->g_top--]);
 			return 0;
 		}
 		//if ( g_top < 1 || g_stack[g_top]->type1 == T_STRING )
-		if ( g_top < 0 || g_stack[g_top]->type1 == T_STRING )
+		if ( ctx->g_top < 0 || ctx->g_stack[ctx->g_top]->type1 == T_STRING )
 		{
 			printf("Linea %d Colonna %d: Errore stmt. L' espressione tra "
 					"parentesi tonde deve restituire un valore booleano.\n",
-					g_Token.line, g_Token.column);
-			g_numErrors++;
-			if ( g_top >= 0 ) freeNode(g_stack[g_top--]);
-			if ( g_top >= 0 ) freeNode(g_stack[g_top--]);
+					ctx->g_Token.line, ctx->g_Token.column);
+			ctx->g_numErrors++;
+			if ( ctx->g_top >= 0 ) freeNode(ctx, ctx->g_stack[ctx->g_top--]);
+			if ( ctx->g_top >= 0 ) freeNode(ctx, ctx->g_stack[ctx->g_top--]);
 			return 0;
 		}
-		right = g_stack[g_top--];
-		left = g_stack[g_top--];
-		g_stack[++g_top] = opr(T_KW_DO, 2, left, right);
+		right = ctx->g_stack[ctx->g_top--];
+		left = ctx->g_stack[ctx->g_top--];
+		ctx->g_stack[++ctx->g_top] = opr(ctx, T_KW_DO, 2, left, right);
 		break;
 
 	case T_KW_IF:
-		GetNextToken(&g_Token);
-		if ( !match(T_OPAREN) )
+		GetNextToken(ctx, &ctx->g_Token);
+		if ( !match(ctx, T_OPAREN) )
 		{
 			printf("Linea %d Colonna %d: Errore stmt. Attesa parentesi '('.\n",
-					g_Token.line, g_Token.column);
-			g_numErrors++;
+					ctx->g_Token.line, ctx->g_Token.column);
+			ctx->g_numErrors++;
 			return 0;
 		}
-		if ( !expr() )
+		if ( !expr(ctx) )
 			return 0;
-		if ( !expectCondRParen() )
+		if ( !expectCondRParen(ctx) )
 		{
-			freeNode(g_stack[g_top--]);
+			freeNode(ctx, ctx->g_stack[ctx->g_top--]);
 			return 0;
 		}
-		if ( g_top < 0 || g_stack[g_top]->type1 == T_STRING )
+		if ( ctx->g_top < 0 || ctx->g_stack[ctx->g_top]->type1 == T_STRING )
 		{
 			printf("Linea %d Colonna %d: Errore stmt. L' espressione tra "
 					"parentesi tonde deve restituire un valore booleano.\n",
-					g_Token.line, g_Token.column);
-			g_numErrors++;
-			if ( g_top >= 0 )
-				freeNode(g_stack[g_top--]);
+					ctx->g_Token.line, ctx->g_Token.column);
+			ctx->g_numErrors++;
+			if ( ctx->g_top >= 0 )
+				freeNode(ctx, ctx->g_stack[ctx->g_top--]);
 			return 0;
 		}
-		if ( !stmt() )
+		if ( !stmt(ctx) )
 		{
-			freeNode(g_stack[g_top--]);
+			freeNode(ctx, ctx->g_stack[ctx->g_top--]);
 			return 0;
 		}
 		elseNode = NULL;
-		if ( g_Token.Type == T_KW_ELSE )
+		if ( ctx->g_Token.Type == T_KW_ELSE )
 		{
-			GetNextToken(&g_Token);
-			if ( !stmt() )
+			GetNextToken(ctx, &ctx->g_Token);
+			if ( !stmt(ctx) )
 			{
-				freeNode(g_stack[g_top--]);
-				freeNode(g_stack[g_top--]);
+				freeNode(ctx, ctx->g_stack[ctx->g_top--]);
+				freeNode(ctx, ctx->g_stack[ctx->g_top--]);
 				return 0;
 			}
-			elseNode = g_stack[g_top--];
+			elseNode = ctx->g_stack[ctx->g_top--];
 		}
-		right = g_stack[g_top--];
-		left = g_stack[g_top--];
+		right = ctx->g_stack[ctx->g_top--];
+		left = ctx->g_stack[ctx->g_top--];
 		if ( elseNode )
-			g_stack[++g_top] = opr(T_KW_IF, 3, left, right, elseNode);
+			ctx->g_stack[++ctx->g_top] = opr(ctx, T_KW_IF, 3, left, right, elseNode);
 		else
-			g_stack[++g_top] = opr(T_KW_IF, 2, left, right);
+			ctx->g_stack[++ctx->g_top] = opr(ctx, T_KW_IF, 2, left, right);
 		break;
 
 	case T_KW_BEGIN:
-		GetNextToken(&g_Token);
-		stmt_list();
-		if ( !match(T_KW_END) )
+		GetNextToken(ctx, &ctx->g_Token);
+		stmt_list(ctx);
+		if ( !match(ctx, T_KW_END) )
 		{
 			printf("Linea %d Colonna %d: Errore stmt. Attesa keyword 'end'.\n",
-					g_Token.line, g_Token.column);
-			g_numErrors++;
-			if ( g_top >= 0 )
-				freeNode(g_stack[g_top--]);
+					ctx->g_Token.line, ctx->g_Token.column);
+			ctx->g_numErrors++;
+			if ( ctx->g_top >= 0 )
+				freeNode(ctx, ctx->g_stack[ctx->g_top--]);
 			return 0;
 		}
-		left = g_stack[g_top--];
-		g_stack[++g_top] = opr(T_STMT_LIST, 1, left);
+		left = ctx->g_stack[ctx->g_top--];
+		ctx->g_stack[++ctx->g_top] = opr(ctx, T_STMT_LIST, 1, left);
 		break;
 
 	case T_ID:
-		if ( !scopeFind(&g_Scope, g_Token.Value.vString, &hashTable) )
+		if ( !scopeFind(ctx, &ctx->g_Scope, ctx->g_Token.Value.vString, &hashTable) )
 		{
 			printf("Linea %d Colonna %d: Errore stmt. Identificatore '%s' non dichiarato.\n",
-					g_Token.line, g_Token.column, g_Token.Value.vString);
-			g_numErrors++;
+					ctx->g_Token.line, ctx->g_Token.column, ctx->g_Token.Value.vString);
+			ctx->g_numErrors++;
 			return 0;
 		}
-		if ( strlen(g_Token.Value.vString) >= sizeof(szIdName) )
+		if ( strlen(ctx->g_Token.Value.vString) >= sizeof(szIdName) )
 		{
 			printf("Linea %d Colonna %d: Errore stmt. Identificatore troppo lungo.\n",
-					g_Token.line, g_Token.column);
-			g_numErrors++;
+					ctx->g_Token.line, ctx->g_Token.column);
+			ctx->g_numErrors++;
 			return 0;
 		}
-		strcpy(szIdName, g_Token.Value.vString);
+		strcpy(szIdName, ctx->g_Token.Value.vString);
 
-		line = g_Token.line;
-		column = g_Token.column;
-		GetNextToken(&g_Token);
+		line = ctx->g_Token.line;
+		column = ctx->g_Token.column;
+		GetNextToken(ctx, &ctx->g_Token);
 
-		if ( hashTable.Tipo0 == T_SIMPLE && g_Token.Type == T_QOPAREN )
+		if ( hashTable.Tipo0 == T_SIMPLE && ctx->g_Token.Type == T_QOPAREN )
 		{
 			printf("Linea %d Colonna %d: Errore stmt. L'identificatore '%s' non e' un array. Parentesi quadra non valida.\n",
 					line, column, szIdName);
-			g_numErrors++;
+			ctx->g_numErrors++;
 			return 0;
 		}
-		else if ( hashTable.Tipo0 == T_ARRAY && g_Token.Type != T_QOPAREN )
+		else if ( hashTable.Tipo0 == T_ARRAY && ctx->g_Token.Type != T_QOPAREN )
 		{
 			printf("Linea %d Colonna %d: Errore stmt. L'identificatore '%s' e' un array. Attesa parentesi quadra.\n",
 					line, column, szIdName);
-			g_numErrors++;
+			ctx->g_numErrors++;
 			return 0;
 		}
 
 		if ( hashTable.Tipo0 == T_ARRAY )
 		{
-			if ( !allocArrayDefWrapper(&hashTable, &value) )
+			if ( !allocArrayDefWrapper(ctx, &hashTable, &value) )
 				return 0;
 		}
 		else
@@ -1233,44 +1221,44 @@ int stmt()
 		}
 
 		currArrayIndex = 0;
-		while ( g_Token.Type == T_QOPAREN )
+		while ( ctx->g_Token.Type == T_QOPAREN )
 		{
 			if ( currArrayIndex >= hashTable.Value.pArrayDef->countIndexes )
 			{
 				printf("Linea %d Colonna %d: Errore stmt. "
 						"Numero di indici non corrispondente.\n",
-						g_Token.line, g_Token.column);
-				g_numErrors++;
-				popArrayIndexNodes(currArrayIndex);
-				freeArrayDefWrapper(&value);
+						ctx->g_Token.line, ctx->g_Token.column);
+				ctx->g_numErrors++;
+				popArrayIndexNodes(ctx, currArrayIndex);
+				freeArrayDefWrapper(ctx, &value);
 				return 0;
 			}
 
-			GetNextToken(&g_Token);
-			if ( !expr() )
+			GetNextToken(ctx, &ctx->g_Token);
+			if ( !expr(ctx) )
 			{
-				popArrayIndexNodes(currArrayIndex);
-				freeArrayDefWrapper(&value);
+				popArrayIndexNodes(ctx, currArrayIndex);
+				freeArrayDefWrapper(ctx, &value);
 				return 0;
 			}
 
-			if ( g_top < 0 || g_stack[g_top]->type1 != T_INTEGER )
+			if ( ctx->g_top < 0 || ctx->g_stack[ctx->g_top]->type1 != T_INTEGER )
 			{
 				printf("Linea %d Colonna %d: Errore stmt. "
 						"Gli array vanno indicizzati con espressioni di tipo int.\n",
-						g_Token.line, g_Token.column);
-				g_numErrors++;
-				popArrayIndexNodes(currArrayIndex + 1);
-				freeArrayDefWrapper(&value);
+						ctx->g_Token.line, ctx->g_Token.column);
+				ctx->g_numErrors++;
+				popArrayIndexNodes(ctx, currArrayIndex + 1);
+				freeArrayDefWrapper(ctx, &value);
 				return 0;
 			}
-			if ( !match(T_QCPAREN) )
+			if ( !match(ctx, T_QCPAREN) )
 			{
 				printf("Linea %d Colonna %d: Errore stmt. Attesa parentesi ']'.\n",
-						g_Token.line, g_Token.column);
-				g_numErrors++;
-				popArrayIndexNodes(currArrayIndex + 1);
-				freeArrayDefWrapper(&value);
+						ctx->g_Token.line, ctx->g_Token.column);
+				ctx->g_numErrors++;
+				popArrayIndexNodes(ctx, currArrayIndex + 1);
+				freeArrayDefWrapper(ctx, &value);
 				return 0;
 			}
 			currArrayIndex++;
@@ -1282,45 +1270,45 @@ int stmt()
 			{
 				printf("Linea %d Colonna %d: Errore stmt. "
 						"Numero di indici non corrispondente.\n",
-						g_Token.line, g_Token.column);
-				g_numErrors++;
-				popArrayIndexNodes(currArrayIndex);
-				freeArrayDefWrapper(&value);
+						ctx->g_Token.line, ctx->g_Token.column);
+				ctx->g_numErrors++;
+				popArrayIndexNodes(ctx, currArrayIndex);
+				freeArrayDefWrapper(ctx, &value);
 				return 0;
 			}
 
 			for ( currArrayIndex = hashTable.Value.pArrayDef->countIndexes - 1; currArrayIndex >= 0 ; currArrayIndex-- )
 			{
-				value.pArrayDef->indexes[currArrayIndex] = g_stack[g_top--];
+				value.pArrayDef->indexes[currArrayIndex] = ctx->g_stack[ctx->g_top--];
 			}
 		}
 
-		if ( !match(T_OP_ASSIGN) )
+		if ( !match(ctx, T_OP_ASSIGN) )
 		{
 			printf("Linea %d Colonna %d: Errore stmt. Atteso operatore '='.\n",
-					g_Token.line, g_Token.column);
-			g_numErrors++;
+					ctx->g_Token.line, ctx->g_Token.column);
+			ctx->g_numErrors++;
 			if ( hashTable.Tipo0 == T_ARRAY )
-				freeArrayDefWrapper(&value);
+				freeArrayDefWrapper(ctx, &value);
 			return 0;
 		}
-		if ( !expr() )
+		if ( !expr(ctx) )
 		{
 			if ( hashTable.Tipo0 == T_ARRAY )
-				freeArrayDefWrapper(&value);
+				freeArrayDefWrapper(ctx, &value);
 			return 0;
 		}
-		if ( !expectStmtSemicolon() )
+		if ( !expectStmtSemicolon(ctx) )
 		{
-			if ( g_top >= 0 )
-				freeNode(g_stack[g_top--]);
+			if ( ctx->g_top >= 0 )
+				freeNode(ctx, ctx->g_stack[ctx->g_top--]);
 			if ( hashTable.Tipo0 == T_ARRAY )
-				freeArrayDefWrapper(&value);
+				freeArrayDefWrapper(ctx, &value);
 			return 0;
 		}
 
-		right = g_stack[g_top--];
-		left = id(szIdName, "a", hashTable.Tipo0, hashTable.Tipo1, hashTable.Tipo2, value, 1);
+		right = ctx->g_stack[ctx->g_top--];
+		left = id(ctx, szIdName, "a", hashTable.Tipo0, hashTable.Tipo1, hashTable.Tipo2, value, 1);
 
 		if ( left->type1 != right->type1 )
 		{
@@ -1330,7 +1318,7 @@ int stmt()
 						"Si sta assegnando un valore di tipo real alla variabile '%s' di tipo int. "
 						"Potrebbe verificarsi una perdita di dati.\n",
 						line, column, szIdName);
-				g_numWarnings++;
+				ctx->g_numWarnings++;
 			}
 			else
 			{
@@ -1359,24 +1347,24 @@ int stmt()
 							"Alle variabili di tipo string e' possibile assegnare soltanto valori di tipo string.\n",
 							line, column);
 
-				g_numErrors++;
-				freeNode(left);
-				freeNode(right);
+				ctx->g_numErrors++;
+				freeNode(ctx, left);
+				freeNode(ctx, right);
 				return 0;
 			}
 		}
 
 		if ( hashTable.Tipo0 != T_ARRAY )
-			scopeUpdateValue(&g_Scope, szIdName, hashTable.Tipo0, hashTable.Tipo1, hashTable.Tipo2, hashTable.Value, 1, -1);
+			scopeUpdateValue(ctx, &ctx->g_Scope, szIdName, hashTable.Tipo0, hashTable.Tipo1, hashTable.Tipo2, hashTable.Value, 1, -1);
 
-		g_stack[++g_top] = opr(T_OP_ASSIGN, 2, left, right);
+		ctx->g_stack[++ctx->g_top] = opr(ctx, T_OP_ASSIGN, 2, left, right);
 		break;
 
 	default:
 		printf("Linea %d Colonna %d: Errore stmt. Attesa 'print'."
 				" o 'read' o 'while' o 'do' o 'if' o 'begin' o identificatore.\n",
-				g_Token.line, g_Token.column);
-		g_numErrors++;
+				ctx->g_Token.line, ctx->g_Token.column);
+		ctx->g_numErrors++;
 		return 0;
 	}
 
@@ -1384,133 +1372,133 @@ int stmt()
 }
 
 //expr  : expr1 {('&' | '|') expr1};
-int expr()
+int expr(CompilerContext *ctx)
 {
-	g_currConstType = -1;
+	ctx->g_currConstType = -1;
 
-	if ( !expr1() )
+	if ( !expr1(ctx) )
 		return 0;
 
-	while ( g_Token.Type == T_OP_AND || g_Token.Type == T_OP_OR )
+	while ( ctx->g_Token.Type == T_OP_AND || ctx->g_Token.Type == T_OP_OR )
 	{
 		int oper;
 		nodeType *left, *right;
 		int line, column;
 
-		line = g_Token.line;
-		column = g_Token.column;
-		oper = g_Token.Type;
+		line = ctx->g_Token.line;
+		column = ctx->g_Token.column;
+		oper = ctx->g_Token.Type;
 
-		GetNextToken(&g_Token);
+		GetNextToken(ctx, &ctx->g_Token);
 
-		if ( !expr1() )
+		if ( !expr1(ctx) )
 		{
-			freeNode(g_stack[g_top--]);
+			freeNode(ctx, ctx->g_stack[ctx->g_top--]);
 			return 0;
 		}
 
-		right = g_stack[g_top--];
-		left  = g_stack[g_top--];
+		right = ctx->g_stack[ctx->g_top--];
+		left  = ctx->g_stack[ctx->g_top--];
 		if ( left->type1 == T_STRING || right->type1 == T_STRING )
 		{
 			printf("Linea %d Colonna %d: Errore expr. Gli operatori booleani "
 					"non accettano operandi di tipo stringa.\n",
 					line, column);
-			g_numErrors++;
-			freeNode(left);
-			freeNode(right);
+			ctx->g_numErrors++;
+			freeNode(ctx, left);
+			freeNode(ctx, right);
 			return 0;
 		}
-		g_stack[++g_top] = opr(oper, 2, left, right);
+		ctx->g_stack[++ctx->g_top] = opr(ctx, oper, 2, left, right);
 		if ( left->type1 == T_REAL || right->type1 == T_REAL )
-			g_stack[g_top]->type1 = T_REAL;
+			ctx->g_stack[ctx->g_top]->type1 = T_REAL;
 		else if ( left->type1 == T_INTEGER || right->type1 == T_INTEGER )
-			g_stack[g_top]->type1 = T_INTEGER;
+			ctx->g_stack[ctx->g_top]->type1 = T_INTEGER;
 		else
-			g_stack[g_top]->type1 = T_BOOLEAN;
+			ctx->g_stack[ctx->g_top]->type1 = T_BOOLEAN;
 	}
 
 	return 1;
 }
 
 //expr1 : expr2 {relop expr2};
-int expr1()
+int expr1(CompilerContext *ctx)
 {
-	if ( !expr2() )
+	if ( !expr2(ctx) )
 		return 0;
 
-	while ( g_Token.Type == T_OP_LT || g_Token.Type == T_OP_LE ||
-			g_Token.Type == T_OP_EQ || g_Token.Type == T_OP_NE ||
-			g_Token.Type == T_OP_GT || g_Token.Type == T_OP_GE )
+	while ( ctx->g_Token.Type == T_OP_LT || ctx->g_Token.Type == T_OP_LE ||
+			ctx->g_Token.Type == T_OP_EQ || ctx->g_Token.Type == T_OP_NE ||
+			ctx->g_Token.Type == T_OP_GT || ctx->g_Token.Type == T_OP_GE )
 	{
 		int oper;
 		nodeType *left, *right;
 		int line, column;
 
-		line = g_Token.line;
-		column = g_Token.column;
-		oper = g_Token.Type;
+		line = ctx->g_Token.line;
+		column = ctx->g_Token.column;
+		oper = ctx->g_Token.Type;
 
-		GetNextToken(&g_Token);
+		GetNextToken(ctx, &ctx->g_Token);
 
-		if ( !expr2() )
+		if ( !expr2(ctx) )
 		{
-			freeNode(g_stack[g_top--]);
+			freeNode(ctx, ctx->g_stack[ctx->g_top--]);
 			return 0;
 		}
 
-		right = g_stack[g_top--];
-		left  = g_stack[g_top--];
+		right = ctx->g_stack[ctx->g_top--];
+		left  = ctx->g_stack[ctx->g_top--];
 		if ( left->type1 == T_STRING || right->type1 == T_STRING )
 		{
 			printf("Linea %d Colonna %d: Errore expr1. Gli operatori di confronto "
 					"non accettano espressioni di tipo stringa.\n",
 					line, column);
-			g_numErrors++;
-			freeNode(left);
-			freeNode(right);
+			ctx->g_numErrors++;
+			freeNode(ctx, left);
+			freeNode(ctx, right);
 			return 0;
 		}
-		g_stack[++g_top] = opr(oper, 2, left, right);
-		g_stack[g_top]->type0 = T_SIMPLE;
-		g_stack[g_top]->type2 = T_VAR;
+		ctx->g_stack[++ctx->g_top] = opr(ctx, oper, 2, left, right);
+		ctx->g_stack[ctx->g_top]->type0 = T_SIMPLE;
+		ctx->g_stack[ctx->g_top]->type2 = T_VAR;
 		if ( left->type1 == T_REAL || right->type1 == T_REAL )
-			g_stack[g_top]->type1 = T_REAL;
+			ctx->g_stack[ctx->g_top]->type1 = T_REAL;
 		else if ( left->type1 == T_INTEGER || right->type1 == T_INTEGER )
-			g_stack[g_top]->type1 = T_INTEGER;
+			ctx->g_stack[ctx->g_top]->type1 = T_INTEGER;
 		else
-			g_stack[g_top]->type1 = T_BOOLEAN;
+			ctx->g_stack[ctx->g_top]->type1 = T_BOOLEAN;
 	}
 
 	return 1;
 }
 
 //expr2 : expr3 {addop expr3};
-int expr2()
+int expr2(CompilerContext *ctx)
 {
-	if ( !expr3() )
+	if ( !expr3(ctx) )
 		return 0;
 
-	while ( g_Token.Type == T_OP_PLUS || g_Token.Type == T_OP_MINUS )
+	while ( ctx->g_Token.Type == T_OP_PLUS || ctx->g_Token.Type == T_OP_MINUS )
 	{
 		int oper;
 		nodeType *left, *right;
 		int line, column;
 
-		line = g_Token.line;
-		column = g_Token.column;
-		oper = g_Token.Type;
+		line = ctx->g_Token.line;
+		column = ctx->g_Token.column;
+		oper = ctx->g_Token.Type;
 
-		GetNextToken(&g_Token);
+		GetNextToken(ctx, &ctx->g_Token);
 
-		if ( !expr3() )
+		if ( !expr3(ctx) )
 		{
-			freeNode(g_stack[g_top--]);
+			freeNode(ctx, ctx->g_stack[ctx->g_top--]);
 			return 0;
 		}
 
-		right = g_stack[g_top--];
-		left  = g_stack[g_top--];
+		right = ctx->g_stack[ctx->g_top--];
+		left  = ctx->g_stack[ctx->g_top--];
 
 		if ( oper == T_OP_MINUS )
 		{
@@ -1520,9 +1508,9 @@ int expr2()
 				printf("Linea %d Colonna %d: Errore expr2. L'operatore di sottrazione "
 						"accetta solo operandi di tipo integer o real.\n",
 						line, column);
-				g_numErrors++;
-				freeNode(left);
-				freeNode(right);
+				ctx->g_numErrors++;
+				freeNode(ctx, left);
+				freeNode(ctx, right);
 				return 0;
 			}
 		}
@@ -1534,9 +1522,9 @@ int expr2()
 				printf("Linea %d Colonna %d: Errore expr2. Gli operandi dell'operatore di addizione "
 						"devono essere o entrambi di tipo numerico o entrambi di tipo stringa.\n",
 						line, column);
-				g_numErrors++;
-				freeNode(left);
-				freeNode(right);
+				ctx->g_numErrors++;
+				freeNode(ctx, left);
+				freeNode(ctx, right);
 				return 0;
 			}
 			else if ( left->type1 == T_BOOLEAN || right->type1 == T_BOOLEAN )
@@ -1544,83 +1532,83 @@ int expr2()
 				printf("Linea %d Colonna %d: Errore expr2. L'operatore di addizione "
 						"non accetta operandi di tipo boolean.\n",
 						line, column);
-				g_numErrors++;
-				freeNode(left);
-				freeNode(right);
+				ctx->g_numErrors++;
+				freeNode(ctx, left);
+				freeNode(ctx, right);
 				return 0;
 			}
 		}
-		g_stack[++g_top] = opr(oper, 2, left, right);
-		g_stack[g_top]->type0 = T_SIMPLE;
-		g_stack[g_top]->type2 = T_VAR;
+		ctx->g_stack[++ctx->g_top] = opr(ctx, oper, 2, left, right);
+		ctx->g_stack[ctx->g_top]->type0 = T_SIMPLE;
+		ctx->g_stack[ctx->g_top]->type2 = T_VAR;
 		if ( left->type1 == T_REAL || right->type1 == T_REAL )
-			g_stack[g_top]->type1 = T_REAL;
+			ctx->g_stack[ctx->g_top]->type1 = T_REAL;
 		else if ( left->type1 == T_INTEGER || right->type1 == T_INTEGER )
-			g_stack[g_top]->type1 = T_INTEGER;
+			ctx->g_stack[ctx->g_top]->type1 = T_INTEGER;
 		else
-			g_stack[g_top]->type1 = T_STRING;
+			ctx->g_stack[ctx->g_top]->type1 = T_STRING;
 	}
 
 	return 1;
 }
 
 //expr3 : expr4 {mulop expr4};
-int expr3()
+int expr3(CompilerContext *ctx)
 {
-	if ( !expr4() )
+	if ( !expr4(ctx) )
 		return 0;
 
-	while ( g_Token.Type == T_OP_MULT || g_Token.Type == T_OP_DIV )
+	while ( ctx->g_Token.Type == T_OP_MULT || ctx->g_Token.Type == T_OP_DIV )
 	{
 		int oper;
 		nodeType *left, *right;
 		int line, column;
 
-		line = g_Token.line;
-		column = g_Token.column;
-		oper = g_Token.Type;
+		line = ctx->g_Token.line;
+		column = ctx->g_Token.column;
+		oper = ctx->g_Token.Type;
 
-		GetNextToken(&g_Token);
+		GetNextToken(ctx, &ctx->g_Token);
 
-		if ( !expr4() )
+		if ( !expr4(ctx) )
 		{
-			freeNode(g_stack[g_top--]);
+			freeNode(ctx, ctx->g_stack[ctx->g_top--]);
 			return 0;
 		}
 
-		right = g_stack[g_top--];
-		left  = g_stack[g_top--];
+		right = ctx->g_stack[ctx->g_top--];
+		left  = ctx->g_stack[ctx->g_top--];
 		if ( left->type1 == T_STRING || right->type1 == T_STRING ||
 			left->type1 == T_BOOLEAN || right->type1 == T_BOOLEAN )
 		{
 			printf("Linea %d Colonna %d: Errore expr3. Gli operatori di moltiplicazione/divisione "
 					"accettano solo operandi di tipo integer o real.\n",
 					line, column);
-			g_numErrors++;
-			freeNode(left);
-			freeNode(right);
+			ctx->g_numErrors++;
+			freeNode(ctx, left);
+			freeNode(ctx, right);
 			return 0;
 		}
-		g_stack[++g_top] = opr(oper, 2, left, right);
-		g_stack[g_top]->type0 = T_SIMPLE;
-		g_stack[g_top]->type2 = T_VAR;
+		ctx->g_stack[++ctx->g_top] = opr(ctx, oper, 2, left, right);
+		ctx->g_stack[ctx->g_top]->type0 = T_SIMPLE;
+		ctx->g_stack[ctx->g_top]->type2 = T_VAR;
 		if ( left->type1 == T_REAL || right->type1 == T_REAL )
-			g_stack[g_top]->type1 = T_REAL;
+			ctx->g_stack[ctx->g_top]->type1 = T_REAL;
 		else
-			g_stack[g_top]->type1 = T_INTEGER;
+			ctx->g_stack[ctx->g_top]->type1 = T_INTEGER;
 	}
 
 	return 1;
 }
 
-static void cleanupArrayExprError(int currArrayIndex, Valore *val, nodeType *pNode)
+static void cleanupArrayExprError(CompilerContext *ctx, int currArrayIndex, Valore *val, nodeType *pNode)
 {
 	int i = currArrayIndex - 1;
 
 	while ( i >= 0 )
 	{
-		if ( g_top >= 0 )
-			freeNode(g_stack[g_top--]);
+		if ( ctx->g_top >= 0 )
+			freeNode(ctx, ctx->g_stack[ctx->g_top--]);
 		i--;
 	}
 
@@ -1633,7 +1621,7 @@ static void cleanupArrayExprError(int currArrayIndex, Valore *val, nodeType *pNo
 	}
 
 	if ( pNode != NULL )
-		freeNode(pNode);
+		freeNode(ctx, pNode);
 }
 
 //expr4 : T_INT_LITERAL
@@ -1646,173 +1634,173 @@ static void cleanupArrayExprError(int currArrayIndex, Valore *val, nodeType *pNo
 //		| '!' expr
 //		| T_ID {'[' expr ']'}
 //		;
-int expr4()
+int expr4(CompilerContext *ctx)
 {
 	HashTable hashTable;
 	Valore value;
 	nodeType *pNode = NULL;
 	int currArrayIndex;
 
-	switch( g_Token.Type )
+	switch( ctx->g_Token.Type )
 	{
 	case T_INT_LITERAL:
-		if ( g_isCodeBlock )
+		if ( ctx->g_isCodeBlock )
 		{
 			Valore value;
-			value.iVal = g_Token.Value.vInt;
-			g_stack[++g_top] = con(T_INTEGER, g_Token.lexeme, value);
+			value.iVal = ctx->g_Token.Value.vInt;
+			ctx->g_stack[++ctx->g_top] = con(ctx, T_INTEGER, ctx->g_Token.lexeme, value);
 		}
 		else
 		{
-			g_currConstType = T_INTEGER;
-			g_currConstValue.iVal = g_Token.Value.vInt;
+			ctx->g_currConstType = T_INTEGER;
+			ctx->g_currConstValue.iVal = ctx->g_Token.Value.vInt;
 		}
 
-		GetNextToken(&g_Token);
+		GetNextToken(ctx, &ctx->g_Token);
 		break;
 	case T_REAL_LITERAL:
-		if ( g_isCodeBlock )
+		if ( ctx->g_isCodeBlock )
 		{
 			Valore value;
-			value.dblVal = g_Token.Value.vDouble;
-			g_stack[++g_top] = con(T_REAL, g_Token.lexeme, value);
+			value.dblVal = ctx->g_Token.Value.vDouble;
+			ctx->g_stack[++ctx->g_top] = con(ctx, T_REAL, ctx->g_Token.lexeme, value);
 		}
 		else
 		{
-			g_currConstType = T_REAL;
-			g_currConstValue.dblVal = g_Token.Value.vDouble;
+			ctx->g_currConstType = T_REAL;
+			ctx->g_currConstValue.dblVal = ctx->g_Token.Value.vDouble;
 		}
 
-		GetNextToken(&g_Token);
+		GetNextToken(ctx, &ctx->g_Token);
 		break;
 	case T_STRING_LITERAL:
-		if ( g_isCodeBlock )
+		if ( ctx->g_isCodeBlock )
 		{
 			Valore value;
-			value.strVal = (char*)malloc(sizeof(char)*strlen(g_Token.Value.vString)+1);
+			value.strVal = (char*)malloc(sizeof(char)*strlen(ctx->g_Token.Value.vString)+1);
 			if ( !value.strVal )
 			{
 				printf("Errore: memoria non sufficiente.\n");
 				return 0;
 			}
-			strcpy(value.strVal, g_Token.Value.vString);
-			g_stack[++g_top] = con(T_STRING, NULL, value);
+			strcpy(value.strVal, ctx->g_Token.Value.vString);
+			ctx->g_stack[++ctx->g_top] = con(ctx, T_STRING, NULL, value);
 		}
 		else
 		{
-			g_currConstType = T_STRING;
-			g_currConstValue.strVal = (char*)malloc(sizeof(char)*strlen(g_Token.Value.vString)+1);
-			if ( !g_currConstValue.strVal )
+			ctx->g_currConstType = T_STRING;
+			ctx->g_currConstValue.strVal = (char*)malloc(sizeof(char)*strlen(ctx->g_Token.Value.vString)+1);
+			if ( !ctx->g_currConstValue.strVal )
 			{
 				printf("Errore: memoria non sufficiente.\n");
 				return 0;
 			}
-			strcpy(g_currConstValue.strVal, g_Token.Value.vString);
+			strcpy(ctx->g_currConstValue.strVal, ctx->g_Token.Value.vString);
 		}
 
-		GetNextToken(&g_Token);
+		GetNextToken(ctx, &ctx->g_Token);
 		break;
 	case T_KW_TRUE:
-		if ( g_isCodeBlock )
+		if ( ctx->g_isCodeBlock )
 		{
 			Valore value;
 			value.bVal = 1;
-			g_stack[++g_top] = con(T_BOOLEAN, "true", value);
+			ctx->g_stack[++ctx->g_top] = con(ctx, T_BOOLEAN, "true", value);
 		}
 		else
 		{
-			g_currConstType = T_BOOLEAN;
-			g_currConstValue.bVal = 1;
+			ctx->g_currConstType = T_BOOLEAN;
+			ctx->g_currConstValue.bVal = 1;
 		}
 
-		GetNextToken(&g_Token);
+		GetNextToken(ctx, &ctx->g_Token);
 		break;
 	case T_KW_FALSE:
-		if ( g_isCodeBlock )
+		if ( ctx->g_isCodeBlock )
 		{
 			Valore value;
 			value.bVal = 0;
-			g_stack[++g_top] = con(T_BOOLEAN, "false", value);
+			ctx->g_stack[++ctx->g_top] = con(ctx, T_BOOLEAN, "false", value);
 		}
 		else
 		{
-			g_currConstType = T_BOOLEAN;
-			g_currConstValue.bVal = 0;
+			ctx->g_currConstType = T_BOOLEAN;
+			ctx->g_currConstValue.bVal = 0;
 		}
 
-		GetNextToken(&g_Token);
+		GetNextToken(ctx, &ctx->g_Token);
 		break;
 	case T_OPAREN:
-		GetNextToken(&g_Token);
-		if ( !expr() )
+		GetNextToken(ctx, &ctx->g_Token);
+		if ( !expr(ctx) )
 			return 0;
-		if ( !match(T_CPAREN) )
+		if ( !match(ctx, T_CPAREN) )
 		{
 			printf("Linea %d Colonna %d: Errore expr4. Attesa parentesi ')'.\n",
-					g_Token.line,
-					g_Token.column);
+					ctx->g_Token.line,
+					ctx->g_Token.column);
 			return 0;
 		}
 		break;
 	case T_OP_MINUS:
-		GetNextToken(&g_Token);
-		if ( !expr() )
+		GetNextToken(ctx, &ctx->g_Token);
+		if ( !expr(ctx) )
 			return 0;
-		if ( g_stack[g_top]->type1 != T_INTEGER && g_stack[g_top]->type1 != T_REAL )
+		if ( ctx->g_stack[ctx->g_top]->type1 != T_INTEGER && ctx->g_stack[ctx->g_top]->type1 != T_REAL )
 		{
 			printf("Linea %d Colonna %d: Errore expr4. L'operatore meno unario "
 					"accetta solo operandi di tipo integer o real.\n",
-					g_Token.line,
-					g_Token.column);
+					ctx->g_Token.line,
+					ctx->g_Token.column);
 			return 0;
 		}
-		pNode = g_stack[g_top--];
-		g_stack[++g_top] = opr(T_OP_UMINUS, 1, pNode);
-		g_stack[g_top]->type0 = T_SIMPLE;
-		g_stack[g_top]->type1 = pNode->type1;
-		g_stack[g_top]->type2 = T_VAR;
+		pNode = ctx->g_stack[ctx->g_top--];
+		ctx->g_stack[++ctx->g_top] = opr(ctx, T_OP_UMINUS, 1, pNode);
+		ctx->g_stack[ctx->g_top]->type0 = T_SIMPLE;
+		ctx->g_stack[ctx->g_top]->type1 = pNode->type1;
+		ctx->g_stack[ctx->g_top]->type2 = T_VAR;
 		break;
 	case T_OP_NOT:
-		GetNextToken(&g_Token);
-		if ( !expr() )
+		GetNextToken(ctx, &ctx->g_Token);
+		if ( !expr(ctx) )
 			return 0;
-		if ( g_stack[g_top]->type1 == T_STRING )
+		if ( ctx->g_stack[ctx->g_top]->type1 == T_STRING )
 		{
 			printf("Linea %d Colonna %d: Errore expr4. L'operatore not "
 					"accetta solo espressioni di tipo boolean.\n",
-					g_Token.line,
-					g_Token.column);
+					ctx->g_Token.line,
+					ctx->g_Token.column);
 			return 0;
 		}
-		pNode = g_stack[g_top--];
-		g_stack[++g_top] = opr(T_OP_NOT, 1, pNode);
-		g_stack[g_top]->type0 = T_SIMPLE;
-		g_stack[g_top]->type1 = T_BOOLEAN;
-		g_stack[g_top]->type2 = T_VAR;
+		pNode = ctx->g_stack[ctx->g_top--];
+		ctx->g_stack[++ctx->g_top] = opr(ctx, T_OP_NOT, 1, pNode);
+		ctx->g_stack[ctx->g_top]->type0 = T_SIMPLE;
+		ctx->g_stack[ctx->g_top]->type1 = T_BOOLEAN;
+		ctx->g_stack[ctx->g_top]->type2 = T_VAR;
 		break;
 	case T_ID:
-		if ( !scopeFind(&g_Scope, g_Token.Value.vString, &hashTable) )
+		if ( !scopeFind(ctx, &ctx->g_Scope, ctx->g_Token.Value.vString, &hashTable) )
 		{
 			printf("Linea %d Colonna %d: Errore expr4. Identificatore '%s' non dichiarato.\n",
-					g_Token.line,
-					g_Token.column,
-					g_Token.Value.vString);
+					ctx->g_Token.line,
+					ctx->g_Token.column,
+					ctx->g_Token.Value.vString);
 			return 0;
 		}
 		if ( hashTable.Tipo0 == T_SIMPLE && !hashTable.bInizializzato )
 		{
-			if ( !g_isREAD )
+			if ( !ctx->g_isREAD )
 			{
 				printf("Linea %d Colonna %d: Errore expr4. Identificatore '%s' non inizializzato.\n",
-						g_Token.line,
-						g_Token.column,
-						g_Token.Value.vString);
+						ctx->g_Token.line,
+						ctx->g_Token.column,
+						ctx->g_Token.Value.vString);
 				return 0;
 			}
 			else
 			{
 				hashTable.bInizializzato = 1;
-				scopeUpdateValue(&g_Scope, hashTable.Key, hashTable.Tipo0, hashTable.Tipo1, hashTable.Tipo2, hashTable.Value, 1, -1);
+				scopeUpdateValue(ctx, &ctx->g_Scope, hashTable.Key, hashTable.Tipo0, hashTable.Tipo1, hashTable.Tipo2, hashTable.Value, 1, -1);
 			}
 		}
 
@@ -1842,51 +1830,51 @@ int expr4()
 			value = hashTable.Value;
 		}
 
-		g_stack[++g_top] = id(g_Token.Value.vString, "a", hashTable.Tipo0, hashTable.Tipo1, hashTable.Tipo2, value, hashTable.bInizializzato);
+		ctx->g_stack[++ctx->g_top] = id(ctx, ctx->g_Token.Value.vString, "a", hashTable.Tipo0, hashTable.Tipo1, hashTable.Tipo2, value, hashTable.bInizializzato);
 
-		GetNextToken(&g_Token);
+		GetNextToken(ctx, &ctx->g_Token);
 
 		pNode = NULL;
 		currArrayIndex = 0;
-		if ( g_Token.Type == T_QOPAREN )
+		if ( ctx->g_Token.Type == T_QOPAREN )
 		{
-			pNode = g_stack[g_top--];
+			pNode = ctx->g_stack[ctx->g_top--];
 		}
-		while ( g_Token.Type == T_QOPAREN )
+		while ( ctx->g_Token.Type == T_QOPAREN )
 		{
 			if ( currArrayIndex >= hashTable.Value.pArrayDef->countIndexes )
 			{
 				printf("Linea %d Colonna %d: Errore stmt. "
 						"Numero di indici non corrispondente.\n",
-						g_Token.line,
-						g_Token.column);
-				cleanupArrayExprError(currArrayIndex, &value, pNode);
+						ctx->g_Token.line,
+						ctx->g_Token.column);
+				cleanupArrayExprError(ctx, currArrayIndex, &value, pNode);
 				return 0;
 			}
 
-			GetNextToken(&g_Token);
-			if ( !expr() )
+			GetNextToken(ctx, &ctx->g_Token);
+			if ( !expr(ctx) )
 			{
-				cleanupArrayExprError(currArrayIndex, &value, pNode);
+				cleanupArrayExprError(ctx, currArrayIndex, &value, pNode);
 				return 0;
 			}
 
-			if ( g_stack[g_top]->type1 != T_INTEGER )
+			if ( ctx->g_stack[ctx->g_top]->type1 != T_INTEGER )
 			{
 				printf("Linea %d Colonna %d: Errore stmt. "
 						"Gli array vanno indicizzati con espressioni di tipo int.\n",
-						g_Token.line,
-						g_Token.column);
-				cleanupArrayExprError(currArrayIndex + 1, &value, pNode);
+						ctx->g_Token.line,
+						ctx->g_Token.column);
+				cleanupArrayExprError(ctx, currArrayIndex + 1, &value, pNode);
 				return 0;
 			}
 
-			if ( !match(T_QCPAREN) )
+			if ( !match(ctx, T_QCPAREN) )
 			{
 				printf("Linea %d Colonna %d: Errore expr4. Attesa parentesi ']'.\n",
-						g_Token.line,
-						g_Token.column);
-				cleanupArrayExprError(currArrayIndex + 1, &value, pNode);
+						ctx->g_Token.line,
+						ctx->g_Token.column);
+				cleanupArrayExprError(ctx, currArrayIndex + 1, &value, pNode);
 				return 0;
 			}
 
@@ -1898,25 +1886,25 @@ int expr4()
 			{
 				printf("Linea %d Colonna %d: Errore stmt. "
 						"Numero di indici non corrispondente.\n",
-						g_Token.line,
-						g_Token.column);
-				cleanupArrayExprError(currArrayIndex, &value, pNode);
+						ctx->g_Token.line,
+						ctx->g_Token.column);
+				cleanupArrayExprError(ctx, currArrayIndex, &value, pNode);
 				return 0;
 			}
 
 			for ( currArrayIndex = hashTable.Value.pArrayDef->countIndexes - 1; currArrayIndex >= 0 ; currArrayIndex-- )
 			{
-				pNode->id.value.pArrayDef->indexes[currArrayIndex] = g_stack[g_top--];
+				pNode->id.value.pArrayDef->indexes[currArrayIndex] = ctx->g_stack[ctx->g_top--];
 			}
-			g_stack[++g_top] = pNode;
+			ctx->g_stack[++ctx->g_top] = pNode;
 		}
 
 		break;
 	default:
 		printf("Linea %d Colonna %d: Errore stmt. Atteso 'int literal' o 'real literal'"
 				" o 'string literal' o 'true' o 'false' o '(' o '-' o '!' o identificatore.\n",
-				g_Token.line,
-				g_Token.column);
+				ctx->g_Token.line,
+				ctx->g_Token.column);
 		return 0;
 	}
 

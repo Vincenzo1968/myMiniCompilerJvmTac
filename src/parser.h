@@ -1,6 +1,9 @@
 #ifndef __MYPARSER__
 #define __MYPARSER__
 
+
+struct CompilerContext;
+typedef struct CompilerContext CompilerContext;
 #include "scanner.h"
 #include "ast.h"
 
@@ -18,24 +21,24 @@ typedef enum tagNonTerminal
 }NonTerminal;
 */
 
-int Parse(char *szFileName, nodeType **pTree, int genTAC, int genJVM);
+int Parse(CompilerContext *ctx, char *szFileName, nodeType **pTree, int genTAC, int genJVM);
 
-int match(TokenTypeEnum ExpectedToken);
+int match(CompilerContext *ctx, TokenTypeEnum ExpectedToken);
 
-void Panic();
+void Panic(CompilerContext *ctx);
 
-int program();
-int decl_list();
-int decl();
-int type(void);
-int var_list();
-int code_block();
-int stmt_list();
-int stmt();
-int expr();
-int expr1();
-int expr2();
-int expr3();
-int expr4();
+int program(CompilerContext *ctx);
+int decl_list(CompilerContext *ctx);
+int decl(CompilerContext *ctx);
+int type(CompilerContext *ctx);
+int var_list(CompilerContext *ctx);
+int code_block(CompilerContext *ctx);
+int stmt_list(CompilerContext *ctx);
+int stmt(CompilerContext *ctx);
+int expr(CompilerContext *ctx);
+int expr1(CompilerContext *ctx);
+int expr2(CompilerContext *ctx);
+int expr3(CompilerContext *ctx);
+int expr4(CompilerContext *ctx);
 
 #endif /* __MYPARSER__ */

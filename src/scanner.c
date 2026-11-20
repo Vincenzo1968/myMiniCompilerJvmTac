@@ -27,37 +27,33 @@ along with mypdfsearch. If not, see <http://www.gnu.org/licenses/>.
 #include <stdlib.h>
 #include <string.h>
 #include <malloc.h>
+#include "context.h"
 #include "scanner.h"
 
-static char *g_szInput = NULL;
 
-static int g_pos = 0;
 
-static int g_line = 1;
-static int g_column = 1;
 
-static int g_depth = 0;
 
-int GetDepth()
+int GetDepth(CompilerContext *ctx)
 {
-	return g_depth;
+	return ctx->g_depth;
 }
 
-void SetDepth(int depth)
+void SetDepth(CompilerContext *ctx, int depth)
 {
-	g_depth = depth;
+	ctx->g_depth = depth;
 }
 
-int LeggiFile(char *szFileName)
+int LeggiFile(CompilerContext *ctx, char *szFileName)
 {
 	FILE *fp = NULL;
 	int dimFile = 0;
 	int bytereads = 0;
 
-	if ( g_szInput != NULL )
+	if ( ctx->g_szInput != NULL )
 	{
-		free(g_szInput);
-		g_szInput = NULL;
+		free(ctx->g_szInput);
+		ctx->g_szInput = NULL;
 	}
 
 	fp = fopen(szFileName, "rb");
@@ -80,8 +76,8 @@ int LeggiFile(char *szFileName)
 		return 0;
 	}
 
-	g_szInput = (char*)malloc(sizeof(char)*dimFile + 1);
-	if ( !g_szInput )
+	ctx->g_szInput = (char*)malloc(sizeof(char)*dimFile + 1);
+	if ( !ctx->g_szInput )
 	{
 		printf("Errore: memoria insufficiente.\n");
 		fclose(fp);
@@ -90,27 +86,28 @@ int LeggiFile(char *szFileName)
 
 	fseek(fp, 0, SEEK_SET);
 
-	bytereads = fread(g_szInput, 1, dimFile, fp);
-	*(g_szInput + bytereads) = '\0';
+	bytereads = fread(ctx->g_szInput, 1, dimFile, fp);
+	*(ctx->g_szInput + bytereads) = '\0';
 
 	fclose(fp);
 
 	return 1;
 }
 
-void FreeInputbuffer()
+void FreeInputbuffer(CompilerContext *ctx)
 {
-	if ( g_szInput != NULL )
+	if ( ctx->g_szInput != NULL )
 	{
-		free(g_szInput);
-		g_szInput = NULL;
+		free(ctx->g_szInput);
+		ctx->g_szInput = NULL;
 	}
 }
 
 // True se il token possiede una Value.vString allocata con malloc.
 // Nota: anche le keyword (T_KW_*) passano dallo stato S1 e allocano vString.
-static int tokenOwnsString(TokenTypeEnum t)
+static int tokenOwnsString(CompilerContext *ctx, TokenTypeEnum t)
 {
+	(void)ctx;
     switch (t)
     {
         case T_ID:
@@ -125,54 +122,54 @@ static int tokenOwnsString(TokenTypeEnum t)
     }
 }
 
-void GetNextToken(Token *pToken)
+void GetNextToken(CompilerContext *ctx, Token *pToken)
 {
 	States state = S0;
 	char c;
 	char lexeme[4096];
 	int k = 0;
 
-	if ( g_szInput == NULL )
+	if ( ctx->g_szInput == NULL )
 	{
 		printf("Errore scanner: NULL Input\n");
 		pToken->Type = T_ERROR;
 		return;
 	}
 
-	if ( tokenOwnsString(pToken->Type) && pToken->Value.vString != NULL )
+	if ( tokenOwnsString(ctx, pToken->Type) && pToken->Value.vString != NULL )
 		free(pToken->Value.vString);
 	pToken->Value.vString = NULL;   // azzera sempre la union prima di riempirla 
 
-	c = *(g_szInput + g_pos);
+	c = *(ctx->g_szInput + ctx->g_pos);
 
 	while ( c == ' ' || c == '\t' || c == '\r' || c == '\n' )
 	{
 		if ( c == '\n' )
 		{
-			g_line++;
-			g_column = 1;
+			ctx->g_line++;
+			ctx->g_column = 1;
 		}
-		g_pos++;
-		c = *(g_szInput + g_pos);
+		ctx->g_pos++;
+		c = *(ctx->g_szInput + ctx->g_pos);
 	}
 
 	if ( c == '\0' )
 	{
 		pToken->Type = T_EOF;
-		FreeInputbuffer();
+		FreeInputbuffer(ctx);
 		return;
 	}
 
 	while ( 1 )
 	{
-		c = *(g_szInput + g_pos++);
+		c = *(ctx->g_szInput + ctx->g_pos++);
 
 		switch(state)
 		{
 		case S0:
 			k = 0;
-			pToken->line = g_line;
-			pToken->column = g_column;
+			pToken->line = ctx->g_line;
+			pToken->column = ctx->g_column;
 
 			//if ( c == ' ' || c == '\t' || c == '\r' || c == '\n' )
 			//{
@@ -186,7 +183,7 @@ void GetNextToken(Token *pToken)
 			if ( c == '\0' )
 			{
 				pToken->Type = T_EOF;
-				FreeInputbuffer();
+				FreeInputbuffer(ctx);
 				return;
 			}
 			else if ( c == '(' )
@@ -339,8 +336,8 @@ void GetNextToken(Token *pToken)
 			{
 				lexeme[k] = '\0';
 				pToken->Type = T_ID;
-				pToken->line = g_line;
-				pToken->column = g_column;
+				pToken->line = ctx->g_line;
+				pToken->column = ctx->g_column;
 				if ( pToken->Value.vString != NULL )
 				{
 					free(pToken->Value.vString);
@@ -349,7 +346,7 @@ void GetNextToken(Token *pToken)
 				pToken->Value.vString = (char*)malloc(sizeof(char) * k + 1);
 				if ( pToken->Value.vString != NULL )
 					strcpy(pToken->Value.vString, lexeme);
-				--g_pos;
+				--ctx->g_pos;
 				//state = S0;
 				if ( strcmp(lexeme, "if") == 0 )
 					pToken->Type = T_KW_IF;
@@ -468,7 +465,7 @@ void GetNextToken(Token *pToken)
 			else
 			{
 				pToken->Type = T_OP_LT;
-				g_pos--;
+				ctx->g_pos--;
 				return;
 			}
 			break;
@@ -481,7 +478,7 @@ void GetNextToken(Token *pToken)
 			else
 			{
 				pToken->Type = T_OP_ASSIGN;
-				g_pos--;
+				ctx->g_pos--;
 				return;
 			}
 			break;
@@ -494,7 +491,7 @@ void GetNextToken(Token *pToken)
 			else
 			{
 				pToken->Type = T_OP_GT;
-				g_pos--;
+				ctx->g_pos--;
 				return;
 			}
 			break;
@@ -507,7 +504,7 @@ void GetNextToken(Token *pToken)
 			else
 			{
 				pToken->Type = T_OP_NOT;
-				g_pos--;
+				ctx->g_pos--;
 				return;
 			}
 			break;
@@ -532,8 +529,8 @@ void GetNextToken(Token *pToken)
 			}
 			else if ( c == '\n' )
 			{
-				g_line++;
-				g_column = 1;
+				ctx->g_line++;
+				ctx->g_column = 1;
 
 				pToken->Type = T_ERROR;
 				printf("Errore scanner: Linea %d Colonna %d: La stringa deve terminare nella stessa riga.\n", pToken->line, pToken->column);
@@ -572,8 +569,8 @@ void GetNextToken(Token *pToken)
 			}
 			else if ( c == '\n' )
 			{
-				g_line++;
-				g_column = 1;
+				ctx->g_line++;
+				ctx->g_column = 1;
 
 				pToken->Type = T_ERROR;
 				printf("Errore scanner: Linea %d Colonna %d: La stringa deve terminare nella stessa riga.\n", pToken->line, pToken->column);
@@ -608,7 +605,7 @@ void GetNextToken(Token *pToken)
 				lexeme[k] = '\0';
 				pToken->Value.vInt = atoi(lexeme);
 				strcpy(pToken->lexeme, lexeme);
-				--g_pos;
+				--ctx->g_pos;
 				return;
 			}
 			break;
@@ -625,7 +622,7 @@ void GetNextToken(Token *pToken)
 				lexeme[k] = '\0';
 				pToken->Value.vDouble = atof(lexeme);
 				strcpy(pToken->lexeme, lexeme);
-				--g_pos;
+				--ctx->g_pos;
 				return;
 			}
 			break;
@@ -646,7 +643,7 @@ void GetNextToken(Token *pToken)
 				lexeme[k] = '\0';
 				pToken->Value.vDouble = atof(lexeme);
 				strcpy(pToken->lexeme, lexeme);
-				--g_pos;
+				--ctx->g_pos;
 				return;
 			}
 			break;
@@ -693,7 +690,7 @@ void GetNextToken(Token *pToken)
 				lexeme[k] = '\0';
 				pToken->Value.vDouble = atof(lexeme);
 				strcpy(pToken->lexeme, lexeme);
-				--g_pos;
+				--ctx->g_pos;
 				return;
 			}
 			break;
@@ -710,7 +707,7 @@ void GetNextToken(Token *pToken)
 				//pToken->Type = T_DOT;
 				pToken->Type = T_ERROR;
 				printf("Errore scanner: Linea %d Colonna %d: carattere '.' non valido.\n", pToken->line, pToken->column);
-				--g_pos;
+				--ctx->g_pos;
 				return;
 			}
 			break;
@@ -726,7 +723,7 @@ void GetNextToken(Token *pToken)
 			else
 			{
 				pToken->Type = T_OP_DIV;
-				g_pos--;
+				ctx->g_pos--;
 				return;
 			}
 			break;
@@ -737,17 +734,17 @@ void GetNextToken(Token *pToken)
 				{
 					if ( c == '\n' )
 					{
-						g_line++;
-						g_column = 1;
+						ctx->g_line++;
+						ctx->g_column = 1;
 					}
-					g_pos++;
-					c = *(g_szInput + g_pos);
+					ctx->g_pos++;
+					c = *(ctx->g_szInput + ctx->g_pos);
 				}
 
 				if ( c == '\0' )
 				{
 					pToken->Type = T_EOF;
-					FreeInputbuffer();
+					FreeInputbuffer(ctx);
 					return;
 				}
 
@@ -756,7 +753,7 @@ void GetNextToken(Token *pToken)
 			else if ( c == '\0' )
 			{
 				pToken->Type = T_EOF;
-				FreeInputbuffer();
+				FreeInputbuffer(ctx);
 				return;
 			}
 			break;
@@ -769,31 +766,31 @@ void GetNextToken(Token *pToken)
 			{
 				pToken->Type = T_ERROR;
 				printf("Errore scanner: Linea %d Colonna %d: attesi caratteri '*/' di fine commento.\nTrovato fine del file.\n", pToken->line, pToken->column);
-				--g_pos;
+				--ctx->g_pos;
 				return;
 			}
 			break;
 		case S21:
 			if ( c == '/' )
 			{
-				c = *(g_szInput + g_pos);
+				c = *(ctx->g_szInput + ctx->g_pos);
 				if ( c == ' ' || c == '\t' || c == '\r' || c == '\n' )
 				{
 					while ( c == ' ' || c == '\t' || c == '\r' || c == '\n' )
 					{
 						if ( c == '\n' )
 						{
-							g_line++;
-							g_column = 1;
+							ctx->g_line++;
+							ctx->g_column = 1;
 						}
-						g_pos++;
-						c = *(g_szInput + g_pos);
+						ctx->g_pos++;
+						c = *(ctx->g_szInput + ctx->g_pos);
 					}
 
 					if ( c == '\0' )
 					{
 						pToken->Type = T_EOF;
-						FreeInputbuffer();
+						FreeInputbuffer(ctx);
 						return;
 					}
 				}
@@ -804,7 +801,7 @@ void GetNextToken(Token *pToken)
 			{
 				pToken->Type = T_ERROR;
 				printf("Errore scanner: Linea %d Colonna %d: attesi caratteri '*/' di fine commento.\nTrovato fine del file.\n", pToken->line, pToken->column);
-				--g_pos;
+				--ctx->g_pos;
 				return;
 			}
 			else
@@ -814,6 +811,6 @@ void GetNextToken(Token *pToken)
 			break;
 		} /* fine switch */
 
-		g_column++;
+		ctx->g_column++;
 	} /* fine while */
 }

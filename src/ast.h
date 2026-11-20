@@ -22,6 +22,9 @@ along with mypdfsearch. If not, see <http://www.gnu.org/licenses/>.
 #ifndef AST_H
 #define AST_H
 
+
+struct CompilerContext;
+typedef struct CompilerContext CompilerContext;
 #include "symtab.h"
 
 typedef enum { typeConst, typeId, typeOperator } nodeEnum;
@@ -68,9 +71,9 @@ typedef struct nodeTypeTag
 } nodeType;
 
 /* prototypes */
-nodeType *opr(int oper, int nops, ...);
-nodeType *id(char *name, char *uniqueName, enumTipo0 t0, enumTipo1 t1, enumTipo2 t2, Valore value, char bInizializzato);
-nodeType *con(enumTipo1 t1, char *lexeme, Valore value);
-void freeNode(nodeType *p);
+nodeType *opr(CompilerContext *ctx, int oper, int nops, ...);
+nodeType *id(CompilerContext *ctx, char *name, char *uniqueName, enumTipo0 t0, enumTipo1 t1, enumTipo2 t2, Valore value, char bInizializzato);
+nodeType *con(CompilerContext *ctx, enumTipo1 t1, char *lexeme, Valore value);
+void freeNode(CompilerContext *ctx, nodeType *p);
 
 #endif // AST_H

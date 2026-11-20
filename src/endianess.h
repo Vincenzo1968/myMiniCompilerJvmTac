@@ -22,6 +22,9 @@ along with mypdfsearch. If not, see <http://www.gnu.org/licenses/>.
 #ifndef ENDIANNESS_H
 #define ENDIANNESS_H
 
+
+struct CompilerContext;
+typedef struct CompilerContext CompilerContext;
 #include <stdint.h>
 
 #define BYTE uint8_t
@@ -84,6 +87,6 @@ along with mypdfsearch. If not, see <http://www.gnu.org/licenses/>.
 	returnDouble[7] = doubleToConvert[0]; \
 }
 
-char isBigEndian();
+char isBigEndian(CompilerContext *ctx);
 
 #endif // ENDIANNESS_H

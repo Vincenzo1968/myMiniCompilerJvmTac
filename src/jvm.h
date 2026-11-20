@@ -22,6 +22,9 @@ along with mypdfsearch. If not, see <http://www.gnu.org/licenses/>.
 #ifndef JVM_H
 #define JVM_H
 
+
+struct CompilerContext;
+typedef struct CompilerContext CompilerContext;
 #define CONSTANT_Class  7  
 #define CONSTANT_Fieldref  9  
 #define CONSTANT_Methodref  10  
@@ -486,26 +489,26 @@ typedef struct tag_jvmHashTable
 	struct tag_jvmHashTable *next;
 } jvmHashTable;
 
-jvmHashTable* jvmhtNewNode(char *Key, unsigned short c);
-int jvmhtFind(jvmHashTable **pHashTable, char *Key, unsigned short *c);
-void jvmhtInsert(jvmHashTable **pHashTable, char *Key, unsigned short c);
-void jvmhtFree(jvmHashTable* first);
+jvmHashTable* jvmhtNewNode(CompilerContext *ctx, char *Key, unsigned short c);
+int jvmhtFind(CompilerContext *ctx, jvmHashTable **pHashTable, char *Key, unsigned short *c);
+void jvmhtInsert(CompilerContext *ctx, jvmHashTable **pHashTable, char *Key, unsigned short c);
+void jvmhtFree(CompilerContext *ctx, jvmHashTable* first);
 
-void jvmSetNumberLocals(int n);
+void jvmSetNumberLocals(CompilerContext *ctx, int n);
 
-void jvmWriteHeader(FILE *fp);
-int jvmMakeConstantPool(char *szSourceFile, char *szClassName);
-int jvmAddArrayClass(int type, int sizes, int index);
-int jvmAddStringConstant(char *sz, int index);
-int jvmAddIntegerConstant(int c, int index);
-int jvmAddRealConstant(double c, int index);
-void jvmWriteInfo(FILE *fp);
-void jvmWriteInitMethod(FILE *fp);
-void jvmWriteMainMethod(FILE *fp, nodeType *pTree, jvmHashTable **pHT);
-void MakeOutputFileName(char *szInputFileName, char *szOutputFileName, char *szFileNameWithoutExt, char *szExt);
-void jvmTypeCheck(int t1, int t2);
-void MakeBytecodeMain(nodeType *p, jvmHashTable **pHT, Scope *pScope);
-int jvmAddClassConstant(const char *szClassName, int index);
-void jvmStart(char *szInputFileName, nodeType **ppTree, Scope *pScope, int optLevel);
+void jvmWriteHeader(CompilerContext *ctx, FILE *fp);
+int jvmMakeConstantPool(CompilerContext *ctx, char *szSourceFile, char *szClassName);
+int jvmAddArrayClass(CompilerContext *ctx, int type, int sizes, int index);
+int jvmAddStringConstant(CompilerContext *ctx, char *sz, int index);
+int jvmAddIntegerConstant(CompilerContext *ctx, int c, int index);
+int jvmAddRealConstant(CompilerContext *ctx, double c, int index);
+void jvmWriteInfo(CompilerContext *ctx, FILE *fp);
+void jvmWriteInitMethod(CompilerContext *ctx, FILE *fp);
+void jvmWriteMainMethod(CompilerContext *ctx, FILE *fp, nodeType *pTree, jvmHashTable **pHT);
+void MakeOutputFileName(CompilerContext *ctx, char *szInputFileName, char *szOutputFileName, char *szFileNameWithoutExt, char *szExt);
+void jvmTypeCheck(CompilerContext *ctx, int t1, int t2);
+void MakeBytecodeMain(CompilerContext *ctx, nodeType *p, jvmHashTable **pHT, Scope *pScope);
+int jvmAddClassConstant(CompilerContext *ctx, const char *szClassName, int index);
+void jvmStart(CompilerContext *ctx, char *szInputFileName, nodeType **ppTree, Scope *pScope, int optLevel);
 
 #endif // JVM_H

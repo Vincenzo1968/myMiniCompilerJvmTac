@@ -26,13 +26,15 @@ along with mypdfsearch. If not, see <http://www.gnu.org/licenses/>.
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "context.h"
 #include "tac.h"
 
 static int s_label = 1;
 static int s_temp = 1;
 
-static char *tacStrdup(const char *s)
+static char *tacStrdup(CompilerContext *ctx, const char *s)
 {
+	(void)ctx;
     char *p;
     size_t len;
     if (!s) return NULL;
@@ -42,29 +44,31 @@ static char *tacStrdup(const char *s)
     return p;
 }
 
-static char *newTemp(void)
+static char *newTemp(CompilerContext *ctx)
 {
     char buf[32];
     sprintf(buf, "t%d", s_temp++);
-    return tacStrdup(buf);
+    return tacStrdup(ctx, buf);
 }
 
-static char *newLabel(void)
+static char *newLabel(CompilerContext *ctx)
 {
     char buf[32];
     sprintf(buf, "L%03d", s_label++);
-    return tacStrdup(buf);
+    return tacStrdup(ctx, buf);
 }
 
-void tacInit(TACList *list)
+void tacInit(CompilerContext *ctx, TACList *list)
 {
+	(void)ctx;
     list->items = NULL;
     list->count = 0;
     list->capacity = 0;
 }
 
-void tacFree(TACList *list)
+void tacFree(CompilerContext *ctx, TACList *list)
 {
+	(void)ctx;
     int i;
     for (i = 0; i < list->count; i++) {
         free(list->items[i].arg1);
@@ -77,7 +81,7 @@ void tacFree(TACList *list)
     list->capacity = 0;
 }
 
-void tacEmit(TACList *list, TACOp op, const char *arg1, const char *arg2, const char *res, enumTipo1 t1)
+void tacEmit(CompilerContext *ctx, TACList *list, TACOp op, const char *arg1, const char *arg2, const char *res, enumTipo1 t1)
 {
     TACInstr *in;
     if (list->count >= list->capacity) {
@@ -92,9 +96,9 @@ void tacEmit(TACList *list, TACOp op, const char *arg1, const char *arg2, const 
     }
     in = &list->items[list->count++];
     in->op = op;
-    in->arg1 = tacStrdup(arg1);
-    in->arg2 = tacStrdup(arg2);
-    in->res = tacStrdup(res);
+    in->arg1 = tacStrdup(ctx, arg1);
+    in->arg2 = tacStrdup(ctx, arg2);
+    in->res = tacStrdup(ctx, res);
     in->type1 = t1;
     in->dead = 0;
 }
@@ -103,30 +107,32 @@ void tacEmit(TACList *list, TACOp op, const char *arg1, const char *arg2, const 
  * PASSAGGIO 1: Ottimizzazione sull'AST (Constant Folding & Semplificazioni)
  * ========================================================================= */
 
-static int isZeroConst(nodeType *n)
+static int isZeroConst(CompilerContext *ctx, nodeType *n)
 {
+	(void)ctx;
     if (!n || n->type != typeConst) return 0;
     if (n->type1 == T_INTEGER) return n->con.value.iVal == 0;
     if (n->type1 == T_REAL)    return n->con.value.dblVal == 0.0;
     return 0;
 }
 
-static int isOneConst(nodeType *n)
+static int isOneConst(CompilerContext *ctx, nodeType *n)
 {
+	(void)ctx;
     if (!n || n->type != typeConst) return 0;
     if (n->type1 == T_INTEGER) return n->con.value.iVal == 1;
     if (n->type1 == T_REAL)    return n->con.value.dblVal == 1.0;
     return 0;
 }
 
-nodeType *tacOptimizeAST(nodeType *p)
+nodeType *tacOptimizeAST(CompilerContext *ctx, nodeType *p)
 {
     int i;
     if (!p) return NULL;
     if (p->type != typeOperator) return p;
 
     for (i = 0; i < p->opr.nops; i++) {
-        p->opr.op[i] = tacOptimizeAST(p->opr.op[i]);
+        p->opr.op[i] = tacOptimizeAST(ctx, p->opr.op[i]);
     }
 
     /* Constant folding unario: -costante, !costante */
@@ -144,8 +150,8 @@ nodeType *tacOptimizeAST(nodeType *p)
         } else {
             return p;
         }
-        nodeType *res = con(c->type1, lex, v);
-        freeNode(p);
+        nodeType *res = con(ctx, c->type1, lex, v);
+        freeNode(ctx, p);
         return res;
     }
 
@@ -156,8 +162,8 @@ nodeType *tacOptimizeAST(nodeType *p)
         char lex[16];
         v.bVal = v.bVal ? FALSE : TRUE;
         strcpy(lex, v.bVal ? "true" : "false");
-        nodeType *res = con(T_BOOLEAN, lex, v);
-        freeNode(p);
+        nodeType *res = con(ctx, T_BOOLEAN, lex, v);
+        freeNode(ctx, p);
         return res;
     }
 
@@ -204,8 +210,8 @@ nodeType *tacOptimizeAST(nodeType *p)
                     break;
             }
             if (folded) {
-                nodeType *res = con(isReal ? T_REAL : T_INTEGER, lex, v);
-                freeNode(p);
+                nodeType *res = con(ctx, isReal ? T_REAL : T_INTEGER, lex, v);
+                freeNode(ctx, p);
                 return res;
             }
         }
@@ -214,28 +220,28 @@ nodeType *tacOptimizeAST(nodeType *p)
     /* Semplificazioni algebriche */
     if (p->opr.nops == 2 && p->opr.op[0] != NULL && p->opr.op[1] != NULL) {
         if (p->opr.oper == T_OP_PLUS) {
-            if (isZeroConst(p->opr.op[1])) { nodeType *k = p->opr.op[0]; p->opr.op[0] = NULL; freeNode(p); return k; }
-            if (isZeroConst(p->opr.op[0])) { nodeType *k = p->opr.op[1]; p->opr.op[1] = NULL; freeNode(p); return k; }
+            if (isZeroConst(ctx, p->opr.op[1])) { nodeType *k = p->opr.op[0]; p->opr.op[0] = NULL; freeNode(ctx, p); return k; }
+            if (isZeroConst(ctx, p->opr.op[0])) { nodeType *k = p->opr.op[1]; p->opr.op[1] = NULL; freeNode(ctx, p); return k; }
         }
-        if (p->opr.oper == T_OP_MINUS && isZeroConst(p->opr.op[1])) {
-            nodeType *k = p->opr.op[0]; p->opr.op[0] = NULL; freeNode(p); return k;
+        if (p->opr.oper == T_OP_MINUS && isZeroConst(ctx, p->opr.op[1])) {
+            nodeType *k = p->opr.op[0]; p->opr.op[0] = NULL; freeNode(ctx, p); return k;
         }
         if (p->opr.oper == T_OP_MULT) {
-            if (isOneConst(p->opr.op[1])) { nodeType *k = p->opr.op[0]; p->opr.op[0] = NULL; freeNode(p); return k; }
-            if (isOneConst(p->opr.op[0])) { nodeType *k = p->opr.op[1]; p->opr.op[1] = NULL; freeNode(p); return k; }
-            if (isZeroConst(p->opr.op[0]) || isZeroConst(p->opr.op[1])) {
+            if (isOneConst(ctx, p->opr.op[1])) { nodeType *k = p->opr.op[0]; p->opr.op[0] = NULL; freeNode(ctx, p); return k; }
+            if (isOneConst(ctx, p->opr.op[0])) { nodeType *k = p->opr.op[1]; p->opr.op[1] = NULL; freeNode(ctx, p); return k; }
+            if (isZeroConst(ctx, p->opr.op[0]) || isZeroConst(ctx, p->opr.op[1])) {
                 Valore v;
                 char lex[16];
                 enumTipo1 t = (p->type1 == T_REAL) ? T_REAL : T_INTEGER;
                 if (t == T_REAL) v.dblVal = 0.0; else v.iVal = 0;
                 strcpy(lex, "0");
-                nodeType *res = con(t, lex, v);
-                freeNode(p);
+                nodeType *res = con(ctx, t, lex, v);
+                freeNode(ctx, p);
                 return res;
             }
         }
-        if (p->opr.oper == T_OP_DIV && isOneConst(p->opr.op[1])) {
-            nodeType *k = p->opr.op[0]; p->opr.op[0] = NULL; freeNode(p); return k;
+        if (p->opr.oper == T_OP_DIV && isOneConst(ctx, p->opr.op[1])) {
+            nodeType *k = p->opr.op[0]; p->opr.op[0] = NULL; freeNode(ctx, p); return k;
         }
     }
 
@@ -246,10 +252,11 @@ nodeType *tacOptimizeAST(nodeType *p)
  * PASSAGGIO 2: Traduzione AST -> TACList
  * ========================================================================= */
 
-static char *emitTAC(TACList *tac, Scope *pScope, nodeType *p);
+static char *emitTAC(CompilerContext *ctx, TACList *tac, Scope *pScope, nodeType *p);
 
-static int typeByteSize(enumTipo1 t1)
+static int typeByteSize(CompilerContext *ctx, enumTipo1 t1)
 {
+	(void)ctx;
     switch (t1) {
         case T_INTEGER: return (int)sizeof(int);
         case T_REAL:    return (int)sizeof(double);
@@ -259,37 +266,37 @@ static int typeByteSize(enumTipo1 t1)
     return (int)sizeof(int);
 }
 
-static char *emitArrayOffset(TACList *tac, Scope *pScope, nodeType *idNode, HashTable *Dati)
+static char *emitArrayOffset(CompilerContext *ctx, TACList *tac, Scope *pScope, nodeType *idNode, HashTable *Dati)
 {
-    int size = typeByteSize(Dati->Tipo1);
+    int size = typeByteSize(ctx, Dati->Tipo1);
     char szNum[32];
 
     if (Dati->Value.pArrayDef->countIndexes == 1) {
-        char *idx = emitTAC(tac, pScope, idNode->id.value.pArrayDef->indexes[0]);
-        char *off = newTemp();
+        char *idx = emitTAC(ctx, tac, pScope, idNode->id.value.pArrayDef->indexes[0]);
+        char *off = newTemp(ctx);
         sprintf(szNum, "%d", size);
-        tacEmit(tac, TAC_MUL, idx, szNum, off, T_INTEGER);
+        tacEmit(ctx, tac, TAC_MUL, idx, szNum, off, T_INTEGER);
         free(idx);
         return off;
     } else {
         int k;
         int loc = size * Dati->Value.pArrayDef->sizes[1];
-        char *idx0 = emitTAC(tac, pScope, idNode->id.value.pArrayDef->indexes[0]);
-        char *acc = newTemp();
+        char *idx0 = emitTAC(ctx, tac, pScope, idNode->id.value.pArrayDef->indexes[0]);
+        char *acc = newTemp(ctx);
         sprintf(szNum, "%d", loc);
-        tacEmit(tac, TAC_MUL, idx0, szNum, acc, T_INTEGER);
+        tacEmit(ctx, tac, TAC_MUL, idx0, szNum, acc, T_INTEGER);
         free(idx0);
 
         for (k = 1; k < Dati->Value.pArrayDef->countIndexes; k++) {
-            char *idxK = emitTAC(tac, pScope, idNode->id.value.pArrayDef->indexes[k]);
-            char *mulT = newTemp();
-            char *sumT = newTemp();
+            char *idxK = emitTAC(ctx, tac, pScope, idNode->id.value.pArrayDef->indexes[k]);
+            char *mulT = newTemp(ctx);
+            char *sumT = newTemp(ctx);
             loc = (k < Dati->Value.pArrayDef->countIndexes - 1)
                   ? size * Dati->Value.pArrayDef->sizes[k + 1]
                   : size;
             sprintf(szNum, "%d", loc);
-            tacEmit(tac, TAC_MUL, idxK, szNum, mulT, T_INTEGER);
-            tacEmit(tac, TAC_ADD, acc, mulT, sumT, T_INTEGER);
+            tacEmit(ctx, tac, TAC_MUL, idxK, szNum, mulT, T_INTEGER);
+            tacEmit(ctx, tac, TAC_ADD, acc, mulT, sumT, T_INTEGER);
             free(idxK);
             free(mulT);
             free(acc);
@@ -299,7 +306,7 @@ static char *emitArrayOffset(TACList *tac, Scope *pScope, nodeType *idNode, Hash
     }
 }
 
-static char *emitTAC(TACList *tac, Scope *pScope, nodeType *p)
+static char *emitTAC(CompilerContext *ctx, TACList *tac, Scope *pScope, nodeType *p)
 {
     if (!p) return NULL;
 
@@ -311,86 +318,86 @@ static char *emitTAC(TACList *tac, Scope *pScope, nodeType *p)
             if (s) sprintf(s, "\"%s\"", p->con.value.strVal);
             return s;
         }
-        return tacStrdup(p->con.lexeme);
+        return tacStrdup(ctx, p->con.lexeme);
 
     case typeId: {
         HashTable Dati = {0};
-        if (!scopeFind(pScope, p->id.name, &Dati)) {
+        if (!scopeFind(ctx, pScope, p->id.name, &Dati)) {
             printf("Errore TAC: identificatore '%s' non dichiarato\n", p->id.name);
-            return tacStrdup("0");
+            return tacStrdup(ctx, "0");
         }
         if (Dati.Tipo0 == T_ARRAY) {
-            char *off = emitArrayOffset(tac, pScope, p, &Dati);
-            char *t = newTemp();
-            tacEmit(tac, TAC_LOAD_IDX, p->id.name, off, t, Dati.Tipo1);
+            char *off = emitArrayOffset(ctx, tac, pScope, p, &Dati);
+            char *t = newTemp(ctx);
+            tacEmit(ctx, tac, TAC_LOAD_IDX, p->id.name, off, t, Dati.Tipo1);
             free(off);
             return t;
         }
-        return tacStrdup(p->id.name);
+        return tacStrdup(ctx, p->id.name);
     }
 
     case typeOperator:
         switch (p->opr.oper) {            
         case T_STMT_LIST:
-            free(emitTAC(tac, pScope, p->opr.op[0]));
+            free(emitTAC(ctx, tac, pScope, p->opr.op[0]));
             if (p->opr.nops > 1)
-                return emitTAC(tac, pScope, p->opr.op[1]);
+                return emitTAC(ctx, tac, pScope, p->opr.op[1]);
             return NULL;
 
         case T_CODE_BLOCK:
-            return emitTAC(tac, pScope, p->opr.op[0]);
+            return emitTAC(ctx, tac, pScope, p->opr.op[0]);
 
         case T_KW_WHILE: {
-            char *lStart = newLabel();
-            char *lEnd = newLabel();
+            char *lStart = newLabel(ctx);
+            char *lEnd = newLabel(ctx);
             char *cond;
-            tacEmit(tac, TAC_LABEL, NULL, NULL, lStart, T_INTEGER);
-            cond = emitTAC(tac, pScope, p->opr.op[0]);
-            tacEmit(tac, TAC_IF_FALSE, cond, NULL, lEnd, T_BOOLEAN);
+            tacEmit(ctx, tac, TAC_LABEL, NULL, NULL, lStart, T_INTEGER);
+            cond = emitTAC(ctx, tac, pScope, p->opr.op[0]);
+            tacEmit(ctx, tac, TAC_IF_FALSE, cond, NULL, lEnd, T_BOOLEAN);
             free(cond);
-            free(emitTAC(tac, pScope, p->opr.op[1]));
-            tacEmit(tac, TAC_GOTO, NULL, NULL, lStart, T_INTEGER);
-            tacEmit(tac, TAC_LABEL, NULL, NULL, lEnd, T_INTEGER);
+            free(emitTAC(ctx, tac, pScope, p->opr.op[1]));
+            tacEmit(ctx, tac, TAC_GOTO, NULL, NULL, lStart, T_INTEGER);
+            tacEmit(ctx, tac, TAC_LABEL, NULL, NULL, lEnd, T_INTEGER);
             free(lStart);
             free(lEnd);
             return NULL;
         }
 
         case T_KW_DO: {
-            char *lStart = newLabel();
+            char *lStart = newLabel(ctx);
             char *cond;
-            tacEmit(tac, TAC_LABEL, NULL, NULL, lStart, T_INTEGER);
-            free(emitTAC(tac, pScope, p->opr.op[0]));
-            cond = emitTAC(tac, pScope, p->opr.op[1]);
-            tacEmit(tac, TAC_IF_TRUE, cond, NULL, lStart, T_BOOLEAN);
+            tacEmit(ctx, tac, TAC_LABEL, NULL, NULL, lStart, T_INTEGER);
+            free(emitTAC(ctx, tac, pScope, p->opr.op[0]));
+            cond = emitTAC(ctx, tac, pScope, p->opr.op[1]);
+            tacEmit(ctx, tac, TAC_IF_TRUE, cond, NULL, lStart, T_BOOLEAN);
             free(cond);
             free(lStart);
             return NULL;
         }
 
         case T_KW_IF: {
-            char *cond = emitTAC(tac, pScope, p->opr.op[0]);
-            char *lElse = newLabel();
-            tacEmit(tac, TAC_IF_FALSE, cond, NULL, lElse, T_BOOLEAN);
+            char *cond = emitTAC(ctx, tac, pScope, p->opr.op[0]);
+            char *lElse = newLabel(ctx);
+            tacEmit(ctx, tac, TAC_IF_FALSE, cond, NULL, lElse, T_BOOLEAN);
             free(cond);
-            free(emitTAC(tac, pScope, p->opr.op[1]));
+            free(emitTAC(ctx, tac, pScope, p->opr.op[1]));
             if (p->opr.nops > 2) {
-                char *lEnd = newLabel();
-                tacEmit(tac, TAC_GOTO, NULL, NULL, lEnd, T_INTEGER);
-                tacEmit(tac, TAC_LABEL, NULL, NULL, lElse, T_INTEGER);
-                free(emitTAC(tac, pScope, p->opr.op[2]));
-                tacEmit(tac, TAC_LABEL, NULL, NULL, lEnd, T_INTEGER);
+                char *lEnd = newLabel(ctx);
+                tacEmit(ctx, tac, TAC_GOTO, NULL, NULL, lEnd, T_INTEGER);
+                tacEmit(ctx, tac, TAC_LABEL, NULL, NULL, lElse, T_INTEGER);
+                free(emitTAC(ctx, tac, pScope, p->opr.op[2]));
+                tacEmit(ctx, tac, TAC_LABEL, NULL, NULL, lEnd, T_INTEGER);
                 free(lEnd);
             } else {
-                tacEmit(tac, TAC_LABEL, NULL, NULL, lElse, T_INTEGER);
+                tacEmit(ctx, tac, TAC_LABEL, NULL, NULL, lElse, T_INTEGER);
             }
             free(lElse);
             return NULL;
         }
 
         case T_KW_PRINT: {
-            char *v = emitTAC(tac, pScope, p->opr.op[0]);
-            tacEmit(tac, TAC_PRINT, v, NULL, NULL, p->opr.op[0]->type1);
+            char *v = emitTAC(ctx, tac, pScope, p->opr.op[0]);
+            tacEmit(ctx, tac, TAC_PRINT, v, NULL, NULL, p->opr.op[0]->type1);
             free(v);
             return NULL;
         }
@@ -399,41 +406,41 @@ static char *emitTAC(TACList *tac, Scope *pScope, nodeType *p)
             nodeType *dst = p->opr.op[0];
             if (dst->type0 == T_ARRAY) {
                 HashTable Dati = {0};
-                if (scopeFind(pScope, dst->id.name, &Dati)) {
-                    char *off = emitArrayOffset(tac, pScope, dst, &Dati);
-                    char *tmp = newTemp();
-                    tacEmit(tac, TAC_READ, NULL, NULL, tmp, dst->type1);
-                    tacEmit(tac, TAC_STORE_IDX, off, tmp, dst->id.name, dst->type1);
+                if (scopeFind(ctx, pScope, dst->id.name, &Dati)) {
+                    char *off = emitArrayOffset(ctx, tac, pScope, dst, &Dati);
+                    char *tmp = newTemp(ctx);
+                    tacEmit(ctx, tac, TAC_READ, NULL, NULL, tmp, dst->type1);
+                    tacEmit(ctx, tac, TAC_STORE_IDX, off, tmp, dst->id.name, dst->type1);
                     free(off);
                     free(tmp);
                 }
             } else {
-                tacEmit(tac, TAC_READ, NULL, NULL, dst->id.name, dst->type1);
+                tacEmit(ctx, tac, TAC_READ, NULL, NULL, dst->id.name, dst->type1);
             }
             return NULL;
         }
 
         case T_OP_ASSIGN: {
             nodeType *lhs = p->opr.op[0];
-            char *rhs = emitTAC(tac, pScope, p->opr.op[1]);
+            char *rhs = emitTAC(ctx, tac, pScope, p->opr.op[1]);
             if (lhs->type0 == T_ARRAY) {
                 HashTable Dati = {0};
-                if (scopeFind(pScope, lhs->id.name, &Dati)) {
-                    char *off = emitArrayOffset(tac, pScope, lhs, &Dati);
-                    tacEmit(tac, TAC_STORE_IDX, off, rhs, lhs->id.name, lhs->type1);
+                if (scopeFind(ctx, pScope, lhs->id.name, &Dati)) {
+                    char *off = emitArrayOffset(ctx, tac, pScope, lhs, &Dati);
+                    tacEmit(ctx, tac, TAC_STORE_IDX, off, rhs, lhs->id.name, lhs->type1);
                     free(off);
                 }
             } else {
-                tacEmit(tac, TAC_ASSIGN, rhs, NULL, lhs->id.name, lhs->type1);
+                tacEmit(ctx, tac, TAC_ASSIGN, rhs, NULL, lhs->id.name, lhs->type1);
             }
             return rhs;
         }
 
         case T_OP_UMINUS:
         case T_OP_NOT: {
-            char *a = emitTAC(tac, pScope, p->opr.op[0]);
-            char *t = newTemp();
-            tacEmit(tac, (p->opr.oper == T_OP_UMINUS) ? TAC_NEG : TAC_NOT, a, NULL, t, p->type1);
+            char *a = emitTAC(ctx, tac, pScope, p->opr.op[0]);
+            char *t = newTemp(ctx);
+            tacEmit(ctx, tac, (p->opr.oper == T_OP_UMINUS) ? TAC_NEG : TAC_NOT, a, NULL, t, p->type1);
             free(a);
             return t;
         }
@@ -456,10 +463,10 @@ static char *emitTAC(TACList *tac, Scope *pScope, nodeType *p)
                 case T_OP_OR:    op = TAC_OR;  break;
                 default: return NULL;
             }
-            l = emitTAC(tac, pScope, p->opr.op[0]);
-            r = emitTAC(tac, pScope, p->opr.op[1]);
-            t = newTemp();
-            tacEmit(tac, op, l, r, t, p->type1);
+            l = emitTAC(ctx, tac, pScope, p->opr.op[0]);
+            r = emitTAC(ctx, tac, pScope, p->opr.op[1]);
+            t = newTemp(ctx);
+            tacEmit(ctx, tac, op, l, r, t, p->type1);
             free(l);
             free(r);
             return t;
@@ -486,11 +493,11 @@ typedef struct {
     int numBlocks;
 } CFG;
 
-static void tacCompact(TACList *tac);
-static void cfgBuild(const TACList *tac, CFG *cfg);
-static void cfgFree(CFG *cfg);
-static int cfgEliminateUnreachable(TACList *tac, CFG *cfg);
-static int cfgGlobalLivenessDCE(TACList *tac, const CFG *cfg);
+static void tacCompact(CompilerContext *ctx, TACList *tac);
+static void cfgBuild(CompilerContext *ctx, const TACList *tac, CFG *cfg);
+static void cfgFree(CompilerContext *ctx, CFG *cfg);
+static int cfgEliminateUnreachable(CompilerContext *ctx, TACList *tac, CFG *cfg);
+static int cfgGlobalLivenessDCE(CompilerContext *ctx, TACList *tac, const CFG *cfg);
 
 /* =========================================================================
  * PASSAGGIO 3: Ottimizzatore -O1 su TACList
@@ -507,8 +514,9 @@ typedef struct {
     int capacity;
 } CopyEnv;
 
-static void envClear(CopyEnv *env)
+static void envClear(CompilerContext *ctx, CopyEnv *env)
 {
+	(void)ctx;
     int i;
     for (i = 0; i < env->count; i++) {
         free(env->items[i].var);
@@ -517,16 +525,17 @@ static void envClear(CopyEnv *env)
     env->count = 0;
 }
 
-static void envFree(CopyEnv *env)
+static void envFree(CompilerContext *ctx, CopyEnv *env)
 {
-    envClear(env);
+    envClear(ctx, env);
     free(env->items);
     env->items = NULL;
     env->capacity = 0;
 }
 
-static const char *envLookup(const CopyEnv *env, const char *name)
+static const char *envLookup(CompilerContext *ctx, const CopyEnv *env, const char *name)
 {
+	(void)ctx;
     int i;
     if (!name) return NULL;
     for (i = env->count - 1; i >= 0; i--) {
@@ -536,7 +545,7 @@ static const char *envLookup(const CopyEnv *env, const char *name)
     return NULL;
 }
 
-static void envSet(CopyEnv *env, const char *var, const char *val)
+static void envSet(CompilerContext *ctx, CopyEnv *env, const char *var, const char *val)
 {
     int i;
     /* Invalida vecchie mappature che definivano o usavano `var` */
@@ -557,13 +566,14 @@ static void envSet(CopyEnv *env, const char *var, const char *val)
         env->items = n;
         env->capacity = newCap;
     }
-    env->items[env->count].var = tacStrdup(var);
-    env->items[env->count].val = tacStrdup(val);
+    env->items[env->count].var = tacStrdup(ctx, var);
+    env->items[env->count].val = tacStrdup(ctx, val);
     env->count++;
 }
 
-static int isNumericLit(const char *s, double *outVal, int *isInt)
+static int isNumericLit(CompilerContext *ctx, const char *s, double *outVal, int *isInt)
 {
+	(void)ctx;
     char *end = NULL;
     double d;
     if (!s || !*s) return 0;
@@ -575,16 +585,18 @@ static int isNumericLit(const char *s, double *outVal, int *isInt)
     return 1;
 }
 
-static int isBoolLit(const char *s, int *outBool)
+static int isBoolLit(CompilerContext *ctx, const char *s, int *outBool)
 {
+	(void)ctx;
     if (!s) return 0;
     if (strcmp(s, "true") == 0)  { *outBool = 1; return 1; }
     if (strcmp(s, "false") == 0) { *outBool = 0; return 1; }
     return 0;
 }
 
-static int countUses(const TACList *tac, const char *name)
+static int countUses(CompilerContext *ctx, const TACList *tac, const char *name)
 {
+	(void)ctx;
     int i, uses = 0;
     for (i = 0; i < tac->count; i++) {
         const TACInstr *in = &tac->items[i];
@@ -596,8 +608,9 @@ static int countUses(const TACList *tac, const char *name)
     return uses;
 }
 
-static int countLabelRefs(const TACList *tac, const char *label)
+static int countLabelRefs(CompilerContext *ctx, const TACList *tac, const char *label)
 {
+	(void)ctx;
     int i, refs = 0;
     for (i = 0; i < tac->count; i++) {
         const TACInstr *in = &tac->items[i];
@@ -610,7 +623,7 @@ static int countLabelRefs(const TACList *tac, const char *label)
     return refs;
 }
 
-void tacOptimizeO1(TACList *tac)
+void tacOptimizeO1(CompilerContext *ctx, TACList *tac)
 {
     CopyEnv env;
     int changed;
@@ -621,7 +634,7 @@ void tacOptimizeO1(TACList *tac)
     do {
         int i;
         changed = 0;
-        envClear(&env);
+        envClear(ctx, &env);
 
         /* 1) Propagazione locale + Folding + Semplificazioni algebriche */
         for (i = 0; i < tac->count; i++) {
@@ -634,15 +647,15 @@ void tacOptimizeO1(TACList *tac)
             if (in->op == TAC_LABEL || in->op == TAC_GOTO ||
                 in->op == TAC_IF_FALSE || in->op == TAC_IF_TRUE) {
                 if ((in->op == TAC_IF_FALSE || in->op == TAC_IF_TRUE) && in->arg1) {
-                    const char *rep = envLookup(&env, in->arg1);
+                    const char *rep = envLookup(ctx, &env, in->arg1);
                     if (rep && strcmp(rep, in->arg1) != 0) {
                         free(in->arg1);
-                        in->arg1 = tacStrdup(rep);
+                        in->arg1 = tacStrdup(ctx, rep);
                         changed = 1;
                     }
                     /* Semplifica salti con condizione costante */
-                    if (isBoolLit(in->arg1, &b1) ||
-                        (isNumericLit(in->arg1, &d1, &i1) && ((b1 = (d1 != 0.0)), 1))) {
+                    if (isBoolLit(ctx, in->arg1, &b1) ||
+                        (isNumericLit(ctx, in->arg1, &d1, &i1) && ((b1 = (d1 != 0.0)), 1))) {
                         int takeJump = (in->op == TAC_IF_TRUE) ? b1 : !b1;
                         free(in->arg1);
                         in->arg1 = NULL;
@@ -651,30 +664,30 @@ void tacOptimizeO1(TACList *tac)
                         changed = 1;
                     }
                 }
-                envClear(&env);
+                envClear(ctx, &env);
                 continue;
             }
 
             if (in->arg1) {
-                const char *rep = envLookup(&env, in->arg1);
+                const char *rep = envLookup(ctx, &env, in->arg1);
                 if (rep && strcmp(rep, in->arg1) != 0) {
                     free(in->arg1);
-                    in->arg1 = tacStrdup(rep);
+                    in->arg1 = tacStrdup(ctx, rep);
                     changed = 1;
                 }
             }
             if (in->arg2) {
-                const char *rep = envLookup(&env, in->arg2);
+                const char *rep = envLookup(ctx, &env, in->arg2);
                 if (rep && strcmp(rep, in->arg2) != 0) {
                     free(in->arg2);
-                    in->arg2 = tacStrdup(rep);
+                    in->arg2 = tacStrdup(ctx, rep);
                     changed = 1;
                 }
             }
 
             /* Constant folding su operatori binari aritmetici e relazionali */
             if ((in->op >= TAC_ADD && in->op <= TAC_NE) &&
-                isNumericLit(in->arg1, &d1, &i1) && isNumericLit(in->arg2, &d2, &i2)) {
+                isNumericLit(ctx, in->arg1, &d1, &i1) && isNumericLit(ctx, in->arg2, &d2, &i2)) {
                 char buf[64];
                 int ok = 1;
                 //int isInt = i1 && i2;
@@ -708,7 +721,7 @@ void tacOptimizeO1(TACList *tac)
                     free(in->arg1);
                     free(in->arg2);
                     in->op = TAC_ASSIGN;
-                    in->arg1 = tacStrdup(buf);
+                    in->arg1 = tacStrdup(ctx, buf);
                     in->arg2 = NULL;
                     changed = 1;
                 }
@@ -716,58 +729,58 @@ void tacOptimizeO1(TACList *tac)
 
             /* Semplificazioni algebriche sul TAC (es. x * 1 -> x, x + 0 -> x, x * 0 -> 0) */
             if (in->op == TAC_ADD || in->op == TAC_SUB) {
-                if (isNumericLit(in->arg2, &d2, &i2) && d2 == 0.0) {
+                if (isNumericLit(ctx, in->arg2, &d2, &i2) && d2 == 0.0) {
                     free(in->arg2); in->arg2 = NULL;
                     in->op = TAC_ASSIGN; changed = 1;
-                } else if (in->op == TAC_ADD && isNumericLit(in->arg1, &d1, &i1) && d1 == 0.0) {
+                } else if (in->op == TAC_ADD && isNumericLit(ctx, in->arg1, &d1, &i1) && d1 == 0.0) {
                     free(in->arg1); in->arg1 = in->arg2; in->arg2 = NULL;
                     in->op = TAC_ASSIGN; changed = 1;
                 }
             } else if (in->op == TAC_MUL) {
-                if (isNumericLit(in->arg2, &d2, &i2) && d2 == 1.0) {
+                if (isNumericLit(ctx, in->arg2, &d2, &i2) && d2 == 1.0) {
                     free(in->arg2); in->arg2 = NULL;
                     in->op = TAC_ASSIGN; changed = 1;
-                } else if (isNumericLit(in->arg1, &d1, &i1) && d1 == 1.0) {
+                } else if (isNumericLit(ctx, in->arg1, &d1, &i1) && d1 == 1.0) {
                     free(in->arg1); in->arg1 = in->arg2; in->arg2 = NULL;
                     in->op = TAC_ASSIGN; changed = 1;
-                } else if ((isNumericLit(in->arg1, &d1, &i1) && d1 == 0.0) ||
-                           (isNumericLit(in->arg2, &d2, &i2) && d2 == 0.0)) {
+                } else if ((isNumericLit(ctx, in->arg1, &d1, &i1) && d1 == 0.0) ||
+                           (isNumericLit(ctx, in->arg2, &d2, &i2) && d2 == 0.0)) {
                     free(in->arg1); free(in->arg2);
                     in->op = TAC_ASSIGN;
-                    in->arg1 = tacStrdup("0");
+                    in->arg1 = tacStrdup(ctx, "0");
                     in->arg2 = NULL;
                     changed = 1;
                 }
-            } else if (in->op == TAC_DIV && isNumericLit(in->arg2, &d2, &i2) && d2 == 1.0) {
+            } else if (in->op == TAC_DIV && isNumericLit(ctx, in->arg2, &d2, &i2) && d2 == 1.0) {
                 free(in->arg2); in->arg2 = NULL;
                 in->op = TAC_ASSIGN; changed = 1;
             }
 
             /* Folding logico AND / OR */
             if ((in->op == TAC_AND || in->op == TAC_OR) &&
-                (isBoolLit(in->arg1, &b1) || (isNumericLit(in->arg1, &d1, &i1) && ((b1 = (d1 != 0.0)), 1))) &&
-                (isBoolLit(in->arg2, &b2) || (isNumericLit(in->arg2, &d2, &i2) && ((b2 = (d2 != 0.0)), 1)))) {
+                (isBoolLit(ctx, in->arg1, &b1) || (isNumericLit(ctx, in->arg1, &d1, &i1) && ((b1 = (d1 != 0.0)), 1))) &&
+                (isBoolLit(ctx, in->arg2, &b2) || (isNumericLit(ctx, in->arg2, &d2, &i2) && ((b2 = (d2 != 0.0)), 1)))) {
                 int br = (in->op == TAC_AND) ? (b1 && b2) : (b1 || b2);
                 free(in->arg1); free(in->arg2);
                 in->op = TAC_ASSIGN;
-                in->arg1 = tacStrdup(br ? "true" : "false");
+                in->arg1 = tacStrdup(ctx, br ? "true" : "false");
                 in->arg2 = NULL;
                 changed = 1;
             }
 
             /* Folding unario NEG / NOT */
-            if (in->op == TAC_NEG && isNumericLit(in->arg1, &d1, &i1)) {
+            if (in->op == TAC_NEG && isNumericLit(ctx, in->arg1, &d1, &i1)) {
                 char buf[64];
                 if (i1) sprintf(buf, "%d", -(int)d1);
                 else    sprintf(buf, "%.15g", -d1);
                 free(in->arg1);
                 in->op = TAC_ASSIGN;
-                in->arg1 = tacStrdup(buf);
+                in->arg1 = tacStrdup(ctx, buf);
                 changed = 1;
-            } else if (in->op == TAC_NOT && isBoolLit(in->arg1, &b1)) {
+            } else if (in->op == TAC_NOT && isBoolLit(ctx, in->arg1, &b1)) {
                 free(in->arg1);
                 in->op = TAC_ASSIGN;
-                in->arg1 = tacStrdup(b1 ? "false" : "true");
+                in->arg1 = tacStrdup(ctx, b1 ? "false" : "true");
                 changed = 1;
             }
 
@@ -777,10 +790,10 @@ void tacOptimizeO1(TACList *tac)
                     in->dead = 1;
                     changed = 1;
                 } else {
-                    envSet(&env, in->res, in->arg1);
+                    envSet(ctx, &env, in->res, in->arg1);
                 }
             } else if (in->res && in->op != TAC_STORE_IDX) {
-                envSet(&env, in->res, NULL);
+                envSet(ctx, &env, in->res, NULL);
             }
         }
 
@@ -791,7 +804,7 @@ void tacOptimizeO1(TACList *tac)
             if (in->res && in->op != TAC_LABEL && in->op != TAC_GOTO &&
                 in->op != TAC_IF_FALSE && in->op != TAC_IF_TRUE &&
                 in->op != TAC_STORE_IDX && in->op != TAC_READ) {
-                if (countUses(tac, in->res) == 0) {
+                if (countUses(ctx, tac, in->res) == 0) {
                     in->dead = 1;
                     changed = 1;
                 }
@@ -813,29 +826,30 @@ void tacOptimizeO1(TACList *tac)
         }
         for (i = 0; i < tac->count; i++) {
             if (!tac->items[i].dead && tac->items[i].op == TAC_LABEL &&
-                countLabelRefs(tac, tac->items[i].res) == 0) {
+                countLabelRefs(ctx, tac, tac->items[i].res) == 0) {
                 tac->items[i].dead = 1;
                 changed = 1;
             }
         }
 
         /* 4) CFG: eliminazione codice irraggiungibile e liveness DCE globale */
-        tacCompact(tac);
+        tacCompact(ctx, tac);
         if (tac->count > 0) {
             CFG cfg;
-            cfgBuild(tac, &cfg);
-            if (cfgEliminateUnreachable(tac, &cfg)) changed = 1;
-            if (cfgGlobalLivenessDCE(tac, &cfg))    changed = 1;
-            cfgFree(&cfg);
+            cfgBuild(ctx, tac, &cfg);
+            if (cfgEliminateUnreachable(ctx, tac, &cfg)) changed = 1;
+            if (cfgGlobalLivenessDCE(ctx, tac, &cfg))    changed = 1;
+            cfgFree(ctx, &cfg);
         }
     } while (changed);
 
-    tacCompact(tac);
-    envFree(&env);
+    tacCompact(ctx, tac);
+    envFree(ctx, &env);
 }
 
-void tacPrint(const TACList *list)
+void tacPrint(CompilerContext *ctx, const TACList *list)
 {
+	(void)ctx;
     int i;
     for (i = 0; i < list->count; i++) {
         const TACInstr *in = &list->items[i];
@@ -868,54 +882,55 @@ void tacPrint(const TACList *list)
     }
 }
 
-void tacBuild(nodeType **ppTree, Scope *pScope, int optLevel, TACList *outTac)
+void tacBuild(CompilerContext *ctx, nodeType **ppTree, Scope *pScope, int optLevel, TACList *outTac)
 {
     nodeType *pTree = ppTree ? *ppTree : NULL;
 
     s_label = 1;
     s_temp = 1;
-    tacInit(outTac);
+    tacInit(ctx, outTac);
 
     if (!pTree) {
         return;
     }
 
     if (optLevel >= 1) {
-        pTree = tacOptimizeAST(pTree);
+        pTree = tacOptimizeAST(ctx, pTree);
         if (ppTree) {
             *ppTree = pTree;
         }
     }
 
-    free(emitTAC(outTac, pScope, pTree));
+    free(emitTAC(ctx, outTac, pScope, pTree));
 
     if (optLevel >= 1) {
-        tacOptimizeO1(outTac);
+        tacOptimizeO1(ctx, outTac);
     }
 
     if (optLevel >= 2) {
-        tacOptimizeO2(outTac);
+        tacOptimizeO2(ctx, outTac);
     }
 
     if (optLevel >= 3) {
-        tacOptimizeO3(outTac);
+        tacOptimizeO3(ctx, outTac);
     }
 }
 
-void tacGenerate(nodeType *pTree, Scope *pScope, int optLevel)
+void tacGenerate(CompilerContext *ctx, nodeType *pTree, Scope *pScope, int optLevel)
 {
     TACList tac;
-    tacBuild(&pTree, pScope, optLevel, &tac);
-    tacPrint(&tac);
-    tacFree(&tac);
+    tacBuild(ctx, &pTree, pScope, optLevel, &tac);
+    tacPrint(ctx, &tac);
+    tacFree(ctx, &tac);
 }
 
 /* =========================================================================
  * PASSAGGIO 4: Ottimizzatore -O2 (Basic Blocks, CFG, CSE, Global Liveness)
  * ========================================================================= */
 
-static void tacCompact(TACList *tac)
+static void tacCompact(CompilerContext *ctx, TACList *tac)
 {
+	(void)ctx;
     int i, w = 0;
     for (i = 0; i < tac->count; i++) {
         if (tac->items[i].dead) {
@@ -932,8 +947,9 @@ static void tacCompact(TACList *tac)
     tac->count = w;
 }
 
-static void addIntUnique(int **arr, int *count, int *cap, int val)
+static void addIntUnique(CompilerContext *ctx, int **arr, int *count, int *cap, int val)
 {
+	(void)ctx;
     int i;
     for (i = 0; i < *count; i++) {
         if ((*arr)[i] == val) return;
@@ -948,14 +964,15 @@ static void addIntUnique(int **arr, int *count, int *cap, int val)
     (*arr)[(*count)++] = val;
 }
 
-static void cfgAddEdge(CFG *cfg, int from, int to)
+static void cfgAddEdge(CompilerContext *ctx, CFG *cfg, int from, int to)
 {
-    addIntUnique(&cfg->blocks[from].succs, &cfg->blocks[from].numSuccs, &cfg->blocks[from].capSuccs, to);
-    addIntUnique(&cfg->blocks[to].preds,   &cfg->blocks[to].numPreds,   &cfg->blocks[to].capPreds,   from);
+    addIntUnique(ctx, &cfg->blocks[from].succs, &cfg->blocks[from].numSuccs, &cfg->blocks[from].capSuccs, to);
+    addIntUnique(ctx, &cfg->blocks[to].preds,   &cfg->blocks[to].numPreds,   &cfg->blocks[to].capPreds,   from);
 }
 
-static int cfgFindBlockByLabel(const TACList *tac, const CFG *cfg, const char *label)
+static int cfgFindBlockByLabel(CompilerContext *ctx, const TACList *tac, const CFG *cfg, const char *label)
 {
+	(void)ctx;
     int b;
     if (!label) return -1;
     for (b = 0; b < cfg->numBlocks; b++) {
@@ -967,7 +984,7 @@ static int cfgFindBlockByLabel(const TACList *tac, const CFG *cfg, const char *l
     return -1;
 }
 
-static void cfgBuild(const TACList *tac, CFG *cfg)
+static void cfgBuild(CompilerContext *ctx, const TACList *tac, CFG *cfg)
 {
     int i, b;
     int *isLeader;
@@ -1017,20 +1034,21 @@ static void cfgBuild(const TACList *tac, CFG *cfg)
     for (b = 0; b < cfg->numBlocks; b++) {
         const TACInstr *last = &tac->items[cfg->blocks[b].end];
         if (last->op == TAC_GOTO) {
-            int target = cfgFindBlockByLabel(tac, cfg, last->res);
-            if (target >= 0) cfgAddEdge(cfg, b, target);
+            int target = cfgFindBlockByLabel(ctx, tac, cfg, last->res);
+            if (target >= 0) cfgAddEdge(ctx, cfg, b, target);
         } else if (last->op == TAC_IF_FALSE || last->op == TAC_IF_TRUE) {
-            int target = cfgFindBlockByLabel(tac, cfg, last->res);
-            if (b + 1 < cfg->numBlocks) cfgAddEdge(cfg, b, b + 1);
-            if (target >= 0) cfgAddEdge(cfg, b, target);
+            int target = cfgFindBlockByLabel(ctx, tac, cfg, last->res);
+            if (b + 1 < cfg->numBlocks) cfgAddEdge(ctx, cfg, b, b + 1);
+            if (target >= 0) cfgAddEdge(ctx, cfg, b, target);
         } else {
-            if (b + 1 < cfg->numBlocks) cfgAddEdge(cfg, b, b + 1);
+            if (b + 1 < cfg->numBlocks) cfgAddEdge(ctx, cfg, b, b + 1);
         }
     }
 }
 
-static void cfgFree(CFG *cfg)
+static void cfgFree(CompilerContext *ctx, CFG *cfg)
 {
+	(void)ctx;
     int b;
     for (b = 0; b < cfg->numBlocks; b++) {
         free(cfg->blocks[b].preds);
@@ -1041,22 +1059,22 @@ static void cfgFree(CFG *cfg)
     cfg->numBlocks = 0;
 }
 
-static void cfgMarkReachableDFS(CFG *cfg, int b)
+static void cfgMarkReachableDFS(CompilerContext *ctx, CFG *cfg, int b)
 {
     int i;
     if (cfg->blocks[b].reachable) return;
     cfg->blocks[b].reachable = 1;
     for (i = 0; i < cfg->blocks[b].numSuccs; i++) {
-        cfgMarkReachableDFS(cfg, cfg->blocks[b].succs[i]);
+        cfgMarkReachableDFS(ctx, cfg, cfg->blocks[b].succs[i]);
     }
 }
 
-static int cfgEliminateUnreachable(TACList *tac, CFG *cfg)
+static int cfgEliminateUnreachable(CompilerContext *ctx, TACList *tac, CFG *cfg)
 {
     int b, i, changed = 0;
     if (cfg->numBlocks == 0) return 0;
 
-    cfgMarkReachableDFS(cfg, 0);
+    cfgMarkReachableDFS(ctx, cfg, 0);
     for (b = 0; b < cfg->numBlocks; b++) {
         if (!cfg->blocks[b].reachable) {
             for (i = cfg->blocks[b].start; i <= cfg->blocks[b].end; i++) {
@@ -1079,20 +1097,22 @@ typedef struct {
     char *holder;
 } ExprEntry;
 
-static int isPureExprOp(TACOp op)
+static int isPureExprOp(CompilerContext *ctx, TACOp op)
 {
+	(void)ctx;
     return (op == TAC_NEG || op == TAC_NOT || (op >= TAC_ADD && op <= TAC_OR));
 }
 
-static int isCommutativeOp(TACOp op)
+static int isCommutativeOp(CompilerContext *ctx, TACOp op)
 {
+	(void)ctx;
     return (op == TAC_ADD || op == TAC_MUL || op == TAC_EQ ||
             op == TAC_NE  || op == TAC_AND || op == TAC_OR);
 }
 
-static void canonicalArgs(TACOp op, const char *a1, const char *a2, const char **o1, const char **o2)
+static void canonicalArgs(CompilerContext *ctx, TACOp op, const char *a1, const char *a2, const char **o1, const char **o2)
 {
-    if (a2 && isCommutativeOp(op) && strcmp(a1, a2) > 0) {
+    if (a2 && isCommutativeOp(ctx, op) && strcmp(a1, a2) > 0) {
         *o1 = a2;
         *o2 = a1;
     } else {
@@ -1101,21 +1121,23 @@ static void canonicalArgs(TACOp op, const char *a1, const char *a2, const char *
     }
 }
 
-static int strOptEq(const char *a, const char *b)
+static int strOptEq(CompilerContext *ctx, const char *a, const char *b)
 {
+	(void)ctx;
     if (!a && !b) return 1;
     if (!a || !b) return 0;
     return strcmp(a, b) == 0;
 }
 
-static int isScalarWriteOp(TACOp op)
+static int isScalarWriteOp(CompilerContext *ctx, TACOp op)
 {
+	(void)ctx;
     return (op != TAC_LABEL && op != TAC_GOTO &&
             op != TAC_IF_FALSE && op != TAC_IF_TRUE &&
             op != TAC_STORE_IDX && op != TAC_PRINT);
 }
 
-static void cseSimulateBlock(const TACList *tac, const CFG *cfg, int b,
+static void cseSimulateBlock(CompilerContext *ctx, const TACList *tac, const CFG *cfg, int b,
                              const ExprEntry *exprs, int numExprs,
                              const unsigned char *inSet, unsigned char *outSet)
 {
@@ -1128,12 +1150,12 @@ static void cseSimulateBlock(const TACList *tac, const CFG *cfg, int b,
 
         if (in->dead) continue;
 
-        if (isPureExprOp(in->op) && in->res && in->arg1) {
+        if (isPureExprOp(ctx, in->op) && in->res && in->arg1) {
             const char *c1, *c2;
-            canonicalArgs(in->op, in->arg1, in->arg2, &c1, &c2);
+            canonicalArgs(ctx, in->op, in->arg1, in->arg2, &c1, &c2);
             for (e = 0; e < numExprs; e++) {
                 if (outSet[e] && exprs[e].op == in->op &&
-                    strOptEq(exprs[e].arg1, c1) && strOptEq(exprs[e].arg2, c2) &&
+                    strOptEq(ctx, exprs[e].arg1, c1) && strOptEq(ctx, exprs[e].arg2, c2) &&
                     strcmp(exprs[e].holder, in->res) != 0) {
                     matched = 1;
                     break;
@@ -1142,7 +1164,7 @@ static void cseSimulateBlock(const TACList *tac, const CFG *cfg, int b,
         }
 
         /* Se `in->res` viene scritto (non da STORE_IDX), uccide espressioni che lo usano */
-        if (in->res && isScalarWriteOp(in->op)) {
+        if (in->res && isScalarWriteOp(ctx, in->op)) {
             for (e = 0; e < numExprs; e++) {
                 if (!outSet[e]) continue;
                 if (strcmp(exprs[e].holder, in->res) == 0 ||
@@ -1154,13 +1176,13 @@ static void cseSimulateBlock(const TACList *tac, const CFG *cfg, int b,
         }
 
         /* Genera l'espressione solo se non e' gia' stata sostituita e `res` non coincide con gli argomenti */
-        if (!matched && isPureExprOp(in->op) && in->res && in->arg1) {
+        if (!matched && isPureExprOp(ctx, in->op) && in->res && in->arg1) {
             if (strcmp(in->res, in->arg1) != 0 && (!in->arg2 || strcmp(in->res, in->arg2) != 0)) {
                 const char *c1, *c2;
-                canonicalArgs(in->op, in->arg1, in->arg2, &c1, &c2);
+                canonicalArgs(ctx, in->op, in->arg1, in->arg2, &c1, &c2);
                 for (e = 0; e < numExprs; e++) {
                     if (exprs[e].op == in->op &&
-                        strOptEq(exprs[e].arg1, c1) && strOptEq(exprs[e].arg2, c2) &&
+                        strOptEq(ctx, exprs[e].arg1, c1) && strOptEq(ctx, exprs[e].arg2, c2) &&
                         strcmp(exprs[e].holder, in->res) == 0) {
                         outSet[e] = 1;
                         break;
@@ -1171,7 +1193,7 @@ static void cseSimulateBlock(const TACList *tac, const CFG *cfg, int b,
     }
 }
 
-static int cfgGlobalCSE(TACList *tac, const CFG *cfg)
+static int cfgGlobalCSE(CompilerContext *ctx, TACList *tac, const CFG *cfg)
 {
     ExprEntry *exprs = NULL;
     int numExprs = 0, capExprs = 0;
@@ -1182,17 +1204,17 @@ static int cfgGlobalCSE(TACList *tac, const CFG *cfg)
 
     for (i = 0; i < tac->count; i++) {
         const TACInstr *in = &tac->items[i];
-        if (in->dead || !isPureExprOp(in->op) || !in->res || !in->arg1) continue;
+        if (in->dead || !isPureExprOp(ctx, in->op) || !in->res || !in->arg1) continue;
         if (strcmp(in->res, in->arg1) == 0) continue;
         if (in->arg2 && strcmp(in->res, in->arg2) == 0) continue;
 
         {
             const char *c1, *c2;
             int found = 0;
-            canonicalArgs(in->op, in->arg1, in->arg2, &c1, &c2);
+            canonicalArgs(ctx, in->op, in->arg1, in->arg2, &c1, &c2);
             for (e = 0; e < numExprs; e++) {
                 if (exprs[e].op == in->op &&
-                    strOptEq(exprs[e].arg1, c1) && strOptEq(exprs[e].arg2, c2) &&
+                    strOptEq(ctx, exprs[e].arg1, c1) && strOptEq(ctx, exprs[e].arg2, c2) &&
                     strcmp(exprs[e].holder, in->res) == 0) {
                     found = 1;
                     break;
@@ -1207,9 +1229,9 @@ static int cfgGlobalCSE(TACList *tac, const CFG *cfg)
                     capExprs = newCap;
                 }
                 exprs[numExprs].op = in->op;
-                exprs[numExprs].arg1 = tacStrdup(c1);
-                exprs[numExprs].arg2 = tacStrdup(c2);
-                exprs[numExprs].holder = tacStrdup(in->res);
+                exprs[numExprs].arg1 = tacStrdup(ctx, c1);
+                exprs[numExprs].arg2 = tacStrdup(ctx, c2);
+                exprs[numExprs].holder = tacStrdup(ctx, in->res);
                 numExprs++;
             }
         }
@@ -1256,7 +1278,7 @@ static int cfgGlobalCSE(TACList *tac, const CFG *cfg)
                 }
             }
 
-            cseSimulateBlock(tac, cfg, b, exprs, numExprs, inB, curSet);
+            cseSimulateBlock(ctx, tac, cfg, b, exprs, numExprs, inB, curSet);
             if (memcmp(outB, curSet, (size_t)numExprs) != 0) {
                 memcpy(outB, curSet, (size_t)numExprs);
                 dfChanged = 1;
@@ -1273,17 +1295,17 @@ static int cfgGlobalCSE(TACList *tac, const CFG *cfg)
 
             if (in->dead) continue;
 
-            if (isPureExprOp(in->op) && in->res && in->arg1) {
+            if (isPureExprOp(ctx, in->op) && in->res && in->arg1) {
                 const char *c1, *c2;
-                canonicalArgs(in->op, in->arg1, in->arg2, &c1, &c2);
+                canonicalArgs(ctx, in->op, in->arg1, in->arg2, &c1, &c2);
                 for (e = 0; e < numExprs; e++) {
                     if (curSet[e] && exprs[e].op == in->op &&
-                        strOptEq(exprs[e].arg1, c1) && strOptEq(exprs[e].arg2, c2) &&
+                        strOptEq(ctx, exprs[e].arg1, c1) && strOptEq(ctx, exprs[e].arg2, c2) &&
                         strcmp(exprs[e].holder, in->res) != 0) {
                         free(in->arg1);
                         free(in->arg2);
                         in->op = TAC_ASSIGN;
-                        in->arg1 = tacStrdup(exprs[e].holder);
+                        in->arg1 = tacStrdup(ctx, exprs[e].holder);
                         in->arg2 = NULL;
                         replaced = 1;
                         changed = 1;
@@ -1292,7 +1314,7 @@ static int cfgGlobalCSE(TACList *tac, const CFG *cfg)
                 }
             }
 
-            if (in->res && isScalarWriteOp(in->op)) {
+            if (in->res && isScalarWriteOp(ctx, in->op)) {
                 for (e = 0; e < numExprs; e++) {
                     if (!curSet[e]) continue;
                     if (strcmp(exprs[e].holder, in->res) == 0 ||
@@ -1303,13 +1325,13 @@ static int cfgGlobalCSE(TACList *tac, const CFG *cfg)
                 }
             }
 
-            if (!replaced && isPureExprOp(in->op) && in->res && in->arg1) {
+            if (!replaced && isPureExprOp(ctx, in->op) && in->res && in->arg1) {
                 if (strcmp(in->res, in->arg1) != 0 && (!in->arg2 || strcmp(in->res, in->arg2) != 0)) {
                     const char *c1, *c2;
-                    canonicalArgs(in->op, in->arg1, in->arg2, &c1, &c2);
+                    canonicalArgs(ctx, in->op, in->arg1, in->arg2, &c1, &c2);
                     for (e = 0; e < numExprs; e++) {
                         if (exprs[e].op == in->op &&
-                            strOptEq(exprs[e].arg1, c1) && strOptEq(exprs[e].arg2, c2) &&
+                            strOptEq(ctx, exprs[e].arg1, c1) && strOptEq(ctx, exprs[e].arg2, c2) &&
                             strcmp(exprs[e].holder, in->res) == 0) {
                             curSet[e] = 1;
                             break;
@@ -1334,21 +1356,21 @@ static int cfgGlobalCSE(TACList *tac, const CFG *cfg)
 
 /* --- Global Live Variable Analysis (DCE tra rami if/else e cicli) --- */
 
-static int isLiteralStr(const char *s)
+static int isLiteralStr(CompilerContext *ctx, const char *s)
 {
     double d;
     int i, b;
     if (!s || !*s) return 1;
     if (s[0] == '"') return 1;
-    if (isBoolLit(s, &b)) return 1;
-    if (isNumericLit(s, &d, &i)) return 1;
+    if (isBoolLit(ctx, s, &b)) return 1;
+    if (isNumericLit(ctx, s, &d, &i)) return 1;
     return 0;
 }
 
-static int findOrAddVar(char ***vars, int *numVars, int *capVars, const char *name, int allowAdd)
+static int findOrAddVar(CompilerContext *ctx, char ***vars, int *numVars, int *capVars, const char *name, int allowAdd)
 {
     int i;
-    if (!name || isLiteralStr(name)) return -1;
+    if (!name || isLiteralStr(ctx, name)) return -1;
     for (i = 0; i < *numVars; i++) {
         if (strcmp((*vars)[i], name) == 0) return i;
     }
@@ -1360,11 +1382,11 @@ static int findOrAddVar(char ***vars, int *numVars, int *capVars, const char *na
         *vars = n;
         *capVars = newCap;
     }
-    (*vars)[*numVars] = tacStrdup(name);
+    (*vars)[*numVars] = tacStrdup(ctx, name);
     return (*numVars)++;
 }
 
-static void cfgComputeLiveness(const TACList *tac, const CFG *cfg,
+static void cfgComputeLiveness(CompilerContext *ctx, const TACList *tac, const CFG *cfg,
                                char ***outVars, int *outNumVars,
                                unsigned char **outInSets, unsigned char **outOutSets)
 {
@@ -1383,10 +1405,10 @@ static void cfgComputeLiveness(const TACList *tac, const CFG *cfg,
     for (i = 0; i < tac->count; i++) {
         const TACInstr *in = &tac->items[i];
         if (in->dead) continue;
-        findOrAddVar(&vars, &numVars, &capVars, in->arg1, 1);
-        findOrAddVar(&vars, &numVars, &capVars, in->arg2, 1);
-        if (in->res && (isScalarWriteOp(in->op) || in->op == TAC_STORE_IDX)) {
-            findOrAddVar(&vars, &numVars, &capVars, in->res, 1);
+        findOrAddVar(ctx, &vars, &numVars, &capVars, in->arg1, 1);
+        findOrAddVar(ctx, &vars, &numVars, &capVars, in->arg2, 1);
+        if (in->res && (isScalarWriteOp(ctx, in->op) || in->op == TAC_STORE_IDX)) {
+            findOrAddVar(ctx, &vars, &numVars, &capVars, in->res, 1);
         }
     }
 
@@ -1412,17 +1434,17 @@ static void cfgComputeLiveness(const TACList *tac, const CFG *cfg,
             int id;
             if (in->dead) continue;
 
-            id = findOrAddVar(&vars, &numVars, &capVars, in->arg1, 0);
+            id = findOrAddVar(ctx, &vars, &numVars, &capVars, in->arg1, 0);
             if (id >= 0 && !defB[id]) useB[id] = 1;
 
-            id = findOrAddVar(&vars, &numVars, &capVars, in->arg2, 0);
+            id = findOrAddVar(ctx, &vars, &numVars, &capVars, in->arg2, 0);
             if (id >= 0 && !defB[id]) useB[id] = 1;
 
             if (in->op == TAC_STORE_IDX) {
-                id = findOrAddVar(&vars, &numVars, &capVars, in->res, 0);
+                id = findOrAddVar(ctx, &vars, &numVars, &capVars, in->res, 0);
                 if (id >= 0 && !defB[id]) useB[id] = 1;
-            } else if (in->res && isScalarWriteOp(in->op)) {
-                id = findOrAddVar(&vars, &numVars, &capVars, in->res, 0);
+            } else if (in->res && isScalarWriteOp(ctx, in->op)) {
+                id = findOrAddVar(ctx, &vars, &numVars, &capVars, in->res, 0);
                 if (id >= 0) defB[id] = 1;
             }
         }
@@ -1464,14 +1486,14 @@ static void cfgComputeLiveness(const TACList *tac, const CFG *cfg,
     *outOutSets = outSets;
 }
 
-static int cfgGlobalLivenessDCE(TACList *tac, const CFG *cfg)
+static int cfgGlobalLivenessDCE(CompilerContext *ctx, TACList *tac, const CFG *cfg)
 {
     char **vars = NULL;
     int numVars = 0;
     unsigned char *inSets = NULL, *outSets = NULL, *live = NULL;
     int i, b, v, changed = 0;
 
-    cfgComputeLiveness(tac, cfg, &vars, &numVars, &inSets, &outSets);
+    cfgComputeLiveness(ctx, tac, cfg, &vars, &numVars, &inSets, &outSets);
     if (numVars == 0) return 0;
 
     live = (unsigned char *)malloc((size_t)numVars);
@@ -1489,8 +1511,8 @@ static int cfgGlobalLivenessDCE(TACList *tac, const CFG *cfg)
             int id;
             if (in->dead) continue;
 
-            if (in->res && isScalarWriteOp(in->op) && in->op != TAC_READ) {
-                id = findOrAddVar(&vars, &numVars, &numVars, in->res, 0);
+            if (in->res && isScalarWriteOp(ctx, in->op) && in->op != TAC_READ) {
+                id = findOrAddVar(ctx, &vars, &numVars, &numVars, in->res, 0);
                 if (id >= 0 && !live[id]) {
                     in->dead = 1;
                     changed = 1;
@@ -1498,18 +1520,18 @@ static int cfgGlobalLivenessDCE(TACList *tac, const CFG *cfg)
                 }
             }
 
-            if (in->res && isScalarWriteOp(in->op)) {
-                id = findOrAddVar(&vars, &numVars, &numVars, in->res, 0);
+            if (in->res && isScalarWriteOp(ctx, in->op)) {
+                id = findOrAddVar(ctx, &vars, &numVars, &numVars, in->res, 0);
                 if (id >= 0) live[id] = 0;
             }
-            id = findOrAddVar(&vars, &numVars, &numVars, in->arg1, 0);
+            id = findOrAddVar(ctx, &vars, &numVars, &numVars, in->arg1, 0);
             if (id >= 0) live[id] = 1;
 
-            id = findOrAddVar(&vars, &numVars, &numVars, in->arg2, 0);
+            id = findOrAddVar(ctx, &vars, &numVars, &numVars, in->arg2, 0);
             if (id >= 0) live[id] = 1;
 
             if (in->op == TAC_STORE_IDX) {
-                id = findOrAddVar(&vars, &numVars, &numVars, in->res, 0);
+                id = findOrAddVar(ctx, &vars, &numVars, &numVars, in->res, 0);
                 if (id >= 0) live[id] = 1;
             }
         }
@@ -1523,29 +1545,29 @@ static int cfgGlobalLivenessDCE(TACList *tac, const CFG *cfg)
     return changed;
 }
 
-void tacOptimizeO2(TACList *tac)
+void tacOptimizeO2(CompilerContext *ctx, TACList *tac)
 {
     int changed;
     do {
         CFG cfg;
         int stepChanged = 0;
 
-        tacCompact(tac);
+        tacCompact(ctx, tac);
         if (tac->count == 0) break;
 
-        cfgBuild(tac, &cfg);
-        stepChanged |= cfgEliminateUnreachable(tac, &cfg);
-        stepChanged |= cfgGlobalCSE(tac, &cfg);
-        stepChanged |= cfgGlobalLivenessDCE(tac, &cfg);
-        cfgFree(&cfg);
+        cfgBuild(ctx, tac, &cfg);
+        stepChanged |= cfgEliminateUnreachable(ctx, tac, &cfg);
+        stepChanged |= cfgGlobalCSE(ctx, tac, &cfg);
+        stepChanged |= cfgGlobalLivenessDCE(ctx, tac, &cfg);
+        cfgFree(ctx, &cfg);
 
         if (stepChanged) {
-            tacOptimizeO1(tac);
+            tacOptimizeO1(ctx, tac);
         }
         changed = stepChanged;
     } while (changed);
 
-    tacCompact(tac);
+    tacCompact(ctx, tac);
 }
 
 /* =========================================================================
@@ -1553,7 +1575,7 @@ void tacOptimizeO2(TACList *tac)
  *                                LICM su Dominatori, Loop Unrolling)
  * ========================================================================= */
 
-static int tacStrengthReduction(TACList *tac)
+static int tacStrengthReduction(CompilerContext *ctx, TACList *tac)
 {
     CopyEnv negEnv, notEnv;
     int i, changed = 0;
@@ -1570,64 +1592,64 @@ static int tacStrengthReduction(TACList *tac)
 
         if (in->op == TAC_LABEL || in->op == TAC_GOTO ||
             in->op == TAC_IF_FALSE || in->op == TAC_IF_TRUE) {
-            envClear(&negEnv);
-            envClear(&notEnv);
+            envClear(ctx, &negEnv);
+            envClear(ctx, &notEnv);
             continue;
         }
 
         /* Doppio unario: neg(neg x) -> x, not(not x) -> x */
         if (in->op == TAC_NEG && in->arg1) {
-            const char *orig = envLookup(&negEnv, in->arg1);
+            const char *orig = envLookup(ctx, &negEnv, in->arg1);
             if (orig) {
                 free(in->arg1);
                 in->op = TAC_ASSIGN;
-                in->arg1 = tacStrdup(orig);
+                in->arg1 = tacStrdup(ctx, orig);
                 changed = 1;
             }
         } else if (in->op == TAC_NOT && in->arg1) {
-            const char *orig = envLookup(&notEnv, in->arg1);
+            const char *orig = envLookup(ctx, &notEnv, in->arg1);
             if (orig) {
                 free(in->arg1);
                 in->op = TAC_ASSIGN;
-                in->arg1 = tacStrdup(orig);
+                in->arg1 = tacStrdup(ctx, orig);
                 changed = 1;
             }
         }
 
         /* Strength reduction: x * 2 -> x + x, x / 2 (real) -> x * 0.5 */
         if (in->op == TAC_MUL && in->arg1 && in->arg2) {
-            if (isNumericLit(in->arg2, &d2, &i2) && d2 == 2.0 && !isNumericLit(in->arg1, &d1, &i1)) {
+            if (isNumericLit(ctx, in->arg2, &d2, &i2) && d2 == 2.0 && !isNumericLit(ctx, in->arg1, &d1, &i1)) {
                 free(in->arg2);
                 in->op = TAC_ADD;
-                in->arg2 = tacStrdup(in->arg1);
+                in->arg2 = tacStrdup(ctx, in->arg1);
                 changed = 1;
-            } else if (isNumericLit(in->arg1, &d1, &i1) && d1 == 2.0 && !isNumericLit(in->arg2, &d2, &i2)) {
+            } else if (isNumericLit(ctx, in->arg1, &d1, &i1) && d1 == 2.0 && !isNumericLit(ctx, in->arg2, &d2, &i2)) {
                 free(in->arg1);
                 in->op = TAC_ADD;
-                in->arg1 = tacStrdup(in->arg2);
+                in->arg1 = tacStrdup(ctx, in->arg2);
                 changed = 1;
             }
         } else if (in->op == TAC_DIV && in->type1 == T_REAL && in->arg2) {
-            if (isNumericLit(in->arg2, &d2, &i2) && d2 == 2.0) {
+            if (isNumericLit(ctx, in->arg2, &d2, &i2) && d2 == 2.0) {
                 free(in->arg2);
                 in->op = TAC_MUL;
-                in->arg2 = tacStrdup("0.5");
+                in->arg2 = tacStrdup(ctx, "0.5");
                 changed = 1;
             }
         }
 
-        if (in->res && isScalarWriteOp(in->op)) {
-            envSet(&negEnv, in->res, (in->op == TAC_NEG && in->arg1) ? in->arg1 : NULL);
-            envSet(&notEnv, in->res, (in->op == TAC_NOT && in->arg1) ? in->arg1 : NULL);
+        if (in->res && isScalarWriteOp(ctx, in->op)) {
+            envSet(ctx, &negEnv, in->res, (in->op == TAC_NEG && in->arg1) ? in->arg1 : NULL);
+            envSet(ctx, &notEnv, in->res, (in->op == TAC_NOT && in->arg1) ? in->arg1 : NULL);
         }
     }
 
-    envFree(&negEnv);
-    envFree(&notEnv);
+    envFree(ctx, &negEnv);
+    envFree(ctx, &notEnv);
     return changed;
 }
 
-static int cfgJumpThreading(TACList *tac, const CFG *cfg)
+static int cfgJumpThreading(CompilerContext *ctx, TACList *tac, const CFG *cfg)
 {
     int b, i, changed = 0;
 
@@ -1649,7 +1671,7 @@ static int cfgJumpThreading(TACList *tac, const CFG *cfg)
             if ((in->op == TAC_GOTO || in->op == TAC_IF_FALSE || in->op == TAC_IF_TRUE) &&
                 in->res && strcmp(in->res, l1) == 0) {
                 free(in->res);
-                in->res = tacStrdup(l2);
+                in->res = tacStrdup(ctx, l2);
                 changed = 1;
             }
         }
@@ -1659,8 +1681,9 @@ static int cfgJumpThreading(TACList *tac, const CFG *cfg)
 
 /* --- Dominatori e Loop-Invariant Code Motion (LICM) --- */
 
-static unsigned char *cfgComputeDominators(const CFG *cfg)
+static unsigned char *cfgComputeDominators(CompilerContext *ctx, const CFG *cfg)
 {
+	(void)ctx;
     int n = cfg->numBlocks;
     unsigned char *dom, *newDom;
     int b, j, p, changed;
@@ -1706,7 +1729,7 @@ static unsigned char *cfgComputeDominators(const CFG *cfg)
     return dom;
 }
 
-static void tacInsertInstructions(TACList *tac, int pos, const TACInstr *ins, int insCount)
+static void tacInsertInstructions(CompilerContext *ctx, TACList *tac, int pos, const TACInstr *ins, int insCount)
 {
     int i;
     if (insCount <= 0) return;
@@ -1725,16 +1748,16 @@ static void tacInsertInstructions(TACList *tac, int pos, const TACInstr *ins, in
     }
     for (i = 0; i < insCount; i++) {
         tac->items[pos + i].op = ins[i].op;
-        tac->items[pos + i].arg1 = tacStrdup(ins[i].arg1);
-        tac->items[pos + i].arg2 = tacStrdup(ins[i].arg2);
-        tac->items[pos + i].res = tacStrdup(ins[i].res);
+        tac->items[pos + i].arg1 = tacStrdup(ctx, ins[i].arg1);
+        tac->items[pos + i].arg2 = tacStrdup(ctx, ins[i].arg2);
+        tac->items[pos + i].res = tacStrdup(ctx, ins[i].res);
         tac->items[pos + i].type1 = ins[i].type1;
         tac->items[pos + i].dead = 0;
     }
     tac->count += insCount;
 }
 
-static int cfgLICM(TACList *tac, const CFG *cfg)
+static int cfgLICM(CompilerContext *ctx, TACList *tac, const CFG *cfg)
 {
     int n = cfg->numBlocks;
     unsigned char *dom;
@@ -1745,10 +1768,10 @@ static int cfgLICM(TACList *tac, const CFG *cfg)
     int *inLoop = NULL, *stack = NULL;
 
     if (n == 0) return 0;
-    dom = cfgComputeDominators(cfg);
+    dom = cfgComputeDominators(ctx, cfg);
     if (!dom) return 0;
 
-    cfgComputeLiveness(tac, cfg, &vars, &numVars, &liveInSets, &liveOutSets);
+    cfgComputeLiveness(ctx, tac, cfg, &vars, &numVars, &liveInSets, &liveOutSets);
     inLoop = (int *)malloc((size_t)n * sizeof(int));
     stack  = (int *)malloc((size_t)n * sizeof(int));
 
@@ -1811,8 +1834,8 @@ static int cfgLICM(TACList *tac, const CFG *cfg)
             if (!inLoop[b]) continue;
             for (i = cfg->blocks[b].start; i <= cfg->blocks[b].end; i++) {
                 const TACInstr *in = &tac->items[i];
-                if (!in->dead && in->res && isScalarWriteOp(in->op)) {
-                    int id = findOrAddVar(&vars, &numVars, &numVars, in->res, 0);
+                if (!in->dead && in->res && isScalarWriteOp(ctx, in->op)) {
+                    int id = findOrAddVar(ctx, &vars, &numVars, &numVars, in->res, 0);
                     if (id >= 0) defInLoop[id]++;
                 }
             }
@@ -1834,17 +1857,17 @@ static int cfgLICM(TACList *tac, const CFG *cfg)
                 //int i2;
 
                 if (in->dead) continue;
-                if (!isPureExprOp(in->op) && in->op != TAC_ASSIGN) continue;
+                if (!isPureExprOp(ctx, in->op) && in->op != TAC_ASSIGN) continue;
                 if (!in->res || !in->arg1) continue;
                 //if (in->op == TAC_DIV && !(isNumericLit(in->arg2, &d2, &i2) && d2 != 0.0)) continue;
 
-                id1 = findOrAddVar(&vars, &numVars, &numVars, in->arg1, 0);
+                id1 = findOrAddVar(ctx, &vars, &numVars, &numVars, in->arg1, 0);
                 if (id1 >= 0 && defInLoop[id1] > 0) continue;
 
-                id2 = findOrAddVar(&vars, &numVars, &numVars, in->arg2, 0);
+                id2 = findOrAddVar(ctx, &vars, &numVars, &numVars, in->arg2, 0);
                 if (id2 >= 0 && defInLoop[id2] > 0) continue;
 
-                resId = findOrAddVar(&vars, &numVars, &numVars, in->res, 0);
+                resId = findOrAddVar(ctx, &vars, &numVars, &numVars, in->res, 0);
                 if (resId < 0 || defInLoop[resId] != 1) continue;
 
                 /* Verifica che res non sia letto prima di `i` in `b` */
@@ -1909,8 +1932,8 @@ static int cfgLICM(TACList *tac, const CFG *cfg)
 
         if (hoistCount > 0) {
             int hdrStart = cfg->blocks[h].start;
-            char *hdrLabel = tacStrdup(tac->items[hdrStart].res);
-            char *preLabel = newLabel();
+            char *hdrLabel = tacStrdup(ctx, tac->items[hdrStart].res);
+            char *preLabel = newLabel(ctx);
             TACInstr *preIns = (TACInstr *)calloc((size_t)(1 + hoistCount), sizeof(TACInstr));
 
             if (preIns && hdrLabel && preLabel) {
@@ -1923,7 +1946,7 @@ static int cfgLICM(TACList *tac, const CFG *cfg)
                             (in->op == TAC_GOTO || in->op == TAC_IF_FALSE || in->op == TAC_IF_TRUE) &&
                             in->res && strcmp(in->res, hdrLabel) == 0) {
                             free(in->res);
-                            in->res = tacStrdup(preLabel);
+                            in->res = tacStrdup(ctx, preLabel);
                         }
                     }
                 }
@@ -1938,7 +1961,7 @@ static int cfgLICM(TACList *tac, const CFG *cfg)
                     tac->items[idx].dead = 1;
                 }
 
-                tacInsertInstructions(tac, hdrStart, preIns, 1 + hoistCount);
+                tacInsertInstructions(ctx, tac, hdrStart, preIns, 1 + hoistCount);
             }
 
             free(preIns);
@@ -1971,26 +1994,27 @@ static int cfgLICM(TACList *tac, const CFG *cfg)
 
 /* --- Bounded Loop Unrolling (cicli piccoli con bound costante) --- */
 
-static void tacCloneList(const TACList *src, TACList *dst)
+static void tacCloneList(CompilerContext *ctx, const TACList *src, TACList *dst)
 {
     int i;
-    tacInit(dst);
+    tacInit(ctx, dst);
     for (i = 0; i < src->count; i++) {
         if (!src->items[i].dead) {
-            tacEmit(dst, src->items[i].op, src->items[i].arg1,
+            tacEmit(ctx, dst, src->items[i].op, src->items[i].arg1,
                     src->items[i].arg2, src->items[i].res, src->items[i].type1);
         }
     }
 }
 
-static void tacSwapLists(TACList *a, TACList *b)
+static void tacSwapLists(CompilerContext *ctx, TACList *a, TACList *b)
 {
+	(void)ctx;
     TACList tmp = *a;
     *a = *b;
     *b = tmp;
 }
 
-static int evalScalarInstr(const TACInstr *in, CopyEnv *env, char *outBuf, size_t outSize)
+static int evalScalarInstr(CompilerContext *ctx, const TACInstr *in, CopyEnv *env, char *outBuf, size_t outSize)
 {
     const char *a1 = in->arg1;
     const char *a2 = in->arg2;
@@ -1999,11 +2023,11 @@ static int evalScalarInstr(const TACInstr *in, CopyEnv *env, char *outBuf, size_
     (void)outSize;
 
     if (a1) {
-        const char *rep = envLookup(env, a1);
+        const char *rep = envLookup(ctx, env, a1);
         if (rep) a1 = rep;
     }
     if (a2) {
-        const char *rep = envLookup(env, a2);
+        const char *rep = envLookup(ctx, env, a2);
         if (rep) a2 = rep;
     }
 
@@ -2011,17 +2035,17 @@ static int evalScalarInstr(const TACInstr *in, CopyEnv *env, char *outBuf, size_
         sprintf(outBuf, "%s", a1);
         return 1;
     }
-    if (in->op == TAC_NEG && a1 && isNumericLit(a1, &d1, &i1)) {
+    if (in->op == TAC_NEG && a1 && isNumericLit(ctx, a1, &d1, &i1)) {
         if (i1) sprintf(outBuf, "%d", -(int)d1);
         else    sprintf(outBuf, "%.15g", -d1);
         return 1;
     }
-    if (in->op == TAC_NOT && a1 && isBoolLit(a1, &b1)) {
+    if (in->op == TAC_NOT && a1 && isBoolLit(ctx, a1, &b1)) {
         sprintf(outBuf, "%s", b1 ? "false" : "true");
         return 1;
     }
     if (in->op >= TAC_ADD && in->op <= TAC_NE && a1 && a2 &&
-        isNumericLit(a1, &d1, &i1) && isNumericLit(a2, &d2, &i2)) {
+        isNumericLit(ctx, a1, &d1, &i1) && isNumericLit(ctx, a2, &d2, &i2)) {
         //int isInt = i1 && i2;
         int isInt = i1 && i2 && (in->type1 != T_REAL);
         if (in->op <= TAC_DIV) {
@@ -2049,8 +2073,8 @@ static int evalScalarInstr(const TACInstr *in, CopyEnv *env, char *outBuf, size_
         }
     }
     if ((in->op == TAC_AND || in->op == TAC_OR) && a1 && a2 &&
-        (isBoolLit(a1, &b1) || (isNumericLit(a1, &d1, &i1) && ((b1 = (d1 != 0.0)), 1))) &&
-        (isBoolLit(a2, &b2) || (isNumericLit(a2, &d2, &i2) && ((b2 = (d2 != 0.0)), 1)))) {
+        (isBoolLit(ctx, a1, &b1) || (isNumericLit(ctx, a1, &d1, &i1) && ((b1 = (d1 != 0.0)), 1))) &&
+        (isBoolLit(ctx, a2, &b2) || (isNumericLit(ctx, a2, &d2, &i2) && ((b2 = (d2 != 0.0)), 1)))) {
         int br = (in->op == TAC_AND) ? (b1 && b2) : (b1 || b2);
         sprintf(outBuf, "%s", br ? "true" : "false");
         return 1;
@@ -2058,14 +2082,14 @@ static int evalScalarInstr(const TACInstr *in, CopyEnv *env, char *outBuf, size_
     return 0;
 }
 
-static int tacTryUnrollFirstLoop(TACList *tac)
+static int tacTryUnrollFirstLoop(CompilerContext *ctx, TACList *tac)
 {
     TACList scratch;
     int peel;
     
     int savedLabel = s_label;
 
-    tacCloneList(tac, &scratch);
+    tacCloneList(ctx, tac, &scratch);
 
     for (peel = 0; peel < 16; peel++) {
         CFG cfg;
@@ -2076,13 +2100,13 @@ static int tacTryUnrollFirstLoop(TACList *tac)
         CopyEnv env;
         int condConst = 0, condTrue = 0;
 
-        tacCompact(&scratch);
-        if (scratch.count == 0) { tacFree(&scratch); s_label = savedLabel; return 0; }
+        tacCompact(ctx, &scratch);
+        if (scratch.count == 0) { tacFree(ctx, &scratch); s_label = savedLabel; return 0; }
 
-        cfgBuild(&scratch, &cfg);
+        cfgBuild(ctx, &scratch, &cfg);
         n = cfg.numBlocks;
-        dom = cfgComputeDominators(&cfg);
-        if (!dom) { cfgFree(&cfg); tacFree(&scratch); s_label = savedLabel; return 0; }
+        dom = cfgComputeDominators(ctx, &cfg);
+        if (!dom) { cfgFree(ctx, &cfg); tacFree(ctx, &scratch); s_label = savedLabel; return 0; }
 
         /* Cerca un ciclo `while` semplice e piccolo */
         for (bH = 1; bH < n; bH++) {
@@ -2141,14 +2165,14 @@ static int tacTryUnrollFirstLoop(TACList *tac)
 
         if (!foundLoop) {
             free(dom);
-            cfgFree(&cfg);
+            cfgFree(ctx, &cfg);
             if (peel > 0) {
                 /* Il ciclo e' stato completamente eliminato! */
-                tacSwapLists(tac, &scratch);
-                tacFree(&scratch);
+                tacSwapLists(ctx, tac, &scratch);
+                tacFree(ctx, &scratch);
                 return 1;
             }
-            tacFree(&scratch);
+            tacFree(ctx, &scratch);
             
             s_label = savedLabel;
             
@@ -2161,11 +2185,11 @@ static int tacTryUnrollFirstLoop(TACList *tac)
             const TACInstr *in = &scratch.items[i];
             char valBuf[128];
             if (in->dead) continue;
-            if (in->res && isScalarWriteOp(in->op)) {
-                if (evalScalarInstr(in, &env, valBuf, sizeof(valBuf))) {
-                    envSet(&env, in->res, valBuf);
+            if (in->res && isScalarWriteOp(ctx, in->op)) {
+                if (evalScalarInstr(ctx, in, &env, valBuf, sizeof(valBuf))) {
+                    envSet(ctx, &env, in->res, valBuf);
                 } else {
-                    envSet(&env, in->res, NULL);
+                    envSet(ctx, &env, in->res, NULL);
                 }
             }
         }
@@ -2173,11 +2197,11 @@ static int tacTryUnrollFirstLoop(TACList *tac)
             const TACInstr *in = &scratch.items[i];
             char valBuf[128];
             if (in->dead || in->op == TAC_LABEL) continue;
-            if (in->res && isScalarWriteOp(in->op)) {
-                if (evalScalarInstr(in, &env, valBuf, sizeof(valBuf))) {
-                    envSet(&env, in->res, valBuf);
+            if (in->res && isScalarWriteOp(ctx, in->op)) {
+                if (evalScalarInstr(ctx, in, &env, valBuf, sizeof(valBuf))) {
+                    envSet(ctx, &env, in->res, valBuf);
                 } else {
-                    envSet(&env, in->res, NULL);
+                    envSet(ctx, &env, in->res, NULL);
                 }
             } else {
                 condConst = -1; /* Istruzione con side effect in bH */
@@ -2187,22 +2211,22 @@ static int tacTryUnrollFirstLoop(TACList *tac)
 
         if (condConst == 0) {
             const TACInstr *br = &scratch.items[cfg.blocks[bH].end];
-            const char *cStr = envLookup(&env, br->arg1);
+            const char *cStr = envLookup(ctx, &env, br->arg1);
             double d;
             int isInt, bVal;
             if (!cStr) cStr = br->arg1;
-            if (cStr && isBoolLit(cStr, &bVal)) {
+            if (cStr && isBoolLit(ctx, cStr, &bVal)) {
                 condConst = 1;
                 condTrue = bVal;
-            } else if (cStr && isNumericLit(cStr, &d, &isInt)) {
+            } else if (cStr && isNumericLit(ctx, cStr, &d, &isInt)) {
                 condConst = 1;
                 condTrue = (d != 0.0);
             }
         }
-        envFree(&env);
+        envFree(ctx, &env);
 
         if (condConst != 1) {
-            free(dom); cfgFree(&cfg); tacFree(&scratch);
+            free(dom); cfgFree(ctx, &cfg); tacFree(ctx, &scratch);
             
             s_label = savedLabel;
             
@@ -2225,13 +2249,13 @@ static int tacTryUnrollFirstLoop(TACList *tac)
                 exitIns[w].res = scratch.items[cfg.blocks[bH].end].res;
                 exitIns[w].type1 = T_INTEGER;
                 w++;
-                tacInsertInstructions(&scratch, hdrStart, exitIns, w);
+                tacInsertInstructions(ctx, &scratch, hdrStart, exitIns, w);
                 free(exitIns);
             }
-            free(dom); cfgFree(&cfg);
-            tacOptimizeO2(&scratch);
-            tacSwapLists(tac, &scratch);
-            tacFree(&scratch);
+            free(dom); cfgFree(ctx, &cfg);
+            tacOptimizeO2(ctx, &scratch);
+            tacSwapLists(ctx, tac, &scratch);
+            tacFree(ctx, &scratch);
             return 1;
         } else {
             /* Condizione vera: srotola una iterazione prima di `bH` */
@@ -2246,8 +2270,8 @@ static int tacTryUnrollFirstLoop(TACList *tac)
             lblMap.items = NULL; lblMap.count = 0; lblMap.capacity = 0;
             for (i = bodyStart; i <= bodyEnd; i++) {
                 if (scratch.items[i].op == TAC_LABEL && scratch.items[i].res) {
-                    char *nl = newLabel();
-                    envSet(&lblMap, scratch.items[i].res, nl);
+                    char *nl = newLabel(ctx);
+                    envSet(ctx, &lblMap, scratch.items[i].res, nl);
                     free(nl);
                 }
             }
@@ -2258,30 +2282,30 @@ static int tacTryUnrollFirstLoop(TACList *tac)
                     peeled[w] = scratch.items[i];
                     if (peeled[w].op == TAC_LABEL || peeled[w].op == TAC_GOTO ||
                         peeled[w].op == TAC_IF_FALSE || peeled[w].op == TAC_IF_TRUE) {
-                        const char *mapped = envLookup(&lblMap, peeled[w].res);
+                        const char *mapped = envLookup(ctx, &lblMap, peeled[w].res);
                         if (mapped) peeled[w].res = (char *)mapped;
                     }
                     (void)hdrLabel;
                     w++;
                 }
-                tacInsertInstructions(&scratch, hdrStart, peeled, w);
+                tacInsertInstructions(ctx, &scratch, hdrStart, peeled, w);
                 free(peeled);
             }
-            envFree(&lblMap);
-            free(dom); cfgFree(&cfg);
-            tacOptimizeO1(&scratch);
-            tacOptimizeO2(&scratch);
+            envFree(ctx, &lblMap);
+            free(dom); cfgFree(ctx, &cfg);
+            tacOptimizeO1(ctx, &scratch);
+            tacOptimizeO2(ctx, &scratch);
         }
     }
 
-    tacFree(&scratch);
+    tacFree(ctx, &scratch);
     
     s_label = savedLabel;
     
     return 0;
 }
 
-static int tacLinearIVSR(TACList *tac)
+static int tacLinearIVSR(CompilerContext *ctx, TACList *tac)
 {
     int i, j, k, changed = 0;
     for (i = 0; i < tac->count; i++) {
@@ -2307,12 +2331,12 @@ static int tacLinearIVSR(TACList *tac)
             if (in->dead) continue;
             if (in->op == TAC_ADD && in->arg1 && in->arg2) {
                 double d; int isInt;
-                if (isNumericLit(in->arg2, &d, &isInt)) {
+                if (isNumericLit(ctx, in->arg2, &d, &isInt)) {
                     /* Verifica se l'istruzione successiva è: i = t7 */
                     if (k + 1 < end && tac->items[k+1].op == TAC_ASSIGN && 
                         tac->items[k+1].arg1 && strcmp(tac->items[k+1].arg1, in->res) == 0 && 
                         tac->items[k+1].res && strcmp(tac->items[k+1].res, in->arg1) == 0) {
-                        biv = tacStrdup(in->arg1);
+                        biv = tacStrdup(ctx, in->arg1);
                         step = (int)d;
                         biv_update_idx = k + 1;
                         break;
@@ -2331,8 +2355,8 @@ static int tacLinearIVSR(TACList *tac)
 
                 if (in->op == TAC_MUL && in->arg1 && in->arg2) {
                     double d; int isInt;
-                    if (strcmp(in->arg1, biv) == 0 && isNumericLit(in->arg2, &d, &isInt)) { match = 1; c = d; }
-                    else if (strcmp(in->arg2, biv) == 0 && isNumericLit(in->arg1, &d, &isInt)) { match = 1; c = d; }
+                    if (strcmp(in->arg1, biv) == 0 && isNumericLit(ctx, in->arg2, &d, &isInt)) { match = 1; c = d; }
+                    else if (strcmp(in->arg2, biv) == 0 && isNumericLit(ctx, in->arg1, &d, &isInt)) { match = 1; c = d; }
                 } else if (in->op == TAC_ADD && in->arg1 && in->arg2) {
                     if (strcmp(in->arg1, biv) == 0 && strcmp(in->arg2, biv) == 0) {
                         match = 1; c = 2; /* i + i equivale a i * 2 */
@@ -2340,7 +2364,7 @@ static int tacLinearIVSR(TACList *tac)
                 }
 
                 if (match) {
-                    char *acc = newTemp();
+                    char *acc = newTemp(ctx);
                     char buf[64];
                     TACInstr init, update;
 
@@ -2351,7 +2375,7 @@ static int tacLinearIVSR(TACList *tac)
                     init.arg2 = buf;
                     init.res = acc;
                     init.type1 = T_INTEGER;
-                    tacInsertInstructions(tac, i, &init, 1);
+                    tacInsertInstructions(ctx, tac, i, &init, 1);
 
                     /* Aggiorna gli indici per l'inserimento */
                     i++; end++; k++; biv_update_idx++;
@@ -2360,7 +2384,7 @@ static int tacLinearIVSR(TACList *tac)
                     in = &tac->items[k]; /* BUGFIX: RIFETCH FONDAMENTALE DOPO REALLOC! */
                     free(in->arg1); free(in->arg2);
                     in->op = TAC_ASSIGN;
-                    in->arg1 = tacStrdup(acc);
+                    in->arg1 = tacStrdup(ctx, acc);
                     in->arg2 = NULL;
 
                     /* C. Aggiorna acc dopo l'incremento del BIV: acc = acc + step * c */
@@ -2375,7 +2399,7 @@ static int tacLinearIVSR(TACList *tac)
                     update.arg2 = buf;
                     update.res = acc;
                     update.type1 = T_INTEGER;
-                    tacInsertInstructions(tac, biv_update_idx + 1, &update, 1);
+                    tacInsertInstructions(ctx, tac, biv_update_idx + 1, &update, 1);
 
                     free(acc);
                     changed = 1;
@@ -2388,41 +2412,41 @@ static int tacLinearIVSR(TACList *tac)
     return changed;
 }
 
-void tacOptimizeO3(TACList *tac)
+void tacOptimizeO3(CompilerContext *ctx, TACList *tac)
 {
     int changed;
-    tacOptimizeO2(tac);
+    tacOptimizeO2(ctx, tac);
 
     do {
         CFG cfg;
         int stepChanged = 0;
 
-        stepChanged |= tacStrengthReduction(tac);
-        if (stepChanged) tacOptimizeO1(tac);
+        stepChanged |= tacStrengthReduction(ctx, tac);
+        if (stepChanged) tacOptimizeO1(ctx, tac);
 
-        tacCompact(tac);
+        tacCompact(ctx, tac);
         if (tac->count == 0) break;
 
         /* NOVITÀ: Induction Variable Strength Reduction */
-        if (tacLinearIVSR(tac)) {
+        if (tacLinearIVSR(ctx, tac)) {
             stepChanged = 1;
-            tacOptimizeO1(tac);
-            tacCompact(tac);
+            tacOptimizeO1(ctx, tac);
+            tacCompact(ctx, tac);
         }
 
-        cfgBuild(tac, &cfg);
-        if (cfgJumpThreading(tac, &cfg)) stepChanged = 1;
-        if (cfgLICM(tac, &cfg))          stepChanged = 1;
-        cfgFree(&cfg);
+        cfgBuild(ctx, tac, &cfg);
+        if (cfgJumpThreading(ctx, tac, &cfg)) stepChanged = 1;
+        if (cfgLICM(ctx, tac, &cfg))          stepChanged = 1;
+        cfgFree(ctx, &cfg);
 
-        if (tacTryUnrollFirstLoop(tac))  stepChanged = 1;
+        if (tacTryUnrollFirstLoop(ctx, tac))  stepChanged = 1;
 
         if (stepChanged) {
-            tacOptimizeO2(tac);
+            tacOptimizeO2(ctx, tac);
         }
         changed = stepChanged;
     } while (changed);
 
-    tacOptimizeO1(tac);
-    tacCompact(tac);
+    tacOptimizeO1(ctx, tac);
+    tacCompact(ctx, tac);
 }
