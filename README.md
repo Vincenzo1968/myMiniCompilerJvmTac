@@ -19,9 +19,6 @@ An educational compiler written in ANSI/C99 featuring a recursive descent parser
 - **JVM Bytecode Backend (`jvm.c`):**
   - Lowers the optimized TAC IR (`-O3` by default, configurable via `-O0`..`-O3`) directly into standalone Java `.class` files (Java 6 / major version 50) in C with zero external dependencies, supporting linearized multidimensional arrays, console I/O, `ldc`/`ldc_w` constants, and string concatenation via `StringBuilder`.
 
-- **JVM Bytecode Backend (`jvm.c`):**
-  - Lowers the optimized TAC IR (`-O3` by default, configurable via `-O0`..`-O3`) directly into standalone Java `.class` files (Java 6 / major version 50) in C with zero external dependencies, supporting linearized multidimensional arrays, console I/O, `ldc`/`ldc_w` constants, and string concatenation via `StringBuilder`.
-
 - **x86_64 Assembly Backend (`backend_x86_64.c`):**
   - Generates NASM-syntax assembly for Linux x86_64 from the optimized TAC, respecting the System V AMD64 ABI (16-byte stack alignment, proper register usage for `printf`/`scanf`). Supports integer/real arithmetic, boolean logic, comparisons, control flow, and console I/O. The generated assembly can be assembled with `nasm` and linked with `gcc` to produce standalone native executables.
 
@@ -56,7 +53,7 @@ expr4      : T_INT_LITERAL
            | 'true'
            | 'false'
            | '(' expr ')'
-		   | '-' expr
+           | '-' expr
            | '!' expr
            | T_ID { '[' expr ']' }
            ;
@@ -82,7 +79,7 @@ gcc -Wall -Wextra -pedantic -O2 src/ast.c src/context.c src/endianess.c src/jvm.
 
 ### 1. Run Directly with the Built-in Interpreter
 
-Without `tac` or `jvm`, the compiler executes the program via its AST interpreter:
+Without `tac` or `jvm` or `asm`, the compiler executes the program via its AST interpreter:
 
 ```bash
 src/myCompiler prg_test/test_licm.prg
@@ -189,26 +186,23 @@ src/myCompiler prg_test/myprog_02.prg jvm -O0
 ### 3.5 Compile to x86_64 Assembly and Run (Linux)
 The `asm` target generates NASM-syntax assembly from the optimized TAC. The resulting `.asm` file must be assembled and linked externally:
 
+```bash
 src/myCompiler prg_test/test_gcp.prg asm -O2
 Codice assembly generato con successo in: prg_test/test_gcp.asm
-
-# Assemble with NASM
+```
+## Assemble with NASM
+```bash
 nasm -f elf64 prg_test/test_gcp.asm -o prg_test/test_gcp.o
-
-# Link with GCC (use -no-pie for simpler addressing)
+```
+## Link with GCC (use -no-pie for simpler addressing)
+```bash
 gcc -no-pie -o prg_test/test_gcp_exec prg_test/test_gcp.o
-
-# Run the native executable
+```
+## Run the native executable
+```bash
 ./prg_test/test_gcp_exec
 10
-
-# Validate with Valgrind
-echo "10" | valgrind --leak-check=full ./prg_test/test_gcp_exec
-==115787== ERROR SUMMARY: 0 errors from 0 contexts (suppressed: 0 from 0)
-
-You can also choose a specific optimization level when compiling for x86_64:
-src/myCompiler prg_test/myprog_01.prg asm -O0
-src/myCompiler prg_test/myprog_01.prg asm -O3
+```
 
 ### 4. Syntax & Semantic Error Reporting
 
