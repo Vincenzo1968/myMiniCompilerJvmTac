@@ -1,6 +1,6 @@
 # myMiniCompilerJvmTac
 
-An educational compiler written in ANSI/C99 featuring a recursive descent parser, an optimizing Three-Address Code (TAC) intermediate representation (`-O0` through `-O3`), an AST interpreter, and a native JVM bytecode (`.class`) backend driven by the optimized TAC.
+An educational compiler written in ANSI/C99 featuring a recursive descent parser, an optimizing Three-Address Code (TAC) intermediate representation (`-O0` through `-O3`), an AST interpreter, and dual backends: native JVM bytecode (`.class`) and x86_64 assembly (NASM syntax) for Linux, both driven by the optimized TAC.
 
 ## Features
 
@@ -18,6 +18,13 @@ An educational compiler written in ANSI/C99 featuring a recursive descent parser
 
 - **JVM Bytecode Backend (`jvm.c`):**
   - Lowers the optimized TAC IR (`-O3` by default, configurable via `-O0`..`-O3`) directly into standalone Java `.class` files (Java 6 / major version 50) in C with zero external dependencies, supporting linearized multidimensional arrays, console I/O, `ldc`/`ldc_w` constants, and string concatenation via `StringBuilder`.
+
+- **JVM Bytecode Backend (`jvm.c`):**
+  - Lowers the optimized TAC IR (`-O3` by default, configurable via `-O0`..`-O3`) directly into standalone Java `.class` files (Java 6 / major version 50) in C with zero external dependencies, supporting linearized multidimensional arrays, console I/O, `ldc`/`ldc_w` constants, and string concatenation via `StringBuilder`.
+
+- **x86_64 Assembly Backend (`backend_x86_64.c`):**
+  - Generates NASM-syntax assembly for Linux x86_64 from the optimized TAC, respecting the System V AMD64 ABI (16-byte stack alignment, proper register usage for `printf`/`scanf`). Supports integer/real arithmetic, boolean logic, comparisons, control flow, and console I/O. The generated assembly can be assembled with `nasm` and linked with `gcc` to produce standalone native executables.
+
 
 ## Language Grammar (EBNF)
 
@@ -67,8 +74,9 @@ make
 Or compile directly with `gcc`:
 
 ```bash
-gcc -Wall -Wextra -pedantic -O2 src/ast.c src/context.c src/endianess.c src/jvm.c src/main.c src/parser.c src/scanner.c src/symtab.c src/tac.c -o src/myCompiler
+gcc -Wall -Wextra -pedantic -O2 src/ast.c src/context.c src/endianess.c src/jvm.c src/backend_x86_64.c src/main.c src/parser.c src/scanner.c src/symtab.c src/tac.c -o src/myCompiler
 ```
+
 
 ## Usage & Examples
 
@@ -178,6 +186,30 @@ You can also choose a specific optimization level when compiling for the JVM:
 src/myCompiler prg_test/myprog_02.prg jvm -O0
 ```
 
+### 3.5 Compile to x86_64 Assembly and Run (Linux)
+The `asm` target generates NASM-syntax assembly from the optimized TAC. The resulting `.asm` file must be assembled and linked externally:
+
+src/myCompiler prg_test/test_gcp.prg asm -O2
+Codice assembly generato con successo in: prg_test/test_gcp.asm
+
+# Assemble with NASM
+nasm -f elf64 prg_test/test_gcp.asm -o prg_test/test_gcp.o
+
+# Link with GCC (use -no-pie for simpler addressing)
+gcc -no-pie -o prg_test/test_gcp_exec prg_test/test_gcp.o
+
+# Run the native executable
+./prg_test/test_gcp_exec
+10
+
+# Validate with Valgrind
+echo "10" | valgrind --leak-check=full ./prg_test/test_gcp_exec
+==115787== ERROR SUMMARY: 0 errors from 0 contexts (suppressed: 0 from 0)
+
+You can also choose a specific optimization level when compiling for x86_64:
+src/myCompiler prg_test/myprog_01.prg asm -O0
+src/myCompiler prg_test/myprog_01.prg asm -O3
+
 ### 4. Syntax & Semantic Error Reporting
 
 The parser reports line/column diagnostics and recovers cleanly from missing delimiters (`;` or `)`), undeclared identifiers, and type mismatches without triggering cascading false-positive errors on subsequent valid statements:
@@ -210,7 +242,7 @@ After building the compiler (`./configure && make`), you can build and run the c
 ```bash
 gcc -Wall -Wextra -pedantic -O2 -pthread -Isrc \
     prg_test/test_pthread_inproc.c \
-    src/ast.o src/context.o src/endianess.o src/jvm.o \
+    src/ast.o src/context.o src/endianess.o src/jvm.o src/backend_x86_64.o \
     src/parser.o src/scanner.o src/symtab.o src/tac.o \
     -lm -o test_pthread_inproc
 

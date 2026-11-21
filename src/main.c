@@ -55,6 +55,7 @@ Architettura :
 //#include "endianess.h"
 #include "jvm.h"
 #include "tac.h"
+#include "backend_x86_64.h"
 
 /*
 expr:	term { (+|-) term }
@@ -1022,16 +1023,10 @@ int main(int argc, char **argv)
 	CompilerContext ctx;
 	ctx_init(&ctx);
 
-	//char *szInput = "expr:	term { ('+'|'-') term };\n"
-	//				"term:	factor { ('*'|'/') factor };\n"
-	//				"factor:	['-'] expon;\n"
-	//				"expon:	atom { '^' expon };\n"
-	//				"atom:	'(' expr ')'\n"
-	//				"		| number;\n";
-
 	int ret;
 	int genTAC = 0;
 	int genJVM = 0;
+	int gen_x86_64 = 0;
 	
 	int i;
 	int optLevel = -1;
@@ -1056,6 +1051,8 @@ int main(int argc, char **argv)
 			genTAC = 1;
 		else if (strcmp(argv[i], "jvm") == 0)
 			genJVM = 1;
+		else if (strcmp(argv[i], "asm") == 0)
+			gen_x86_64 = 1;
 		else if (strcmp(argv[i], "-O0") == 0)
 			optLevel = 0;
 		else if (strcmp(argv[i], "-O1") == 0)
@@ -1079,12 +1076,37 @@ int main(int argc, char **argv)
 	{
 		if ( genTAC )
 		{
-			//GenThreeAddressCode(pTree);
+			// tacGenerate si occupa di init, build, print e free internamente
 			tacGenerate(&ctx, pTree, &ctx.g_Scope, optLevel);
 		}
 		else if ( genJVM )
 		{
 			jvmStart(&ctx, argv[1], &pTree, &ctx.g_Scope, optLevel);
+		}
+		else if ( gen_x86_64 ) 
+		{
+			// 1. Gestione locale della TACList (esattamente come fa jvm.c)
+			TACList tac;
+			tacInit(&ctx, &tac);
+			tacBuild(&ctx, &pTree, &ctx.g_Scope, optLevel, &tac);
+			
+			// 2. Estrazione del nome base dal file di input (es. "test.prg" -> "test")
+			char base_name[256];
+			strncpy(base_name, argv[1], sizeof(base_name) - 5); // Lascia spazio per ".asm" e '\0'
+			base_name[sizeof(base_name) - 5] = '\0';
+			char *dot = strrchr(base_name, '.');
+			if (dot) *dot = '\0'; // Rimuove l'estensione
+
+			// 3. Generazione del file .asm (dimensione 260 per evitare warning di troncamento)
+			char out_file[260]; 
+			snprintf(out_file, sizeof(out_file), "%s.asm", base_name);
+			
+			// 4. Chiamata al backend
+			x86_64Generate(&ctx, &tac, &ctx.g_Scope, out_file);
+			printf("Codice assembly generato con successo in: %s\n", out_file);
+			
+			// 5. Pulizia della memoria
+			tacFree(&ctx, &tac);
 		}
 		else
 		{

@@ -8,4 +8,5 @@ myCompiler_SOURCES = \
     parser.c parser.h \
     scanner.c scanner.h \
     symtab.c symtab.h \
-    tac.c tac.h
+    tac.c tac.h \
+    backend_x86_64.c backend_x86_64.h
