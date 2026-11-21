@@ -229,8 +229,28 @@ Warnings: 0
 On `prg_test/test_gcp.prg`, The `-O2` optimization propagates constants and simplifies conditional branches.
 
 ```bash
-src/myCompiler prg_test/test_gcp.prg tac -O1
-src/myCompiler prg_test/test_gcp.prg tac -O2
+$ src/myCompiler prg_test/test_gcp.prg tac -O1
+
+read b
+a = 10
+t1 = b > 5
+ifFalse t1 goto L001
+x = a
+goto L002
+L001:
+x = a
+L002:
+print x
+
+$ src/myCompiler prg_test/test_gcp.prg tac -O2
+
+read b
+t1 = b > 5
+ifFalse t1 goto L001
+goto L002
+L001:
+L002:
+print 10
 ```
 
 ### 6. In-Process Thread-Safety Test (`pthread`)
