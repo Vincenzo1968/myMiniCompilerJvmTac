@@ -36,3 +36,6 @@
 *.class
 core
 vgcore.*
+*.tar.gz
+*.asm
+*_exec
