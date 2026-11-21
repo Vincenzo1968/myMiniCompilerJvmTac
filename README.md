@@ -183,12 +183,15 @@ You can also choose a specific optimization level when compiling for the JVM:
 src/myCompiler prg_test/myprog_02.prg jvm -O0
 ```
 
-### 3.5 Compile to x86_64 Assembly and Run (Linux)
-The `asm` target generates NASM-syntax assembly from the optimized TAC. The resulting `.asm` file must be assembled and linked externally:
+#### 3.5 Compile to x86_64 Assembly and Run (Linux)
+
+Il target `asm` genera assembly in sintassi NASM dal TAC ottimizzato (`-O0`..`-O3`):
 
 ```bash
 src/myCompiler prg_test/test_gcp.prg asm -O2
-Codice assembly generato con successo in: prg_test/test_gcp.asm
+nasm -f elf64 prg_test/test_gcp.asm -o prg_test/test_gcp.o
+gcc -no-pie -o prg_test/test_gcp_exec prg_test/test_gcp.o
+./prg_test/test_gcp_exec
 ```
 ## Assemble with NASM
 ```bash
@@ -206,7 +209,7 @@ gcc -no-pie -o prg_test/test_gcp_exec prg_test/test_gcp.o
 
 ### 4. Syntax & Semantic Error Reporting
 
-The parser reports line/column diagnostics and recovers cleanly from missing delimiters (`;` or `)`), undeclared identifiers, and type mismatches without triggering cascading false-positive errors on subsequent valid statements:
+The parser handles diagnostics by line and column and recovers from errors without generating cascading false positives.
 
 ```bash
 src/myCompiler prg_test/test_error_recovery.prg
@@ -220,9 +223,10 @@ Linea 17 Colonna 6: Errore. Token inattesi dopo la fine del programma.
 Errori: 4
 Warnings: 0
 ```
+
 ### 5. Global Constant Propagation (`-O2`)
 
-On `prg_test/test_gcp.prg`, `-O2` propagates `a = 10` across both `if`/`else` branches and folds `print x` into `print 10`:
+On `prg_test/test_gcp.prg`, The `-O2` optimization propagates constants and simplifies conditional branches.
 
 ```bash
 src/myCompiler prg_test/test_gcp.prg tac -O1
@@ -231,7 +235,7 @@ src/myCompiler prg_test/test_gcp.prg tac -O2
 
 ### 6. In-Process Thread-Safety Test (`pthread`)
 
-After building the compiler (`./configure && make`), you can build and run the concurrent in-process test (14 simultaneous threads using independent `CompilerContext` instances for both `tac` and `jvm` targets):
+The entire compiler pipeline is reentrant and thread-safe via per-thread `CompilerContext` instances, verified with Valgrind (`memcheck`, `helgrind`, `drd`).
 
 ```bash
 gcc -Wall -Wextra -pedantic -O2 -pthread -Isrc \
