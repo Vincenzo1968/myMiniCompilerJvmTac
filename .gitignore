@@ -39,3 +39,5 @@ vgcore.*
 *.tar.gz
 *.asm
 *_exec
+
+prg_test/test_pthread_inproc

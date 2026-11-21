@@ -1,50 +1,28 @@
+#define _POSIX_C_SOURCE 200809L
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>
 #include "backend_x86_64.h"
 
-/* =========================================================================
- * Strutture per la mappatura delle variabili sullo stack frame
- * ========================================================================= */
-typedef struct {
-    char *name;
-    int offset;        // Offset negativo rispetto a rbp
-    enumTipo1 type1;
-} VarSlot;
-
-typedef struct {
-    VarSlot *items;
-    int count;
-    int capacity;
-    int current_offset; // Inizia a -8 e decresce di 8
-} VarTable;
-
-/* Pool semplice per costanti reali (float/double) che richiedono un indirizzo in memoria */
-typedef struct {
-    char *label;
-    double value;
-} RealConst;
-
-static RealConst *real_consts = NULL;
-static int real_const_count = 0;
-
-static const char* get_real_const_label(double val) {
-    for (int i = 0; i < real_const_count; i++) {
-        if (real_consts[i].value == val) {
-            return real_consts[i].label;
+static const char* get_real_const_label(CompilerContext *ctx, double val)
+{
+    for (int i = 0; i < ctx->real_const_count; i++) {
+        if (ctx->real_consts[i].value == val) {
+            return ctx->real_consts[i].label;
         }
     }
-    real_consts = realloc(real_consts, (real_const_count + 1) * sizeof(RealConst));
+    ctx->real_consts = realloc(ctx->real_consts, (ctx->real_const_count + 1) * sizeof(RealConst));
     char label[32];
-    sprintf(label, "rc_%d", real_const_count);
-    real_consts[real_const_count].label = strdup(label);
-    real_consts[real_const_count].value = val;
-    real_const_count++;
-    return real_consts[real_const_count - 1].label;
+    sprintf(label, "rc_%d", ctx->real_const_count);
+    ctx->real_consts[ctx->real_const_count].label = strdup(label);
+    ctx->real_consts[ctx->real_const_count].value = val;
+    ctx->real_const_count++;
+    return ctx->real_consts[ctx->real_const_count - 1].label;
 }
 
-static int get_var_offset(const char *name, enumTipo1 type, VarTable *vt) {
+static int get_var_offset(const char *name, enumTipo1 type, VarTable *vt)
+{
     if (!name) return 0;
     for (int i = 0; i < vt->count; i++) {
         if (strcmp(vt->items[i].name, name) == 0) {
@@ -65,20 +43,22 @@ static int get_var_offset(const char *name, enumTipo1 type, VarTable *vt) {
     return vt->items[vt->count - 1].offset;
 }
 
-static bool is_numeric_constant(const char *str) {
+static bool is_numeric_constant(const char *str)
+{
     if (!str) return false;
     char *endptr;
     strtod(str, &endptr);
     return (*endptr == '\0');
 }
 
-static void emit_load_operand(FILE *out, const char *operand, enumTipo1 type, VarTable *vt) {
+static void emit_load_operand(CompilerContext *ctx, FILE *out, const char *operand, enumTipo1 type, VarTable *vt)
+{
     if (!operand) return;
 
     if (is_numeric_constant(operand)) {
         if (type == T_REAL) {
             double val = strtod(operand, NULL);
-            const char *label = get_real_const_label(val);
+            const char *label = get_real_const_label(ctx, val);
             fprintf(out, "    movsd xmm0, [rel %s]\n", label);
         } else {
             long long val = strtoll(operand, NULL, 10);
@@ -153,8 +133,8 @@ void x86_64Generate(CompilerContext *ctx, TACList *tac, Scope *pScope, const cha
     fprintf(out, "    fmt_scan_int  db \"%%d\", 0\n");
     fprintf(out, "    fmt_scan_real db \"%%lf\", 0\n");
     
-    for (int i = 0; i < real_const_count; i++) {
-        fprintf(out, "    %-12s dq %f\n", real_consts[i].label, real_consts[i].value);
+    for (int i = 0; i < ctx->real_const_count; i++) {
+        fprintf(out, "    %-12s dq %f\n", ctx->real_consts[i].label, ctx->real_consts[i].value);
     }
     fprintf(out, "\n");
 
@@ -188,7 +168,7 @@ void x86_64Generate(CompilerContext *ctx, TACList *tac, Scope *pScope, const cha
                 break;
 
             case TAC_IF_FALSE:
-                emit_load_operand(out, in->arg1, in->type1, &vt);
+                emit_load_operand(ctx, out, in->arg1, in->type1, &vt);
                 if (in->type1 == T_REAL) {
                     fprintf(out, "    xorpd xmm1, xmm1\n");
                     fprintf(out, "    ucomisd xmm0, xmm1\n");
@@ -201,7 +181,7 @@ void x86_64Generate(CompilerContext *ctx, TACList *tac, Scope *pScope, const cha
                 break;
 
             case TAC_IF_TRUE:
-                emit_load_operand(out, in->arg1, in->type1, &vt);
+                emit_load_operand(ctx, out, in->arg1, in->type1, &vt);
                 if (in->type1 == T_REAL) {
                     fprintf(out, "    xorpd xmm1, xmm1\n");
                     fprintf(out, "    ucomisd xmm0, xmm1\n");
@@ -214,12 +194,12 @@ void x86_64Generate(CompilerContext *ctx, TACList *tac, Scope *pScope, const cha
                 break;
 
             case TAC_ASSIGN:
-                emit_load_operand(out, in->arg1, in->type1, &vt);
+                emit_load_operand(ctx, out, in->arg1, in->type1, &vt);
                 emit_store_operand(out, in->res, in->type1, &vt);
                 break;
 
             case TAC_NEG:
-                emit_load_operand(out, in->arg1, in->type1, &vt);
+                emit_load_operand(ctx, out, in->arg1, in->type1, &vt);
                 if (in->type1 == T_REAL) {
                     fprintf(out, "    xorpd xmm1, xmm1\n");
                     fprintf(out, "    subsd xmm0, xmm1\n"); // 0.0 - xmm0
@@ -230,7 +210,7 @@ void x86_64Generate(CompilerContext *ctx, TACList *tac, Scope *pScope, const cha
                 break;
 
             case TAC_NOT:
-                emit_load_operand(out, in->arg1, in->type1, &vt);
+                emit_load_operand(ctx, out, in->arg1, in->type1, &vt);
                 fprintf(out, "    xor rax, 1\n"); // Inverte il bit meno significativo (0 <-> 1)
                 emit_store_operand(out, in->res, in->type1, &vt);
                 break;
@@ -263,19 +243,19 @@ void x86_64Generate(CompilerContext *ctx, TACList *tac, Scope *pScope, const cha
 
             case TAC_PRINT: {
                 if (in->type1 == T_INTEGER || in->type1 == T_BOOLEAN) {
-                    emit_load_operand(out, in->arg1, in->type1, &vt);
+                    emit_load_operand(ctx, out, in->arg1, in->type1, &vt);
                     fprintf(out, "    mov rdi, fmt_int\n");
                     fprintf(out, "    mov rsi, rax\n");
                     fprintf(out, "    mov rax, 0\n"); // 0 registri vettoriali usati
                     fprintf(out, "    call printf\n");
                 } else if (in->type1 == T_REAL) {
-                    emit_load_operand(out, in->arg1, in->type1, &vt);
+                    emit_load_operand(ctx, out, in->arg1, in->type1, &vt);
                     fprintf(out, "    mov rdi, fmt_real\n");
                     fprintf(out, "    mov rax, 1\n"); // 1 registro vettoriale (xmm0) contiene l'argomento
                     fprintf(out, "    call printf\n");
                 } else if (in->type1 == T_STRING) {
                     // Gestione semplificata per stringhe: assume che arg1 sia un puntatore valido
-                    emit_load_operand(out, in->arg1, in->type1, &vt);
+                    emit_load_operand(ctx, out, in->arg1, in->type1, &vt);
                     fprintf(out, "    mov rdi, fmt_str\n");
                     fprintf(out, "    mov rsi, rax\n");
                     fprintf(out, "    mov rax, 0\n");
@@ -312,7 +292,7 @@ void x86_64Generate(CompilerContext *ctx, TACList *tac, Scope *pScope, const cha
             case TAC_EQ:
             case TAC_NE: {
                 // 1. Carica arg1 in rax
-                emit_load_operand(out, in->arg1, T_INTEGER, &vt);
+                emit_load_operand(ctx, out, in->arg1, T_INTEGER, &vt);
                 
                 // 2. Confronta con arg2
                 if (is_numeric_constant(in->arg2)) {
@@ -341,7 +321,7 @@ void x86_64Generate(CompilerContext *ctx, TACList *tac, Scope *pScope, const cha
             }
 
             case TAC_AND: {
-                emit_load_operand(out, in->arg1, T_BOOLEAN, &vt);
+                emit_load_operand(ctx, out, in->arg1, T_BOOLEAN, &vt);
                 if (is_numeric_constant(in->arg2)) {
                     long long val2 = strtoll(in->arg2, NULL, 10);
                     fprintf(out, "    and rax, %lld\n", val2);
@@ -354,7 +334,7 @@ void x86_64Generate(CompilerContext *ctx, TACList *tac, Scope *pScope, const cha
             }
 
             case TAC_OR: {
-                emit_load_operand(out, in->arg1, T_BOOLEAN, &vt);
+                emit_load_operand(ctx, out, in->arg1, T_BOOLEAN, &vt);
                 if (is_numeric_constant(in->arg2)) {
                     long long val2 = strtoll(in->arg2, NULL, 10);
                     fprintf(out, "    or rax, %lld\n", val2);
@@ -386,8 +366,8 @@ void x86_64Generate(CompilerContext *ctx, TACList *tac, Scope *pScope, const cha
     // Pulizia memoria temporanea
     for (int i = 0; i < vt.count; i++) free(vt.items[i].name);
     free(vt.items);
-    for (int i = 0; i < real_const_count; i++) free(real_consts[i].label);
-    free(real_consts);
-    real_consts = NULL;
-    real_const_count = 0;
+    for (int i = 0; i < ctx->real_const_count; i++) free(ctx->real_consts[i].label);
+    free(ctx->real_consts);
+    ctx->real_consts = NULL;
+    ctx->real_const_count = 0;
 }

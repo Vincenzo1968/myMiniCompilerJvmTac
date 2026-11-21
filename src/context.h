@@ -15,6 +15,12 @@
 #define JVM_MAX_CODE_BYTES 65536
 #endif
 
+/* Pool semplice per costanti reali (float/double) che richiedono un indirizzo in memoria */
+typedef struct {
+    char *label;
+    double value;
+} RealConst;
+
 typedef struct CompilerContext {
     /* da main.c */
     Scope g_Scope;
@@ -44,6 +50,7 @@ typedef struct CompilerContext {
     int g_currType;
     Valore g_currConstValue;
     int g_currConstType;
+    //nodeType *g_stack;
     nodeType *g_stack[4096];
     int g_top;
     int g_genTAC;
@@ -56,6 +63,10 @@ typedef struct CompilerContext {
     int g_line;
     int g_column;
     int g_depth;
+
+    /* da backend_x86_64.c */
+    RealConst *real_consts;
+    int real_const_count;
 } CompilerContext;
 
 void ctx_init(CompilerContext *ctx);

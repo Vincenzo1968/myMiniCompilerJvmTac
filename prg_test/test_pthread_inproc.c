@@ -4,17 +4,19 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "context.h"
-#include "parser.h"
-#include "symtab.h"
-#include "jvm.h"
-#include "tac.h"
+#include "../src/context.h"
+#include "../src/parser.h"
+#include "../src/symtab.h"
+#include "../src/jvm.h"
+#include "../src/tac.h"
+#include "../src/backend_x86_64.h"
 
 typedef struct {
     int thread_id;
     const char *prg_path;
     int gen_tac;
     int gen_jvm;
+    int gen_asm;
     int opt_level;
     int expect_ok;
     int ok;
@@ -43,6 +45,19 @@ static void *worker_compile(void *arg)
             tacGenerate(ctx, pTree, &ctx->g_Scope, job->opt_level);
         } else if (job->gen_jvm) {
             jvmStart(ctx, (char *)job->prg_path, &pTree, &ctx->g_Scope, job->opt_level);
+        } else if (job->gen_asm) {
+            TACList tac;
+            char out_asm[256];
+
+            tacInit(ctx, &tac);
+            tacBuild(ctx, &pTree, &ctx->g_Scope, job->opt_level, &tac);
+
+            /* File di output univoco per thread nella directory di lavoro temporanea */
+            snprintf(out_asm, sizeof(out_asm), "thread_%d_out.asm", job->thread_id);
+            x86_64Generate(ctx, &tac, &ctx->g_Scope, out_asm);
+            remove(out_asm);
+
+            tacFree(ctx, &tac);
         }
     }
 
@@ -63,32 +78,45 @@ typedef struct {
     const char *filename;
     int gen_tac;
     int gen_jvm;
+    int gen_asm;
     int opt_level;
     int expect_ok;
 } JobSpec;
 
 int main(int argc, char **argv)
 {
-    const char *prg_dir = (argc >= 2) ? argv[1] : "./prg_test";
+    const char *prg_dir = (argc >= 2) ? argv[1] : ".";
 
     static const JobSpec specs[] = {
         /* Thread in modalita' TAC (vari livelli -O0..-O3 + error recovery) */
-        { "myprog_01.prg",           1, 0, 0, 1 },
-        { "myprog_02.prg",           1, 0, 2, 1 },
-        { "myprog_03.prg",           1, 0, 1, 1 },
-        { "test_licm.prg",           1, 0, 3, 1 },
-        { "test_unroll.prg",         1, 0, 3, 1 },
-        { "test_gcp.prg",            1, 0, 2, 1 },
-        { "myprog_err.prg",          1, 0, 0, 0 },
-        { "test_error_recovery.prg", 1, 0, 0, 0 },
+        { "myprog_01.prg",              1, 0, 0, 0, 1 },
+        { "myprog_02.prg",              1, 0, 0, 2, 1 },
+        { "myprog_03.prg",              1, 0, 0, 1, 1 },
+        { "test_licm.prg",              1, 0, 0, 3, 1 },
+        { "test_unroll.prg",            1, 0, 0, 3, 1 },
+        { "test_gcp.prg",               1, 0, 0, 2, 1 },
+        { "test_dce.prg",               1, 0, 0, 2, 1 },
+        { "myprog_err.prg",             1, 0, 0, 0, 0 },
+        { "test_error_recovery_01.prg", 1, 0, 0, 0, 0 },
+        { "test_error_recovery_02.prg", 1, 0, 0, 0, 0 },
 
         /* Thread in modalita' JVM (file distinti per non sovrascrivere lo stesso .class) */
-        { "myprog_01.prg",           0, 1, 3, 1 },
-        { "myprog_02.prg",           0, 1, 3, 1 },
-        { "myprog_03.prg",           0, 1, 3, 1 },
-        { "test_licm.prg",           0, 1, 3, 1 },
-        { "test_unroll.prg",           0, 1, 3, 1 },
-        { "test_gcp.prg",            0, 1, 2, 1 }
+        { "myprog_01.prg",              0, 1, 0, 3, 1 },
+        { "myprog_02.prg",              0, 1, 0, 3, 1 },
+        { "myprog_03.prg",              0, 1, 0, 3, 1 },
+        { "test_licm.prg",              0, 1, 0, 3, 1 },
+        { "test_unroll.prg",            0, 1, 0, 3, 1 },
+        { "test_gcp.prg",               0, 1, 0, 2, 1 },
+        { "test_dce.prg",               0, 1, 0, 2, 1 },
+
+        /* Thread in modalita' ASM x86_64 (vari livelli -O0..-O3) */
+        { "myprog_01.prg",              0, 0, 1, 0, 1 },
+        { "myprog_02.prg",              0, 0, 1, 2, 1 },
+        { "myprog_03.prg",              0, 0, 1, 1, 1 },
+        { "test_licm.prg",              0, 0, 1, 3, 1 },
+        { "test_unroll.prg",            0, 0, 1, 3, 1 },
+        { "test_gcp.prg",               0, 0, 1, 2, 1 },
+        { "test_dce.prg",               0, 0, 1, 3, 1 }
     };
 
     const int n = (int)(sizeof(specs) / sizeof(specs[0]));
@@ -111,6 +139,7 @@ int main(int argc, char **argv)
         jobs[i].prg_path  = paths[i];
         jobs[i].gen_tac   = specs[i].gen_tac;
         jobs[i].gen_jvm   = specs[i].gen_jvm;
+        jobs[i].gen_asm   = specs[i].gen_asm;
         jobs[i].opt_level = specs[i].opt_level;
         jobs[i].expect_ok = specs[i].expect_ok;
         jobs[i].ok        = 0;
