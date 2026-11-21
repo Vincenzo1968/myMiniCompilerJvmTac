@@ -1,10 +1,17 @@
 #include <string.h>
+#include <stdlib.h>
 #include "context.h"
 
 void ctx_init(CompilerContext *ctx)
 {
-    if (!ctx) return;
+    if (!ctx)
+		return;
+		
     memset(ctx, 0, sizeof(CompilerContext));
+    
+	ctx->interpDecls.currentBlockId = -1;
+    scopeInit(ctx, &ctx->interpScope);
+    scopePush(ctx, &ctx->interpScope);
 
     /* Valori iniziali da main.c */
     ctx->g_t1 = T_INTEGER;
@@ -39,5 +46,37 @@ void ctx_init(CompilerContext *ctx)
     ctx->g_pos = 0;
     ctx->g_line = 1;
     ctx->g_column = 1;
-    ctx->g_depth = 0;
+    ctx->g_depth = 0;    
 }
+
+void ctx_interp_cleanup(CompilerContext *ctx)
+{
+    int i;
+    if (!ctx)
+        return;
+
+    scopeFree(ctx, &ctx->interpScope);
+
+    if (ctx->g_currConstType == T_STRING && ctx->g_currConstValue.strVal != NULL) {
+        free(ctx->g_currConstValue.strVal);
+        ctx->g_currConstValue.strVal = NULL;
+        ctx->g_currConstType = -1;
+    }
+
+    for (i = 0; i < ctx->interpDecls.count; i++) {
+        InterpVarDecl *d = &ctx->interpDecls.decls[i];
+        free(d->name);
+        if (d->t1 == T_STRING && d->bInizializzato && d->val.strVal != NULL) {
+            free(d->val.strVal);
+        }
+    }
+    free(ctx->interpDecls.decls);
+    ctx->interpDecls.decls = NULL;
+    ctx->interpDecls.count = 0;
+    ctx->interpDecls.cap = 0;
+    ctx->interpDecls.nextBlockId = 0;
+    ctx->interpDecls.currentBlockId = -1;
+    ctx->interpDecls.rootInitDone = 0;
+    ctx->interpDecls.nextRuntimeBlock = 0;
+}
+

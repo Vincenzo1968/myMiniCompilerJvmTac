@@ -21,13 +21,35 @@ typedef struct {
     double value;
 } RealConst;
 
+typedef struct {
+    int blockId;          /* -1 = scope globale, >= 0 = id blocco */
+    char *name;
+    enumTipo0 t0;
+    enumTipo1 t1;
+    enumTipo2 t2;
+    Valore val;
+    char bInizializzato;
+} InterpVarDecl;
+
+typedef struct {
+    InterpVarDecl *decls;
+    int count;
+    int cap;
+    int nextBlockId;
+    int currentBlockId;
+    int rootInitDone;
+    int nextRuntimeBlock;
+} InterpDeclTable;
+
 typedef struct CompilerContext {
     /* da main.c */
     Scope g_Scope;
+    Scope interpScope;
+    InterpDeclTable interpDecls;
     enumTipo1 g_t1;
     int g_label;
     int g_temp;
-
+    
     /* da jvm.c */
     uint16_t g_ConstantPoolCount;
     uint8_t g_ArrayConstantPool[JVM_MAX_CP_BYTES];
@@ -70,5 +92,6 @@ typedef struct CompilerContext {
 } CompilerContext;
 
 void ctx_init(CompilerContext *ctx);
+void ctx_interp_cleanup(CompilerContext *ctx);
 
 #endif /* CONTEXT_H */

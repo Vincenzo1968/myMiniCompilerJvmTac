@@ -4,7 +4,7 @@ real x, y;
 begin
 	x = 3.14;
 	y = -2.5;
-	/*
+	
 	do
 	begin
 		string y = "Ciao ciao";
@@ -13,7 +13,7 @@ begin
 		print "\n" + y + "\n";
 	end
 	while ( x > 0 )
-	*/
+	
 	print x;
 	print " * ";
 	print y;

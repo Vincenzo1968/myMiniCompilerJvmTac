@@ -204,14 +204,17 @@ Valore BinopValue(CompilerContext *ctx, int op, enumTipo1 lhsT1, Valore lhsValue
 			retVal.dblVal = lhsValue.dblVal + rhsValue.dblVal;
 		else if ( t1 == T_STRING )
 		{
-			retVal.strVal = (char*)malloc(sizeof(char) * (strlen(lhsValue.strVal) + strlen(rhsValue.strVal)) + 1);
+			const char *s1 = lhsValue.strVal ? lhsValue.strVal : "";
+			const char *s2 = rhsValue.strVal ? rhsValue.strVal : "";
+
+			retVal.strVal = (char*)malloc(sizeof(char) * (strlen(s1) + strlen(s2)) + 1);
 			if ( !retVal.strVal )
 			{
 				printf("Errore + string: memoria insufficiente.\n");
 				return retVal;
 			}
-			strcpy(retVal.strVal, lhsValue.strVal);
-			strcat(retVal.strVal, rhsValue.strVal);
+			strcpy(retVal.strVal, s1);
+			strcat(retVal.strVal, s2);
 		}
 		break;
 	case T_OP_MINUS:
@@ -258,6 +261,52 @@ Valore BinopValue(CompilerContext *ctx, int op, enumTipo1 lhsT1, Valore lhsValue
 	return retVal;
 }
 
+static void interpInitGlobalScope(CompilerContext *ctx)
+{
+	int i;
+	if (!ctx || ctx->interpDecls.rootInitDone)
+		return;
+	ctx->interpDecls.rootInitDone = 1;
+
+	for (i = 0; i < ctx->interpDecls.count; i++)
+	{
+		InterpVarDecl *d = &ctx->interpDecls.decls[i];
+		if (d->blockId == -1)
+		{
+			Valore v = d->val;
+			if (d->t1 == T_STRING && d->bInizializzato && d->val.strVal != NULL)
+				v.strVal = strdup(d->val.strVal);
+			scopeInsert(ctx, &ctx->interpScope, d->name, d->t0, d->t1, d->t2, v, d->bInizializzato, 0);
+		}
+	}
+}
+
+static void interpEnterBlock(CompilerContext *ctx, nodeType *blockNode)
+{
+	int i;
+	int targetBlockId = blockNode ? blockNode->opr.blockId : -1;
+
+	scopePush(ctx, &ctx->interpScope);
+
+	for (i = 0; i < ctx->interpDecls.count; i++)
+	{
+		InterpVarDecl *d = &ctx->interpDecls.decls[i];
+		if (d->blockId == targetBlockId)
+		{
+			Valore v = d->val;
+			if (d->t1 == T_STRING && d->bInizializzato && d->val.strVal != NULL)
+				v.strVal = strdup(d->val.strVal);
+			scopeInsert(ctx, &ctx->interpScope, d->name, d->t0, d->t1, d->t2, v, d->bInizializzato, 0);
+		}
+	}
+}
+
+static void interpExitBlock(CompilerContext *ctx, nodeType *blockNode)
+{
+	(void)blockNode;
+	scopePop(ctx, &ctx->interpScope);
+}
+
 Valore interpret(CompilerContext *ctx, nodeType *p)
 {
 	char szInput[1024];
@@ -265,57 +314,59 @@ Valore interpret(CompilerContext *ctx, nodeType *p)
 	Valore valZero = {0};
 	valZero.iVal = 0;
 
-    if (!p)
+	if (!p)
 		return valZero;
 
-    switch(p->type)
+	interpInitGlobalScope(ctx);
+
+	switch(p->type)
 	{
-    case typeConst:
+	case typeConst:
 		ctx->g_t1 = p->type1;
 		return p->con.value;
-    case typeId:
+	case typeId:
 		{
 			HashTable Dati;
 			Valore retVal;
-			if ( scopeFind(ctx, &ctx->g_Scope, p->id.name, &Dati) )
+			if (scopeFind(ctx, &ctx->interpScope, p->id.name, &Dati))
 			{
 				ctx->g_t1 = Dati.Tipo1;
 				retVal = Dati.Value;
 
-				if ( Dati.Tipo0 == T_ARRAY )
+				if (Dati.Tipo0 == T_ARRAY)
 				{
 					int k;
 					int loc;
-					if ( Dati.Value.pArrayDef->countIndexes == 1 )
+					if (Dati.Value.pArrayDef->countIndexes == 1)
 					{
 						loc = interpret(ctx, p->id.value.pArrayDef->indexes[0]).iVal;
 					}
 					else
 					{
 						loc = interpret(ctx, p->id.value.pArrayDef->indexes[0]).iVal * Dati.Value.pArrayDef->sizes[1] + interpret(ctx, p->id.value.pArrayDef->indexes[1]).iVal;
-						for ( k = 1; k < Dati.Value.pArrayDef->countIndexes - 1; k++ )
+						for (k = 1; k < Dati.Value.pArrayDef->countIndexes - 1; k++)
 						{
 							loc *= Dati.Value.pArrayDef->sizes[k+1];
 							loc += interpret(ctx, p->id.value.pArrayDef->indexes[k+1]).iVal;
 						}
 					}
 
-					if ( Dati.Tipo1 == T_INTEGER )
+					if (Dati.Tipo1 == T_INTEGER)
 					{
 						int *base = (int*)Dati.Value.pArrayDef->pArray;
 						retVal.iVal = base[loc];
 					}
-					else if ( Dati.Tipo1 == T_REAL )
+					else if (Dati.Tipo1 == T_REAL)
 					{
 						double *base = (double*)Dati.Value.pArrayDef->pArray;
 						retVal.dblVal = base[loc];
 					}
-					else if ( Dati.Tipo1 == T_BOOLEAN )
+					else if (Dati.Tipo1 == T_BOOLEAN)
 					{
 						int *base = (int*)Dati.Value.pArrayDef->pArray;
 						retVal.bVal = base[loc];
 					}
-					else if ( Dati.Tipo1 == T_STRING )
+					else if (Dati.Tipo1 == T_STRING)
 					{
 						char **base = (char**)Dati.Value.pArrayDef->pArray;
 						retVal.strVal = base[loc];
@@ -330,14 +381,14 @@ Valore interpret(CompilerContext *ctx, nodeType *p)
 			}
 			return retVal;
 		}
-    case typeOperator:
+	case typeOperator:
 		{
 			Valore retVal;
 			Valore leftVal, rightVal;
 			switch(p->opr.oper)
 			{
 			case T_KW_WHILE:
-				while( convertToBoolean(ctx, p->type1, interpret(ctx, p->opr.op[0])) )
+				while(convertToBoolean(ctx, p->type1, interpret(ctx, p->opr.op[0])))
 					interpret(ctx, p->opr.op[1]);
 				ctx->g_t1 = T_INTEGER;
 				return valZero;
@@ -345,29 +396,29 @@ Valore interpret(CompilerContext *ctx, nodeType *p)
 				do
 				{
 					interpret(ctx, p->opr.op[0]);
-				} while( convertToBoolean(ctx, p->type1, interpret(ctx, p->opr.op[1])) );
+				} while(convertToBoolean(ctx, p->type1, interpret(ctx, p->opr.op[1])));
 				ctx->g_t1 = T_INTEGER;
 				return valZero;
 			case T_KW_IF:
-				if ( convertToBoolean(ctx, p->type1, interpret(ctx, p->opr.op[0])) )
+				if (convertToBoolean(ctx, p->type1, interpret(ctx, p->opr.op[0])))
 					interpret(ctx, p->opr.op[1]);
-				else if ( p->opr.nops > 2 )
+				else if (p->opr.nops > 2)
 					interpret(ctx, p->opr.op[2]);
 				ctx->g_t1 = T_INTEGER;
 				return valZero;
 			case T_KW_PRINT:
 				retVal = interpret(ctx, p->opr.op[0]);
-				if ( p->opr.op[0]->type1 == T_INTEGER )
+				if (p->opr.op[0]->type1 == T_INTEGER)
 					printf("%d", retVal.iVal);
-				else if ( p->opr.op[0]->type1 == T_REAL )
+				else if (p->opr.op[0]->type1 == T_REAL)
 					printf("%f", retVal.dblVal);
-				else if ( p->opr.op[0]->type1 == T_BOOLEAN )
+				else if (p->opr.op[0]->type1 == T_BOOLEAN)
 					printf("%s", retVal.bVal ? "true" : "false");
 				else if (p->opr.op[0]->type1 == T_STRING)
-					printf("%s", retVal.strVal);
+					printf("%s", retVal.strVal ? retVal.strVal : "");
 				else
 				{
-					if ( ctx->g_t1 == T_INTEGER)
+					if (ctx->g_t1 == T_INTEGER)
 						printf("%d", retVal.iVal);
 					else if (ctx->g_t1 == T_REAL)
 						printf("%f", retVal.dblVal);
@@ -379,28 +430,28 @@ Valore interpret(CompilerContext *ctx, nodeType *p)
 					szInput[0] = '\0';
 				else if (strlen(szInput) > 0 && szInput[strlen(szInput) - 1] == '\n')
 					szInput[strlen(szInput) - 1] = '\0';
-				
-				if ( szInput[strlen(szInput) - 1] == '\n' )
+
+				if (strlen(szInput) > 0 && szInput[strlen(szInput) - 1] == '\n')
 					szInput[strlen(szInput) - 1] = '\0';
-					
-				if ( p->opr.op[0]->type1 == T_INTEGER )
+
+				if (p->opr.op[0]->type1 == T_INTEGER)
 				{
 					rightVal.iVal = atoi(szInput);
 				}
-				else if ( p->opr.op[0]->type1 == T_REAL )
+				else if (p->opr.op[0]->type1 == T_REAL)
 				{
 					rightVal.dblVal = atof(szInput);
 				}
-				else if ( p->opr.op[0]->type1 == T_BOOLEAN )
+				else if (p->opr.op[0]->type1 == T_BOOLEAN)
 				{
 					rightVal.bVal = atoi(szInput) ? 1 : 0;
 				}
-				else if ( p->opr.op[0]->type1 == T_STRING )
+				else if (p->opr.op[0]->type1 == T_STRING)
 				{
 					rightVal.strVal = szInput;
 				}
 
-				if ( p->opr.op[0]->type0 == T_ARRAY )
+				if (p->opr.op[0]->type0 == T_ARRAY)
 				{
 					int k;
 					int loc;
@@ -408,44 +459,44 @@ Valore interpret(CompilerContext *ctx, nodeType *p)
 
 					retVal.pArrayDef = p->opr.op[0]->id.value.pArrayDef;
 
-					scopeFind(ctx, &ctx->g_Scope, p->opr.op[0]->id.name, &Dati);
+					scopeFind(ctx, &ctx->interpScope, p->opr.op[0]->id.name, &Dati);
 
-					if ( Dati.Value.pArrayDef->countIndexes == 1 )
+					if (Dati.Value.pArrayDef->countIndexes == 1)
 					{
 						loc = interpret(ctx, p->opr.op[0]->id.value.pArrayDef->indexes[0]).iVal;
 					}
 					else
 					{
 						loc = interpret(ctx, p->opr.op[0]->id.value.pArrayDef->indexes[0]).iVal * Dati.Value.pArrayDef->sizes[1] + interpret(ctx, p->opr.op[0]->id.value.pArrayDef->indexes[1]).iVal;
-						for ( k = 1; k < Dati.Value.pArrayDef->countIndexes - 1; k++ )
+						for (k = 1; k < Dati.Value.pArrayDef->countIndexes - 1; k++)
 						{
 							loc *= Dati.Value.pArrayDef->sizes[k+1];
 							loc += interpret(ctx, p->opr.op[0]->id.value.pArrayDef->indexes[k+1]).iVal;
 						}
 					}
 
-					if ( p->opr.op[0]->type1 == T_INTEGER )
+					if (p->opr.op[0]->type1 == T_INTEGER)
 					{
 						int *base = (int*)Dati.Value.pArrayDef->pArray;
 						base[loc] = rightVal.iVal;
 					}
-					else if ( p->opr.op[0]->type1 == T_REAL )
+					else if (p->opr.op[0]->type1 == T_REAL)
 					{
 						double *base = (double*)Dati.Value.pArrayDef->pArray;
 						base[loc] = rightVal.dblVal;
 					}
-					else if ( p->opr.op[0]->type1 == T_BOOLEAN )
+					else if (p->opr.op[0]->type1 == T_BOOLEAN)
 					{
 						int *base = (int*)Dati.Value.pArrayDef->pArray;
 						base[loc] = rightVal.bVal;
 					}
-					else if ( p->opr.op[0]->type1 == T_STRING )
+					else if (p->opr.op[0]->type1 == T_STRING)
 					{
 						char **base = (char**)Dati.Value.pArrayDef->pArray;
-						if ( base[loc] != NULL )
+						if (base[loc] != NULL)
 							free(base[loc]);
 						base[loc] = (char*)malloc(sizeof(char) * strlen(rightVal.strVal) + 1);
-						if ( !base[loc] )
+						if (!base[loc])
 						{
 							printf("Errore: memoria insufficiente.\n");
 							return valZero;
@@ -455,7 +506,7 @@ Valore interpret(CompilerContext *ctx, nodeType *p)
 				}
 				else
 				{
-					scopeUpdateValue(ctx, &ctx->g_Scope,
+					scopeUpdateValue(ctx, &ctx->interpScope,
 									p->opr.op[0]->id.name,
 									p->opr.op[0]->type0,
 									p->opr.op[0]->type1,
@@ -471,10 +522,14 @@ Valore interpret(CompilerContext *ctx, nodeType *p)
 				interpret(ctx, p->opr.op[0]);
 				return interpret(ctx, p->opr.op[1]);
 			case T_CODE_BLOCK:
-				return interpret(ctx, p->opr.op[0]);
+				interpEnterBlock(ctx, p);
+				retVal = interpret(ctx, p->opr.op[0]);
+				interpExitBlock(ctx, p);
+				return retVal;
 			case T_OP_ASSIGN:
-				AssignTypeChecking(ctx, p->opr.op[0]->type1, &leftVal, ctx->g_t1, interpret(ctx, p->opr.op[1]));
-				if ( p->opr.op[0]->type0 == T_ARRAY )
+				rightVal = interpret(ctx, p->opr.op[1]);
+				AssignTypeChecking(ctx, p->opr.op[0]->type1, &leftVal, ctx->g_t1, rightVal);
+				if (p->opr.op[0]->type0 == T_ARRAY)
 				{
 					int k;
 					int loc;
@@ -482,47 +537,47 @@ Valore interpret(CompilerContext *ctx, nodeType *p)
 
 					retVal.pArrayDef = p->opr.op[0]->id.value.pArrayDef;
 
-					scopeFind(ctx, &ctx->g_Scope, p->opr.op[0]->id.name, &Dati);
+					scopeFind(ctx, &ctx->interpScope, p->opr.op[0]->id.name, &Dati);
 
-					if ( Dati.Value.pArrayDef->countIndexes == 1 )
+					if (Dati.Value.pArrayDef->countIndexes == 1)
 					{
 						loc = interpret(ctx, p->opr.op[0]->id.value.pArrayDef->indexes[0]).iVal;
 					}
 					else
 					{
 						loc = interpret(ctx, p->opr.op[0]->id.value.pArrayDef->indexes[0]).iVal * Dati.Value.pArrayDef->sizes[1] + interpret(ctx, p->opr.op[0]->id.value.pArrayDef->indexes[1]).iVal;
-						for ( k = 1; k < Dati.Value.pArrayDef->countIndexes - 1; k++ )
+						for (k = 1; k < Dati.Value.pArrayDef->countIndexes - 1; k++)
 						{
 							loc *= Dati.Value.pArrayDef->sizes[k+1];
 							loc += interpret(ctx, p->opr.op[0]->id.value.pArrayDef->indexes[k+1]).iVal;
 						}
 					}
 
-					if ( p->opr.op[0]->type1 == T_INTEGER )
+					if (p->opr.op[0]->type1 == T_INTEGER)
 					{
 						int *base = (int*)Dati.Value.pArrayDef->pArray;
 						base[loc] = leftVal.iVal;
 					}
-					else if ( p->opr.op[0]->type1 == T_REAL )
+					else if (p->opr.op[0]->type1 == T_REAL)
 					{
 						double *base = (double*)Dati.Value.pArrayDef->pArray;
 						base[loc] = leftVal.dblVal;
 					}
-					else if ( p->opr.op[0]->type1 == T_BOOLEAN )
+					else if (p->opr.op[0]->type1 == T_BOOLEAN)
 					{
 						int *base = (int*)Dati.Value.pArrayDef->pArray;
 						base[loc] = leftVal.bVal;
 					}
-					else if ( p->opr.op[0]->type1 == T_STRING )
+					else if (p->opr.op[0]->type1 == T_STRING)
 					{
 						char **base = (char**)Dati.Value.pArrayDef->pArray;
-						if ( base[loc] != NULL )
+						if (base[loc] != NULL)
 						{
 							free(base[loc]);
 							base[loc] = NULL;
 						}
 						base[loc] = (char*)malloc(sizeof(char) * strlen(leftVal.strVal) + 1);
-						if ( !base[loc] )
+						if (!base[loc])
 						{
 							printf("Errore: memoria insufficiente.\n");
 							return valZero;
@@ -534,7 +589,7 @@ Valore interpret(CompilerContext *ctx, nodeType *p)
 				{
 					retVal = leftVal;
 				}
-				scopeUpdateValue(ctx, &ctx->g_Scope,
+				scopeUpdateValue(ctx, &ctx->interpScope,
 								p->opr.op[0]->id.name,
 								p->opr.op[0]->type0,
 								p->opr.op[0]->type1,
@@ -546,12 +601,12 @@ Valore interpret(CompilerContext *ctx, nodeType *p)
 				return retVal;
 			case T_OP_UMINUS:
 				retVal = interpret(ctx, p->opr.op[0]);
-				if ( p->opr.op[0]->type1 == T_INTEGER )
+				if (p->opr.op[0]->type1 == T_INTEGER)
 				{
 					ctx->g_t1 = T_INTEGER;
 					retVal.iVal = -retVal.iVal;
 				}
-				else if ( p->opr.op[0]->type1 == T_REAL )
+				else if (p->opr.op[0]->type1 == T_REAL)
 				{
 					ctx->g_t1 = T_REAL;
 					retVal.dblVal = -retVal.dblVal;
@@ -623,8 +678,8 @@ Valore interpret(CompilerContext *ctx, nodeType *p)
 				return retVal;
 			}
 		}
-    }
-    return valZero;
+	}
+	return valZero;
 }
 
 Valore GenThreeAddressCode(CompilerContext *ctx, nodeType *p)
@@ -1016,6 +1071,16 @@ gcc -Wall -W -pedantic -O2 ast.c endianess.c jvm.c main.c parser.c scanner.c sym
 ./myCompiler prg_test/myprog_01.prg jvm
 
 java myprog_01
+
+------------------------------------------------------------------------
+
+src/myCompiler prg_test/test_all_optimizations.prg asm
+
+nasm -f elf64 prg_test/test_all_optimizations.asm -o prg_test/test_all_optimizations.o
+
+gcc -no-pie prg_test/test_all_optimizations.o -o prg_test/test_all_optimizations
+
+./prg_test/test_all_optimizations
 */
 
 int main(int argc, char **argv)
@@ -1064,7 +1129,7 @@ int main(int argc, char **argv)
 	}
 
 	if (optLevel < 0)
-		optLevel = genJVM ? 3 : 0;
+		optLevel = ( genJVM | gen_x86_64 ) ? 3 : 0;
 	
 	scopeInit(&ctx, &ctx.g_Scope);
 
@@ -1111,10 +1176,13 @@ int main(int argc, char **argv)
 		else
 		{
 			interpret(&ctx, pTree);
+			scopeFree(&ctx, &ctx.interpScope);
 		}
 	}
 
 	//printf("\n");
+	
+	ctx_interp_cleanup(&ctx);
 
 	scopeFree(&ctx, &ctx.g_Scope);
 	freeNode(&ctx, pTree);

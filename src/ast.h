@@ -49,7 +49,8 @@ typedef struct
 typedef struct
 {
     int oper;                   /* operatore */
-    int nops;                   /* numero di operandi */
+    int nops;  
+    int blockId;                /* numero di operandi */
     struct nodeTypeTag *op[1];  /* operandi (espandibile) */
 } operatorNodeType;
 

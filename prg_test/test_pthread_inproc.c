@@ -60,6 +60,8 @@ static void *worker_compile(void *arg)
             tacFree(ctx, &tac);
         }
     }
+    
+    ctx_interp_cleanup(ctx);
 
     scopeFree(ctx, &ctx->g_Scope);
     freeNode(ctx, pTree);

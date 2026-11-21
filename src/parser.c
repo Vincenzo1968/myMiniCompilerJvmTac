@@ -19,6 +19,8 @@ You should have received a copy of the GNU General Public License
 along with mypdfsearch. If not, see <http://www.gnu.org/licenses/>.
 */
 
+#define _POSIX_C_SOURCE 200809L
+
 #ifdef HAVE_CONFIG_H
 #  include "config.h"
 #endif
@@ -491,6 +493,13 @@ int type(CompilerContext *ctx)
 	}
 }
 
+int isDeclaredInCurrentScope(CompilerContext *ctx, Scope *pScope, char *key, HashTable *pDati)
+{
+    if ( !pScope || pScope->top < 0 || !pScope->stack[pScope->top] )
+        return 0;
+    return htFind(ctx, pScope->stack[pScope->top], key, pDati) >= 0;
+}
+
 //decl : type var_list ';'
 //		| T_KW_ARRAY T_ID '[' T_INT_LITERAL ']' {'[' T_INT_LITERAL ']'} T_KW_OF type ';'
 //		;
@@ -546,7 +555,8 @@ int decl(CompilerContext *ctx)
 			free(value.pArrayDef);
 			return 0;
 		}
-		if ( scopeFind(ctx, &ctx->g_Scope, token.Value.vString, &hashTable) )
+		//if ( scopeFind(ctx, &ctx->g_Scope, token.Value.vString, &hashTable) )
+		if ( isDeclaredInCurrentScope(ctx, &ctx->g_Scope, token.Value.vString, &hashTable) )
 		{
 			printf("Linea %d Colonna %d: Errore var_list. Identificatore '%s' già dichiarato.\n",
 					token.line, token.column, token.Value.vString);
@@ -755,6 +765,56 @@ static void reset_var_value(CompilerContext *ctx, Valore *val, enumTipo1 tipo)
 		val->bVal = 0;
 }
 
+static int interpBeginBlockRecord(CompilerContext *ctx)
+{
+	int id = ctx->interpDecls.nextBlockId++;
+	ctx->interpDecls.currentBlockId = id;
+	return id;
+}
+
+static void interpEndBlockRecord(CompilerContext *ctx, int prevBlockId)
+{
+	ctx->interpDecls.currentBlockId = prevBlockId;
+}
+
+static void interpRecordDecl(CompilerContext *ctx,
+                             const char *name,
+                             enumTipo0 t0,
+                             enumTipo1 t1,
+                             enumTipo2 t2,
+                             Valore val,
+                             char bInizializzato)
+{
+	if (!ctx)
+		return;
+
+	if (ctx->interpDecls.count >= ctx->interpDecls.cap)
+	{
+		int newCap = (ctx->interpDecls.cap == 0) ? 64 : ctx->interpDecls.cap * 2;
+		InterpVarDecl *tmp = (InterpVarDecl *)realloc(
+			ctx->interpDecls.decls, (size_t)newCap * sizeof(InterpVarDecl));
+		if (!tmp)
+			return;
+		ctx->interpDecls.decls = tmp;
+		ctx->interpDecls.cap = newCap;
+	}
+
+	InterpVarDecl *d = &ctx->interpDecls.decls[ctx->interpDecls.count++];
+	memset(d, 0, sizeof(*d));
+	d->blockId = ctx->interpDecls.currentBlockId;
+	d->name = strdup(name ? name : "");
+	d->t0 = t0;
+	d->t1 = t1;
+	d->t2 = t2;
+	d->val = val;
+	d->bInizializzato = bInizializzato;
+
+	if (t1 == T_STRING && bInizializzato && val.strVal != NULL)
+	{
+		d->val.strVal = strdup(val.strVal);
+	}
+}
+
 static int parse_var_item(CompilerContext *ctx)
 {
 	Token token = ctx->g_Token;
@@ -762,16 +822,17 @@ static int parse_var_item(CompilerContext *ctx)
 	HashTable hashTable;
 	char szVarName[256] = "";
 	char szLexeme[256] = "";
+	char bInit = 0;
 
 	reset_var_value(ctx, &value, (enumTipo1)ctx->g_currType);
 
-	if ( ctx->g_Token.Type == T_ID && ctx->g_Token.Value.vString != NULL )
+	if (ctx->g_Token.Type == T_ID && ctx->g_Token.Value.vString != NULL)
 	{
 		snprintf(szVarName, sizeof(szVarName), "%s", ctx->g_Token.Value.vString);
 	}
 	token.Value.vString = szVarName;
 
-	if ( !match(ctx, T_ID) )
+	if (!match(ctx, T_ID))
 	{
 		printf("Linea %d Colonna %d: Errore var_list. Atteso identificatore.\n",
 		       ctx->g_Token.line, ctx->g_Token.column);
@@ -779,7 +840,7 @@ static int parse_var_item(CompilerContext *ctx)
 		return 0;
 	}
 
-	if ( scopeFind(ctx, &ctx->g_Scope, token.Value.vString, &hashTable) )
+	if (isDeclaredInCurrentScope(ctx, &ctx->g_Scope, token.Value.vString, &hashTable))
 	{
 		printf("Linea %d Colonna %d: Errore var_list. Identificatore '%s' già dichiarato.\n",
 		       token.line, token.column, token.Value.vString);
@@ -789,38 +850,45 @@ static int parse_var_item(CompilerContext *ctx)
 
 	scopeInsert(ctx, &ctx->g_Scope, token.Value.vString, T_SIMPLE, (enumTipo1)ctx->g_currType,
 	            T_VAR, value, 0, ctx->g_NextFrameIndex);
-	if ( ctx->g_genJVM )
+	if (ctx->g_genJVM)
 	{
-		if ( ctx->g_currType == T_REAL )
+		if (ctx->g_currType == T_REAL)
 			ctx->g_NextFrameIndex += 2;
 		else
 			ctx->g_NextFrameIndex++;
 		jvmSetNumberLocals(ctx, ctx->g_NextFrameIndex);
 	}
 
-	if ( ctx->g_Token.Type == T_OP_ASSIGN )
+	if (ctx->g_Token.Type == T_OP_ASSIGN)
 	{
+		int savedIsCodeBlock = ctx->g_isCodeBlock;
+		ctx->g_isCodeBlock = 0;
+
 		GetNextToken(ctx, &ctx->g_Token);
 		snprintf(szLexeme, sizeof(szLexeme), "%s", ctx->g_Token.lexeme);
 
-		if ( !expr(ctx) )
+		ctx->g_currConstType = -1;
+		if (!expr(ctx))
 		{
+			ctx->g_isCodeBlock = savedIsCodeBlock;
 			ctx->g_numErrors++;
 			return 0;
 		}
+		ctx->g_isCodeBlock = savedIsCodeBlock;
 
-		if ( ctx->g_currConstType != -1 )
+		if (ctx->g_currConstType != -1)
 		{
-			if ( !TypeCheck(ctx, &value, &token) )
+			if (!TypeCheck(ctx, &value, &token))
 			{
 				ctx->g_numErrors++;
 				return 0;
 			}
 
+			bInit = 1;
 			scopeUpdateValue(ctx, &ctx->g_Scope, szVarName, T_SIMPLE, (enumTipo1)ctx->g_currType,
 			                 T_VAR, value, 1, 1);
 
-			if ( ctx->g_genTAC )
+			if (ctx->g_genTAC)
 			{
 				printf("%s = %s\n", szVarName, szLexeme);
 			}
@@ -833,6 +901,8 @@ static int parse_var_item(CompilerContext *ctx)
 			return 0;
 		}
 	}
+
+	interpRecordDecl(ctx, szVarName, T_SIMPLE, (enumTipo1)ctx->g_currType, T_VAR, value, bInit);
 
 	return 1;
 }
@@ -863,22 +933,31 @@ int var_list(CompilerContext *ctx)
 	return 1;
 }
 
-//code_block : T_KW_BEGIN stmt_list T_KW_END;
+// code_block : T_KW_BEGIN decl_list stmt_list T_KW_END;
 int code_block(CompilerContext *ctx)
 {
     nodeType *left = NULL;
+    int prevBlock;
+    int myBlockId;
 
     ctx->g_isCodeBlock = 1;
 
     if ( !match(ctx, T_KW_BEGIN) )
     {
-        printf("Linea %d Colonna %d: Errore decl. Attesa keyword 'begin'.\n",
-               ctx->g_Token.line, ctx->g_Token.column);
+        printf("Linea %d Colonna %d: Errore decl. Attesa keyword 'begin'.\n", ctx->g_Token.line, ctx->g_Token.column);
         ctx->g_numErrors++;
         return 0;
     }
 
-    stmt_list(ctx);   /* gestisce i propri errori e ritorna sempre 1 */
+    prevBlock = ctx->interpDecls.currentBlockId;
+    myBlockId = interpBeginBlockRecord(ctx);
+
+    scopePush(ctx, &ctx->g_Scope);
+    decl_list(ctx);
+    stmt_list(ctx);   // gestisce i propri errori e ritorna sempre 1
+    scopePop(ctx, &ctx->g_Scope);
+
+    interpEndBlockRecord(ctx, prevBlock);
 
     if ( !match(ctx, T_KW_END) )
     {
@@ -888,8 +967,10 @@ int code_block(CompilerContext *ctx)
         return 0;
     }
 
-    left = ctx->g_stack[ctx->g_top--];
-    ctx->g_stack[++ctx->g_top] = opr(ctx, T_CODE_BLOCK, 1, left);
+	left = ctx->g_stack[ctx->g_top--];
+	nodeType *blkNode = opr(ctx, T_CODE_BLOCK, 1, left);
+	blkNode->opr.blockId = myBlockId;
+	ctx->g_stack[++ctx->g_top] = blkNode;
 
     return 1;
 }
@@ -1159,8 +1240,19 @@ int stmt(CompilerContext *ctx)
 		break;
 
 	case T_KW_BEGIN:
+	{
 		GetNextToken(ctx, &ctx->g_Token);
+
+		int prevBlock = ctx->interpDecls.currentBlockId;
+		int myBlockId = interpBeginBlockRecord(ctx);
+
+		scopePush(ctx, &ctx->g_Scope);
+		decl_list(ctx);
 		stmt_list(ctx);
+		scopePop(ctx, &ctx->g_Scope);
+
+		interpEndBlockRecord(ctx, prevBlock);
+
 		if ( !match(ctx, T_KW_END) )
 		{
 			printf("Linea %d Colonna %d: Errore stmt. Attesa keyword 'end'.\n",
@@ -1171,8 +1263,11 @@ int stmt(CompilerContext *ctx)
 			return 0;
 		}
 		left = ctx->g_stack[ctx->g_top--];
-		ctx->g_stack[++ctx->g_top] = opr(ctx, T_STMT_LIST, 1, left);
+		nodeType *blkNode = opr(ctx, T_CODE_BLOCK, 1, left);
+		blkNode->opr.blockId = myBlockId;
+		ctx->g_stack[++ctx->g_top] = blkNode;
 		break;
+	}
 
 	case T_ID:
 		if ( !scopeFind(ctx, &ctx->g_Scope, ctx->g_Token.Value.vString, &hashTable) )
@@ -1632,6 +1727,15 @@ static void cleanupArrayExprError(CompilerContext *ctx, int currArrayIndex, Valo
 		freeNode(ctx, pNode);
 }
 
+static void freeCurrConstString(CompilerContext *ctx)
+{
+	if ( ctx->g_currConstType == T_STRING && ctx->g_currConstValue.strVal != NULL )
+	{
+		free(ctx->g_currConstValue.strVal);
+		ctx->g_currConstValue.strVal = NULL;
+	}
+}
+
 //expr4 : T_INT_LITERAL
 //		| T_REAL_LITERAL
 //		| T_STRING_LITERAL
@@ -1658,11 +1762,9 @@ int expr4(CompilerContext *ctx)
 			value.iVal = ctx->g_Token.Value.vInt;
 			ctx->g_stack[++ctx->g_top] = con(ctx, T_INTEGER, ctx->g_Token.lexeme, value);
 		}
-		else
-		{
-			ctx->g_currConstType = T_INTEGER;
-			ctx->g_currConstValue.iVal = ctx->g_Token.Value.vInt;
-		}
+		freeCurrConstString(ctx);
+		ctx->g_currConstType = T_INTEGER;
+		ctx->g_currConstValue.iVal = ctx->g_Token.Value.vInt;
 
 		GetNextToken(ctx, &ctx->g_Token);
 		break;
@@ -1673,11 +1775,9 @@ int expr4(CompilerContext *ctx)
 			value.dblVal = ctx->g_Token.Value.vDouble;
 			ctx->g_stack[++ctx->g_top] = con(ctx, T_REAL, ctx->g_Token.lexeme, value);
 		}
-		else
-		{
-			ctx->g_currConstType = T_REAL;
-			ctx->g_currConstValue.dblVal = ctx->g_Token.Value.vDouble;
-		}
+		freeCurrConstString(ctx);
+		ctx->g_currConstType = T_REAL;
+		ctx->g_currConstValue.dblVal = ctx->g_Token.Value.vDouble;
 
 		GetNextToken(ctx, &ctx->g_Token);
 		break;
@@ -1685,25 +1785,24 @@ int expr4(CompilerContext *ctx)
 		if ( ctx->g_isCodeBlock )
 		{
 			Valore value;
-			value.strVal = (char*)malloc(sizeof(char)*strlen(ctx->g_Token.Value.vString)+1);
+			value.strVal = strdup(ctx->g_Token.Value.vString);
 			if ( !value.strVal )
 			{
 				printf("Errore: memoria non sufficiente.\n");
 				return 0;
 			}
-			strcpy(value.strVal, ctx->g_Token.Value.vString);
 			ctx->g_stack[++ctx->g_top] = con(ctx, T_STRING, NULL, value);
 		}
 		else
 		{
+			freeCurrConstString(ctx);
 			ctx->g_currConstType = T_STRING;
-			ctx->g_currConstValue.strVal = (char*)malloc(sizeof(char)*strlen(ctx->g_Token.Value.vString)+1);
+			ctx->g_currConstValue.strVal = strdup(ctx->g_Token.Value.vString);
 			if ( !ctx->g_currConstValue.strVal )
 			{
 				printf("Errore: memoria non sufficiente.\n");
 				return 0;
 			}
-			strcpy(ctx->g_currConstValue.strVal, ctx->g_Token.Value.vString);
 		}
 
 		GetNextToken(ctx, &ctx->g_Token);
@@ -1715,11 +1814,9 @@ int expr4(CompilerContext *ctx)
 			value.bVal = 1;
 			ctx->g_stack[++ctx->g_top] = con(ctx, T_BOOLEAN, "true", value);
 		}
-		else
-		{
-			ctx->g_currConstType = T_BOOLEAN;
-			ctx->g_currConstValue.bVal = 1;
-		}
+		freeCurrConstString(ctx);
+		ctx->g_currConstType = T_BOOLEAN;
+		ctx->g_currConstValue.bVal = 1;
 
 		GetNextToken(ctx, &ctx->g_Token);
 		break;
@@ -1730,11 +1827,9 @@ int expr4(CompilerContext *ctx)
 			value.bVal = 0;
 			ctx->g_stack[++ctx->g_top] = con(ctx, T_BOOLEAN, "false", value);
 		}
-		else
-		{
-			ctx->g_currConstType = T_BOOLEAN;
-			ctx->g_currConstValue.bVal = 0;
-		}
+		freeCurrConstString(ctx);
+		ctx->g_currConstType = T_BOOLEAN;
+		ctx->g_currConstValue.bVal = 0;
 
 		GetNextToken(ctx, &ctx->g_Token);
 		break;
@@ -1754,6 +1849,19 @@ int expr4(CompilerContext *ctx)
 		GetNextToken(ctx, &ctx->g_Token);
 		if ( !expr(ctx) )
 			return 0;
+		if ( !ctx->g_isCodeBlock )
+		{
+			if ( ctx->g_currConstType == T_INTEGER )
+			{
+				ctx->g_currConstValue.iVal = -ctx->g_currConstValue.iVal;
+				break;
+			}
+			else if ( ctx->g_currConstType == T_REAL )
+			{
+				ctx->g_currConstValue.dblVal = -ctx->g_currConstValue.dblVal;
+				break;
+			}
+		}
 		if ( ctx->g_stack[ctx->g_top]->type1 != T_INTEGER && ctx->g_stack[ctx->g_top]->type1 != T_REAL )
 		{
 			printf("Linea %d Colonna %d: Errore expr4. L'operatore meno unario "
@@ -1918,3 +2026,4 @@ int expr4(CompilerContext *ctx)
 
 	return 1;
 }
+

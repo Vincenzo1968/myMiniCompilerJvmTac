@@ -23,7 +23,7 @@ begin
     // TEST -O2: Global Constant Propagation
     // ------------------------------------------------
 
-    print "Please enter b: ";
+    print "\nPlease enter b: ";
     read b;
 
     a = 10;
@@ -38,6 +38,7 @@ begin
     end
 
     print x;
+    print "\n";
 
 
     // ------------------------------------------------
@@ -54,4 +55,5 @@ begin
     end
 
     print s;
+    print "\n";
 end
