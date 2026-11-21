@@ -94,7 +94,7 @@ int main(int argc, char **argv)
         { "myprog_03.prg",              1, 0, 0, 1, 1 },
         { "test_licm.prg",              1, 0, 0, 3, 1 },
         { "test_unroll.prg",            1, 0, 0, 3, 1 },
-        { "test_gcp.prg",               1, 0, 0, 2, 1 },
+        { "test_gcp_02.prg",               1, 0, 0, 2, 1 },
         { "test_dce.prg",               1, 0, 0, 2, 1 },
         { "myprog_err.prg",             1, 0, 0, 0, 0 },
         { "test_error_recovery_01.prg", 1, 0, 0, 0, 0 },
@@ -106,7 +106,7 @@ int main(int argc, char **argv)
         { "myprog_03.prg",              0, 1, 0, 3, 1 },
         { "test_licm.prg",              0, 1, 0, 3, 1 },
         { "test_unroll.prg",            0, 1, 0, 3, 1 },
-        { "test_gcp.prg",               0, 1, 0, 2, 1 },
+        { "test_gcp_02.prg",               0, 1, 0, 2, 1 },
         { "test_dce.prg",               0, 1, 0, 2, 1 },
 
         /* Thread in modalita' ASM x86_64 (vari livelli -O0..-O3) */
@@ -115,7 +115,7 @@ int main(int argc, char **argv)
         { "myprog_03.prg",              0, 0, 1, 1, 1 },
         { "test_licm.prg",              0, 0, 1, 3, 1 },
         { "test_unroll.prg",            0, 0, 1, 3, 1 },
-        { "test_gcp.prg",               0, 0, 1, 2, 1 },
+        { "test_gcp_02.prg",               0, 0, 1, 2, 1 },
         { "test_dce.prg",               0, 0, 1, 3, 1 }
     };
 
