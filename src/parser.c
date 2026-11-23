@@ -451,6 +451,9 @@ int program(CompilerContext *ctx)
 }
 
 //decl_list : {decl};
+static void interpRecordDecl(CompilerContext *ctx, const char *name, enumTipo0 t0, enumTipo1 t1,
+                             enumTipo2 t2, Valore val, char bInizializzato);
+
 int decl_list(CompilerContext *ctx)
 {
 	while ( ctx->g_Token.Type == T_KW_ARRAY ||
@@ -724,6 +727,13 @@ int decl(CompilerContext *ctx)
 
 		value.pArrayDef->indexes = NULL;
 		scopeInsert(ctx, &ctx->g_Scope, token.Value.vString, T_ARRAY, ctx->g_currType, T_VAR, value, 0, ctx->g_NextFrameIndex);
+		scopeAssignUniqueName(ctx, &ctx->g_Scope, token.Value.vString);
+		{
+			/* l'interprete ha il suo scope: gli registro una copia dell'array */
+			Valore rv = value;
+			rv.pArrayDef = arrayDefClone(value.pArrayDef, (enumTipo1)ctx->g_currType);
+			interpRecordDecl(ctx, token.Value.vString, T_ARRAY, (enumTipo1)ctx->g_currType, T_VAR, rv, 0);
+		}
 		if ( ctx->g_genJVM )
 		{
 			ctx->g_NextFrameIndex++;
@@ -815,13 +825,105 @@ static void interpRecordDecl(CompilerContext *ctx,
 	}
 }
 
+/* Un inizializzatore di dichiarazione ("int x = 8;") diventa un normale nodo
+   di assegnazione nell'AST: cosi' finisce nel TAC al punto giusto (anche dentro
+   un ciclo) ed e' soggetto agli stessi passi di ottimizzazione, invece di essere
+   stampato a parse-time o letto dalla symtab dai singoli backend. */
+static void addDeclInitNode(CompilerContext *ctx, const char *name, enumTipo1 t1, Valore value)
+{
+	HashTable hashTable;
+	Valore zero;
+	Valore v = value;
+	char lexeme[64] = "";
+	nodeType *lhs, *rhs, *assign;
+
+	if ( !scopeFind(ctx, &ctx->g_Scope, (char*)name, &hashTable) )
+		return;
+
+	memset(&zero, 0, sizeof(zero));
+
+	switch ( t1 )
+	{
+	case T_INTEGER:
+		snprintf(lexeme, sizeof(lexeme), "%d", value.iVal);
+		break;
+	case T_REAL:
+		{
+			char *e;
+			snprintf(lexeme, sizeof(lexeme), "%.15g", value.dblVal);
+			if ( strchr(lexeme, '.') == NULL )
+			{
+				e = strchr(lexeme, 'e');
+				if ( e == NULL )
+					strcat(lexeme, ".0");
+				else
+				{
+					char tail[32];
+					snprintf(tail, sizeof(tail), "%s", e);
+					strcpy(e, ".0");
+					strcat(lexeme, tail);
+				}
+			}
+		}
+		break;
+	case T_BOOLEAN:
+		snprintf(lexeme, sizeof(lexeme), "%s", value.bVal ? "true" : "false");
+		break;
+	case T_STRING:
+		v.strVal = strdup(value.strVal ? value.strVal : "");
+		if ( v.strVal == NULL )
+			return;
+		break;
+	}
+
+	lhs = id(ctx, (char*)name, hashTable.uniqueName, T_SIMPLE, t1, T_VAR, zero, 1);
+	rhs = con(ctx, t1, (t1 == T_STRING) ? NULL : lexeme, v);
+	assign = opr(ctx, T_OP_ASSIGN, 2, lhs, rhs);
+
+	if ( ctx->g_initCount >= ctx->g_initCap )
+	{
+		int newCap = (ctx->g_initCap == 0) ? 16 : ctx->g_initCap * 2;
+		nodeType **tmp = (nodeType**)realloc(ctx->g_initNodes, (size_t)newCap * sizeof(nodeType*));
+		if ( tmp == NULL )
+		{
+			freeNode(ctx, assign);
+			return;
+		}
+		ctx->g_initNodes = tmp;
+		ctx->g_initCap = newCap;
+	}
+	ctx->g_initNodes[ctx->g_initCount++] = assign;
+}
+
+/* Antepone allo stmt_list appena parsato (in cima a g_stack) le assegnazioni degli
+   inizializzatori dichiarati da startIdx in poi. */
+static void attachDeclInits(CompilerContext *ctx, int startIdx)
+{
+	int k;
+
+	if ( ctx->g_initCount <= startIdx )
+		return;
+
+	if ( ctx->g_top < 0 )
+	{
+		for ( k = startIdx; k < ctx->g_initCount; k++ )
+			freeNode(ctx, ctx->g_initNodes[k]);
+		ctx->g_initCount = startIdx;
+		return;
+	}
+
+	for ( k = ctx->g_initCount - 1; k >= startIdx; k-- )
+		ctx->g_stack[ctx->g_top] = opr(ctx, T_STMT_LIST, 2, ctx->g_initNodes[k], ctx->g_stack[ctx->g_top]);
+
+	ctx->g_initCount = startIdx;
+}
+
 static int parse_var_item(CompilerContext *ctx)
 {
 	Token token = ctx->g_Token;
 	Valore value;
 	HashTable hashTable;
 	char szVarName[256] = "";
-	char szLexeme[256] = "";
 	char bInit = 0;
 
 	reset_var_value(ctx, &value, (enumTipo1)ctx->g_currType);
@@ -850,6 +952,7 @@ static int parse_var_item(CompilerContext *ctx)
 
 	scopeInsert(ctx, &ctx->g_Scope, token.Value.vString, T_SIMPLE, (enumTipo1)ctx->g_currType,
 	            T_VAR, value, 0, ctx->g_NextFrameIndex);
+	scopeAssignUniqueName(ctx, &ctx->g_Scope, token.Value.vString);
 	if (ctx->g_genJVM)
 	{
 		if (ctx->g_currType == T_REAL)
@@ -865,7 +968,6 @@ static int parse_var_item(CompilerContext *ctx)
 		ctx->g_isCodeBlock = 0;
 
 		GetNextToken(ctx, &ctx->g_Token);
-		snprintf(szLexeme, sizeof(szLexeme), "%s", ctx->g_Token.lexeme);
 
 		ctx->g_currConstType = -1;
 		if (!expr(ctx))
@@ -888,10 +990,7 @@ static int parse_var_item(CompilerContext *ctx)
 			scopeUpdateValue(ctx, &ctx->g_Scope, szVarName, T_SIMPLE, (enumTipo1)ctx->g_currType,
 			                 T_VAR, value, 1, 1);
 
-			if (ctx->g_genTAC)
-			{
-				printf("%s = %s\n", szVarName, szLexeme);
-			}
+			addDeclInitNode(ctx, szVarName, (enumTipo1)ctx->g_currType, value);
 		}
 		else
 		{
@@ -939,6 +1038,7 @@ int code_block(CompilerContext *ctx)
     nodeType *left = NULL;
     int prevBlock;
     int myBlockId;
+    int initStart;
 
     ctx->g_isCodeBlock = 1;
 
@@ -952,10 +1052,15 @@ int code_block(CompilerContext *ctx)
     prevBlock = ctx->interpDecls.currentBlockId;
     myBlockId = interpBeginBlockRecord(ctx);
 
+    /* blocco piu' esterno (prevBlock == -1): include anche gli inizializzatori
+       delle dichiarazioni globali, parsate prima di entrare qui. */
+    initStart = (prevBlock == -1) ? 0 : ctx->g_initCount;
+
     scopePush(ctx, &ctx->g_Scope);
     decl_list(ctx);
     stmt_list(ctx);   // gestisce i propri errori e ritorna sempre 1
-    scopePop(ctx, &ctx->g_Scope);
+    attachDeclInits(ctx, initStart);
+    scopePopKeep(ctx, &ctx->g_Scope);
 
     interpEndBlockRecord(ctx, prevBlock);
 
@@ -1246,10 +1351,13 @@ int stmt(CompilerContext *ctx)
 		int prevBlock = ctx->interpDecls.currentBlockId;
 		int myBlockId = interpBeginBlockRecord(ctx);
 
+		int initStart = ctx->g_initCount;
+
 		scopePush(ctx, &ctx->g_Scope);
 		decl_list(ctx);
 		stmt_list(ctx);
-		scopePop(ctx, &ctx->g_Scope);
+		attachDeclInits(ctx, initStart);
+		scopePopKeep(ctx, &ctx->g_Scope);
 
 		interpEndBlockRecord(ctx, prevBlock);
 
@@ -1403,7 +1511,7 @@ int stmt(CompilerContext *ctx)
 		}
 
 		right = ctx->g_stack[ctx->g_top--];
-		left = id(ctx, szIdName, "a", hashTable.Tipo0, hashTable.Tipo1, hashTable.Tipo2, value, 1);
+		left = id(ctx, szIdName, hashTable.uniqueName, hashTable.Tipo0, hashTable.Tipo1, hashTable.Tipo2, value, 1);
 
 		if ( left->type1 != right->type1 )
 		{
@@ -1946,7 +2054,7 @@ int expr4(CompilerContext *ctx)
 			value = hashTable.Value;
 		}
 
-		ctx->g_stack[++ctx->g_top] = id(ctx, ctx->g_Token.Value.vString, "a", hashTable.Tipo0, hashTable.Tipo1, hashTable.Tipo2, value, hashTable.bInizializzato);
+		ctx->g_stack[++ctx->g_top] = id(ctx, ctx->g_Token.Value.vString, hashTable.uniqueName, hashTable.Tipo0, hashTable.Tipo1, hashTable.Tipo2, value, hashTable.bInizializzato);
 
 		GetNextToken(ctx, &ctx->g_Token);
 

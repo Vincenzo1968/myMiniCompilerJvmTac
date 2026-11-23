@@ -78,6 +78,12 @@ typedef struct CompilerContext {
     int g_genTAC;
     int g_genJVM;
     int g_NextFrameIndex;
+    /* Assegnazioni generate dagli inizializzatori delle dichiarazioni
+       ("int x = 8;"): vengono accodate durante decl_list e poi anteposte
+       allo stmt_list del blocco che le contiene. */
+    nodeType **g_initNodes;
+    int g_initCount;
+    int g_initCap;
 
     /* da scanner.c */
     char *g_szInput;

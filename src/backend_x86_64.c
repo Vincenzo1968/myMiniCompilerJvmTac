@@ -91,12 +91,54 @@ static int get_var_offset(const char *name, enumTipo1 type, VarTable *vt)
     return vt->items[vt->count - 1].offset;
 }
 
+static bool is_bool_literal(const char *str)
+{
+    return str && (strcmp(str, "true") == 0 || strcmp(str, "false") == 0);
+}
+
+/* Costante numerica o booleana (true/false): non occupa uno slot nello stack frame. */
 static bool is_numeric_constant(const char *str)
 {
     if (!str || *str == '\0') return false;
+    if (is_bool_literal(str)) return true;
     char *endptr;
     strtod(str, &endptr);
     return (*endptr == '\0');
+}
+
+static long long const_ivalue(const char *str)
+{
+    if (strcmp(str, "true") == 0) return 1;
+    if (strcmp(str, "false") == 0) return 0;
+    return strtoll(str, NULL, 10);
+}
+
+/* Tipo di un operando TAC: letterali dal loro aspetto, variabili e temporanei
+   dal tipo con cui sono stati registrati nello stack frame. */
+static enumTipo1 operand_type(const char *s, VarTable *vt, enumTipo1 dflt)
+{
+    if (!s) return dflt;
+    if (is_string_literal(s)) return T_STRING;
+    if (is_bool_literal(s)) return T_BOOLEAN;
+    if (is_numeric_constant(s))
+        return (strpbrk(s, ".eE") != NULL) ? T_REAL : T_INTEGER;
+    for (int i = 0; i < vt->count; i++) {
+        if (strcmp(vt->items[i].name, s) == 0)
+            return vt->items[i].type1;
+    }
+    return dflt;
+}
+
+/* Registra nello stack frame una variabile o un temporaneo. Per le variabili
+   dell'utente il tipo e' quello dichiarato (la symtab contiene i nomi univoci). */
+static void register_operand(CompilerContext *ctx, Scope *pScope, const char *name, enumTipo1 dflt, VarTable *vt)
+{
+    enumTipo1 t = dflt;
+    HashTable d;
+    memset(&d, 0, sizeof(d));
+    if (pScope && scopeFind(ctx, pScope, (char *)name, &d))
+        t = d.Tipo1;
+    get_var_offset(name, t, vt);
 }
 
 static void emit_load_operand(CompilerContext *ctx, FILE *out, const char *operand, enumTipo1 type, VarTable *vt, StrConstTable *st)
@@ -115,7 +157,7 @@ static void emit_load_operand(CompilerContext *ctx, FILE *out, const char *opera
             const char *label = get_real_const_label(ctx, val);
             fprintf(out, "    movsd xmm0, [rel %s]\n", label);
         } else {
-            long long val = strtoll(operand, NULL, 10);
+            long long val = const_ivalue(operand);
             fprintf(out, "    mov rax, %lld\n", val);
         }
         return;
@@ -127,6 +169,32 @@ static void emit_load_operand(CompilerContext *ctx, FILE *out, const char *opera
     } else {
         fprintf(out, "    mov rax, [rbp + %d]\n", offset);
     }
+}
+
+/* Carica un operando come double in xmm<reg>, convertendolo se e' intero. */
+static void emit_load_real(CompilerContext *ctx, FILE *out, const char *operand, VarTable *vt, int reg)
+{
+    if (is_numeric_constant(operand)) {
+        const char *label = get_real_const_label(ctx, is_bool_literal(operand) ? (double)const_ivalue(operand) : strtod(operand, NULL));
+        fprintf(out, "    movsd xmm%d, [rel %s]\n", reg, label);
+        return;
+    }
+    int offset = get_var_offset(operand, T_REAL, vt);
+    if (operand_type(operand, vt, T_REAL) == T_REAL) {
+        fprintf(out, "    movsd xmm%d, [rbp + %d]\n", reg, offset);
+    } else {
+        fprintf(out, "    mov rax, [rbp + %d]\n", offset);
+        fprintf(out, "    cvtsi2sd xmm%d, rax\n", reg);
+    }
+}
+
+/* Carica un operando intero/booleano in un registro generale (costante inclusa). */
+static void emit_load_int_reg(FILE *out, const char *operand, VarTable *vt, const char *reg)
+{
+    if (is_numeric_constant(operand))
+        fprintf(out, "    mov %s, %lld\n", reg, const_ivalue(operand));
+    else
+        fprintf(out, "    mov %s, [rbp + %d]\n", reg, get_var_offset(operand, T_INTEGER, vt));
 }
 
 static void emit_store_operand(FILE *out, const char *dest, enumTipo1 type, VarTable *vt)
@@ -142,10 +210,8 @@ static void emit_store_operand(FILE *out, const char *dest, enumTipo1 type, VarT
 
 void x86_64Generate(CompilerContext *ctx, TACList *tac, Scope *pScope, const char *outputFileName)
 {
-    (void)pScope;
-
-    FILE *out = fopen(outputFileName, "w");
-    if (!out) {
+    FILE *fp = fopen(outputFileName, "w");
+    if (!fp) {
         printf("Errore: impossibile aprire il file %s per la scrittura.\n", outputFileName);
         return;
     }
@@ -166,23 +232,32 @@ void x86_64Generate(CompilerContext *ctx, TACList *tac, Scope *pScope, const cha
         const TACInstr *in = &tac->items[i];
         if (in->dead) continue;
 
+        bool isCmp = (in->op >= TAC_LT && in->op <= TAC_NE);
+
         if (in->op != TAC_LABEL && in->op != TAC_GOTO && in->op != TAC_IF_FALSE && in->op != TAC_IF_TRUE) {
             if (in->res && !is_string_literal(in->res) && !is_numeric_constant(in->res))
-                get_var_offset(in->res, in->type1, &vt);
+                register_operand(ctx, pScope, in->res, isCmp ? T_BOOLEAN : in->type1, &vt);
         }
 
         if (in->arg1) {
             if (is_string_literal(in->arg1))
                 get_str_const_label(in->arg1, &st);
             else if (!is_numeric_constant(in->arg1))
-                get_var_offset(in->arg1, in->type1, &vt);
+                register_operand(ctx, pScope, in->arg1, isCmp ? T_INTEGER : in->type1, &vt);
         }
 
         if (in->arg2) {
             if (is_string_literal(in->arg2))
                 get_str_const_label(in->arg2, &st);
             else if (!is_numeric_constant(in->arg2))
-                get_var_offset(in->arg2, in->type1, &vt);
+                register_operand(ctx, pScope, in->arg2, isCmp ? T_INTEGER : in->type1, &vt);
+        }
+
+        /* appoggi per la concatenazione di stringhe ('$' non e' valido negli identificatori) */
+        if (in->op == TAC_ADD && in->type1 == T_STRING) {
+            get_var_offset("$cat_a", T_STRING, &vt);
+            get_var_offset("$cat_b", T_STRING, &vt);
+            get_var_offset("$cat_r", T_STRING, &vt);
         }
     }
 
@@ -191,25 +266,16 @@ void x86_64Generate(CompilerContext *ctx, TACList *tac, Scope *pScope, const cha
         frame_size = ((frame_size / 16) + 1) * 16;
     }
 
-    /* PASSAGGIO 2: Intestazione e sezione dati */
-    fprintf(out, "global main\n");
-    fprintf(out, "extern printf\n");
-    fprintf(out, "extern scanf\n\n");
-    
-    fprintf(out, "section .data\n");
-    fprintf(out, "    fmt_int       db \"%%d\", 10, 0\n");
-    fprintf(out, "    fmt_real      db \"%%f\", 10, 0\n");
-    fprintf(out, "    fmt_str       db \"%%s\", 0\n");
-    fprintf(out, "    fmt_scan_int  db \"%%d\", 0\n");
-    fprintf(out, "    fmt_scan_real db \"%%lf\", 0\n");
-    
-    for (int i = 0; i < ctx->real_const_count; i++) {
-        fprintf(out, "    %-12s dq %f\n", ctx->real_consts[i].label, ctx->real_consts[i].value);
+    /* Il testo viene prodotto in un buffer: la sezione .data va scritta dopo,
+       perche' le costanti real vengono registrate mentre si traducono le istruzioni. */
+    char *textBuf = NULL;
+    size_t textLen = 0;
+    FILE *out = open_memstream(&textBuf, &textLen);
+    if (!out) {
+        printf("Errore: memoria insufficiente.\n");
+        fclose(fp);
+        return;
     }
-    for (int i = 0; i < st.count; i++) {
-        emit_nasm_string_def(out, st.items[i].label, st.items[i].raw);
-    }
-    fprintf(out, "\n");
 
     /* PASSAGGIO 3: Sezione testo e prologo */
     fprintf(out, "section .text\n");
@@ -282,7 +348,8 @@ void x86_64Generate(CompilerContext *ctx, TACList *tac, Scope *pScope, const cha
                 if (in->type1 == T_REAL)
                 {
                     fprintf(out, "    xorpd xmm1, xmm1\n");
-                    fprintf(out, "    subsd xmm0, xmm1\n");
+                    fprintf(out, "    subsd xmm1, xmm0\n");
+                    fprintf(out, "    movapd xmm0, xmm1\n");
                 }
                 else
                 {
@@ -301,10 +368,36 @@ void x86_64Generate(CompilerContext *ctx, TACList *tac, Scope *pScope, const cha
             case TAC_SUB:
             case TAC_MUL:
             case TAC_DIV: {
-                if (in->type1 == T_REAL)
+                if (in->type1 == T_STRING && in->op == TAC_ADD)
                 {
-                    fprintf(out, "    movsd xmm0, [rbp + %d]\n", get_var_offset(in->arg1, T_REAL, &vt));
-                    fprintf(out, "    movsd xmm1, [rbp + %d]\n", get_var_offset(in->arg2, T_REAL, &vt));
+                    int oa = get_var_offset("$cat_a", T_STRING, &vt);
+                    int ob = get_var_offset("$cat_b", T_STRING, &vt);
+                    int orr = get_var_offset("$cat_r", T_STRING, &vt);
+                    emit_load_operand(ctx, out, in->arg1, T_STRING, &vt, &st);
+                    fprintf(out, "    mov [rbp + %d], rax\n", oa);
+                    emit_load_operand(ctx, out, in->arg2, T_STRING, &vt, &st);
+                    fprintf(out, "    mov [rbp + %d], rax\n", ob);
+                    fprintf(out, "    mov rdi, [rbp + %d]\n", oa);
+                    fprintf(out, "    call strlen\n");
+                    fprintf(out, "    mov [rbp + %d], rax\n", orr);
+                    fprintf(out, "    mov rdi, [rbp + %d]\n", ob);
+                    fprintf(out, "    call strlen\n");
+                    fprintf(out, "    add rax, [rbp + %d]\n", orr);
+                    fprintf(out, "    lea rdi, [rax + 1]\n");
+                    fprintf(out, "    call malloc\n");
+                    fprintf(out, "    mov [rbp + %d], rax\n", orr);
+                    fprintf(out, "    mov rdi, rax\n");
+                    fprintf(out, "    mov rsi, [rbp + %d]\n", oa);
+                    fprintf(out, "    call strcpy\n");
+                    fprintf(out, "    mov rdi, [rbp + %d]\n", orr);
+                    fprintf(out, "    mov rsi, [rbp + %d]\n", ob);
+                    fprintf(out, "    call strcat\n");
+                    fprintf(out, "    mov rax, [rbp + %d]\n", orr);
+                }
+                else if (in->type1 == T_REAL)
+                {
+                    emit_load_real(ctx, out, in->arg1, &vt, 0);
+                    emit_load_real(ctx, out, in->arg2, &vt, 1);
                     if (in->op == TAC_ADD) fprintf(out, "    addsd xmm0, xmm1\n");
                     else if (in->op == TAC_SUB) fprintf(out, "    subsd xmm0, xmm1\n");
                     else if (in->op == TAC_MUL) fprintf(out, "    mulsd xmm0, xmm1\n");
@@ -312,15 +405,15 @@ void x86_64Generate(CompilerContext *ctx, TACList *tac, Scope *pScope, const cha
                 }
                 else
                 {
-                    fprintf(out, "    mov rax, [rbp + %d]\n", get_var_offset(in->arg1, T_INTEGER, &vt));
-                    fprintf(out, "    mov rbx, [rbp + %d]\n", get_var_offset(in->arg2, T_INTEGER, &vt));
-                    if (in->op == TAC_ADD) fprintf(out, "    add rax, rbx\n");
-                    else if (in->op == TAC_SUB) fprintf(out, "    sub rax, rbx\n");
-                    else if (in->op == TAC_MUL) fprintf(out, "    imul rax, rbx\n");
+                    emit_load_operand(ctx, out, in->arg1, T_INTEGER, &vt, &st);
+                    emit_load_int_reg(out, in->arg2, &vt, "rcx");
+                    if (in->op == TAC_ADD) fprintf(out, "    add rax, rcx\n");
+                    else if (in->op == TAC_SUB) fprintf(out, "    sub rax, rcx\n");
+                    else if (in->op == TAC_MUL) fprintf(out, "    imul rax, rcx\n");
                     else if (in->op == TAC_DIV)
                     {
                         fprintf(out, "    cqo\n");
-                        fprintf(out, "    idiv rbx\n");
+                        fprintf(out, "    idiv rcx\n");
                     }
                 }
                 emit_store_operand(out, in->res, in->type1, &vt);
@@ -383,60 +476,47 @@ void x86_64Generate(CompilerContext *ctx, TACList *tac, Scope *pScope, const cha
             case TAC_EQ:
             case TAC_NE:
             {
-                emit_load_operand(ctx, out, in->arg1, T_INTEGER, &vt, &st);
-                if (is_numeric_constant(in->arg2))
+                bool realCmp = operand_type(in->arg1, &vt, T_INTEGER) == T_REAL ||
+                               operand_type(in->arg2, &vt, T_INTEGER) == T_REAL;
+                if (realCmp)
                 {
-                    long long val2 = strtoll(in->arg2, NULL, 10);
-                    fprintf(out, "    cmp rax, %lld\n", val2);
+                    emit_load_real(ctx, out, in->arg1, &vt, 0);
+                    emit_load_real(ctx, out, in->arg2, &vt, 1);
+                    fprintf(out, "    ucomisd xmm0, xmm1\n");
+                    fprintf(out, "    mov rax, 0\n");
+                    if (in->op == TAC_LT)      fprintf(out, "    setb al\n");
+                    else if (in->op == TAC_LE) fprintf(out, "    setbe al\n");
+                    else if (in->op == TAC_GT) fprintf(out, "    seta al\n");
+                    else if (in->op == TAC_GE) fprintf(out, "    setae al\n");
+                    else if (in->op == TAC_EQ) fprintf(out, "    sete al\n");
+                    else if (in->op == TAC_NE) fprintf(out, "    setne al\n");
                 }
                 else
                 {
-                    fprintf(out, "    mov rbx, [rbp + %d]\n", get_var_offset(in->arg2, T_INTEGER, &vt));
-                    fprintf(out, "    cmp rax, rbx\n");
+                    emit_load_operand(ctx, out, in->arg1, T_INTEGER, &vt, &st);
+                    emit_load_int_reg(out, in->arg2, &vt, "rcx");
+                    fprintf(out, "    cmp rax, rcx\n");
+                    fprintf(out, "    mov rax, 0\n");
+                    if (in->op == TAC_LT)      fprintf(out, "    setl al\n");
+                    else if (in->op == TAC_LE) fprintf(out, "    setle al\n");
+                    else if (in->op == TAC_GT) fprintf(out, "    setg al\n");
+                    else if (in->op == TAC_GE) fprintf(out, "    setge al\n");
+                    else if (in->op == TAC_EQ) fprintf(out, "    sete al\n");
+                    else if (in->op == TAC_NE) fprintf(out, "    setne al\n");
                 }
-                fprintf(out, "    mov rax, 0\n");
-                if (in->op == TAC_LT)      fprintf(out, "    setl al\n");
-                else if (in->op == TAC_LE) fprintf(out, "    setle al\n");
-                else if (in->op == TAC_GT) fprintf(out, "    setg al\n");
-                else if (in->op == TAC_GE) fprintf(out, "    setge al\n");
-                else if (in->op == TAC_EQ) fprintf(out, "    sete al\n");
-                else if (in->op == TAC_NE) fprintf(out, "    setne al\n");
                 fprintf(out, "    movzx rax, al\n");
                 emit_store_operand(out, in->res, T_BOOLEAN, &vt);
                 break;
             }
             case TAC_AND:
+            case TAC_OR:
             {
                 emit_load_operand(ctx, out, in->arg1, T_BOOLEAN, &vt, &st);
-                if (is_numeric_constant(in->arg2))
-                {
-                    long long val2 = strtoll(in->arg2, NULL, 10);
-                    fprintf(out, "    and rax, %lld\n", val2);
-                }
-                else
-                {
-                    fprintf(out, "    mov rbx, [rbp + %d]\n", get_var_offset(in->arg2, T_BOOLEAN, &vt));
-                    fprintf(out, "    and rax, rbx\n");
-                 }
-                 emit_store_operand(out, in->res, T_BOOLEAN, &vt);
-                 break;
-             }
-             case TAC_OR:
-             {
-                 emit_load_operand(ctx, out, in->arg1, T_BOOLEAN, &vt, &st);
-                 if (is_numeric_constant(in->arg2))
-                 {
-                     long long val2 = strtoll(in->arg2, NULL, 10);
-                     fprintf(out, "    or rax, %lld\n", val2);
-                 }
-                 else
-                 {
-                     fprintf(out, "    mov rbx, [rbp + %d]\n", get_var_offset(in->arg2, T_BOOLEAN, &vt));
-                     fprintf(out, "    or rax, rbx\n");
-                 }
-                 emit_store_operand(out, in->res, T_BOOLEAN, &vt);
-                 break;
-             }
+                emit_load_int_reg(out, in->arg2, &vt, "rcx");
+                fprintf(out, "    %s rax, rcx\n", in->op == TAC_AND ? "and" : "or");
+                emit_store_operand(out, in->res, T_BOOLEAN, &vt);
+                break;
+            }
              default:
                  fprintf(out, "    ; Istruzione TAC non gestita: %d\n", in->op);
                  break;
@@ -450,6 +530,34 @@ void x86_64Generate(CompilerContext *ctx, TACList *tac, Scope *pScope, const cha
 	fprintf(out, "    ret\n");
 	fprintf(out, "section .note.GNU-stack noalloc noexec nowrite progbits\n");
 	fclose(out);
+
+    /* PASSAGGIO 2: Intestazione e sezione dati */
+    fprintf(fp, "global main\n");
+    fprintf(fp, "extern printf\n");
+    fprintf(fp, "extern scanf\n");
+    fprintf(fp, "extern strlen\n");
+    fprintf(fp, "extern malloc\n");
+    fprintf(fp, "extern strcpy\n");
+    fprintf(fp, "extern strcat\n\n");
+    
+    fprintf(fp, "section .data\n");
+    fprintf(fp, "    fmt_int       db \"%%d\", 10, 0\n");
+    fprintf(fp, "    fmt_real      db \"%%f\", 10, 0\n");
+    fprintf(fp, "    fmt_str       db \"%%s\", 0\n");
+    fprintf(fp, "    fmt_scan_int  db \"%%d\", 0\n");
+    fprintf(fp, "    fmt_scan_real db \"%%lf\", 0\n");
+    
+    for (int i = 0; i < ctx->real_const_count; i++) {
+        fprintf(fp, "    %-12s dq %f\n", ctx->real_consts[i].label, ctx->real_consts[i].value);
+    }
+    for (int i = 0; i < st.count; i++) {
+        emit_nasm_string_def(fp, st.items[i].label, st.items[i].raw);
+    }
+    fprintf(fp, "\n");
+
+	fwrite(textBuf, 1, textLen, fp);
+	free(textBuf);
+	fclose(fp);
 	for (int i = 0; i < vt.count; i++)
 		free(vt.items[i].name);
 	free(vt.items);

@@ -884,23 +884,10 @@ void MakeBytecodeDeclInitMain(CompilerContext *ctx, jvmHashTable **pHT, Scope *p
 		while (t != NULL) {
 			scopeFind(ctx, pScope, t->Key, &Dati);
 
-			if (t->Tipo0 == T_SIMPLE && t->bInizializzato && t->bDecl) {
-				switch (t->Tipo1) {
-				case T_INTEGER:
-					jvmPushInt(ctx, t->Value.iVal, pHT);
-					break;
-				case T_REAL:
-					jvmPushDouble(ctx, t->Value.dblVal, pHT);
-					break;
-				case T_BOOLEAN:
-					jvmPushInt(ctx, t->Value.bVal ? 1 : 0, pHT);
-					break;
-				case T_STRING:
-					jvmPushString(ctx, t->Value.strVal ? t->Value.strVal : "", pHT);
-					break;
-				}
-				jvmEmitStoreLocal(ctx, Dati.frameIndex, Dati.Tipo1);
-			} else if (t->Tipo0 == T_ARRAY) {
+			/* Gli inizializzatori scalari ("int x = 8;") non si emettono piu' qui:
+			   sono assegnazioni nell'AST e quindi arrivano dal TAC, al punto di
+			   dichiarazione. Qui restano solo le allocazioni degli array. */
+			if (t->Tipo0 == T_ARRAY) {
 				MakeBytecodeDeclArrayMain(ctx, pHT, &Dati);
 			}
 

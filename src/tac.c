@@ -319,18 +319,18 @@ static char *emitTAC(CompilerContext *ctx, TACList *tac, Scope *pScope, nodeType
 
     case typeId: {
         HashTable Dati = {0};
-        if (!scopeFind(ctx, pScope, p->id.name, &Dati)) {
-            printf("Errore TAC: identificatore '%s' non dichiarato\n", p->id.name);
+        if (!scopeFind(ctx, pScope, p->id.uniqueName, &Dati)) {
+            printf("Errore TAC: identificatore '%s' non dichiarato\n", p->id.uniqueName);
             return tacStrdup(ctx, "0");
         }
         if (Dati.Tipo0 == T_ARRAY) {
             char *off = emitArrayOffset(ctx, tac, pScope, p, &Dati);
             char *t = newTemp(ctx);
-            tacEmit(ctx, tac, TAC_LOAD_IDX, p->id.name, off, t, Dati.Tipo1);
+            tacEmit(ctx, tac, TAC_LOAD_IDX, p->id.uniqueName, off, t, Dati.Tipo1);
             free(off);
             return t;
         }
-        return tacStrdup(ctx, p->id.name);
+        return tacStrdup(ctx, p->id.uniqueName);
     }
 
     case typeOperator:
@@ -403,16 +403,16 @@ static char *emitTAC(CompilerContext *ctx, TACList *tac, Scope *pScope, nodeType
             nodeType *dst = p->opr.op[0];
             if (dst->type0 == T_ARRAY) {
                 HashTable Dati = {0};
-                if (scopeFind(ctx, pScope, dst->id.name, &Dati)) {
+                if (scopeFind(ctx, pScope, dst->id.uniqueName, &Dati)) {
                     char *off = emitArrayOffset(ctx, tac, pScope, dst, &Dati);
                     char *tmp = newTemp(ctx);
                     tacEmit(ctx, tac, TAC_READ, NULL, NULL, tmp, dst->type1);
-                    tacEmit(ctx, tac, TAC_STORE_IDX, off, tmp, dst->id.name, dst->type1);
+                    tacEmit(ctx, tac, TAC_STORE_IDX, off, tmp, dst->id.uniqueName, dst->type1);
                     free(off);
                     free(tmp);
                 }
             } else {
-                tacEmit(ctx, tac, TAC_READ, NULL, NULL, dst->id.name, dst->type1);
+                tacEmit(ctx, tac, TAC_READ, NULL, NULL, dst->id.uniqueName, dst->type1);
             }
             return NULL;
         }
@@ -422,13 +422,13 @@ static char *emitTAC(CompilerContext *ctx, TACList *tac, Scope *pScope, nodeType
             char *rhs = emitTAC(ctx, tac, pScope, p->opr.op[1]);
             if (lhs->type0 == T_ARRAY) {
                 HashTable Dati = {0};
-                if (scopeFind(ctx, pScope, lhs->id.name, &Dati)) {
+                if (scopeFind(ctx, pScope, lhs->id.uniqueName, &Dati)) {
                     char *off = emitArrayOffset(ctx, tac, pScope, lhs, &Dati);
-                    tacEmit(ctx, tac, TAC_STORE_IDX, off, rhs, lhs->id.name, lhs->type1);
+                    tacEmit(ctx, tac, TAC_STORE_IDX, off, rhs, lhs->id.uniqueName, lhs->type1);
                     free(off);
                 }
             } else {
-                tacEmit(ctx, tac, TAC_ASSIGN, rhs, NULL, lhs->id.name, lhs->type1);
+                tacEmit(ctx, tac, TAC_ASSIGN, rhs, NULL, lhs->id.uniqueName, lhs->type1);
             }
             return rhs;
         }
