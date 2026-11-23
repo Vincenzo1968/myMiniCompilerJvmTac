@@ -313,6 +313,14 @@ static void interpExitBlock(CompilerContext *ctx, nodeType *blockNode)
 	scopePop(ctx, &ctx->interpScope);
 }
 
+/* Una concatenazione di stringhe produce un buffer nuovo, di cui deve farsi carico
+   chi consuma il risultato (print, un'altra concatenazione, un'assegnazione).
+   Costanti e variabili restituiscono invece un puntatore preso in prestito. */
+static int isFreshString(const nodeType *n)
+{
+	return n != NULL && n->type == typeOperator && n->opr.oper == T_OP_PLUS && n->type1 == T_STRING;
+}
+
 Valore interpret(CompilerContext *ctx, nodeType *p)
 {
 	char szInput[1024];
@@ -421,7 +429,11 @@ Valore interpret(CompilerContext *ctx, nodeType *p)
 				else if (p->opr.op[0]->type1 == T_BOOLEAN)
 					printf("%s", retVal.bVal ? "true" : "false");
 				else if (p->opr.op[0]->type1 == T_STRING)
+				{
 					printf("%s", retVal.strVal ? retVal.strVal : "");
+					if (isFreshString(p->opr.op[0]))
+						free(retVal.strVal);
+				}
 				else
 				{
 					if (ctx->g_t1 == T_INTEGER)
@@ -589,6 +601,8 @@ Valore interpret(CompilerContext *ctx, nodeType *p)
 							return valZero;
 						}
 						strcpy(base[loc], leftVal.strVal);
+						if (isFreshString(p->opr.op[1]))
+							free(leftVal.strVal);
 					}
 				}
 				else
@@ -599,7 +613,7 @@ Valore interpret(CompilerContext *ctx, nodeType *p)
 					   una copia, altrimenti lo stesso buffer verrebbe liberato sia da freeNode (AST o
 					   altra variabile) sia da htFree. Il risultato di un'espressione (es. concatenazione)
 					   e' gia' un buffer nuovo: lo prende lo scope. */
-					if ( p->opr.op[0]->type1 == T_STRING && p->opr.op[1]->type != typeOperator && retVal.strVal != NULL )
+					if ( p->opr.op[0]->type1 == T_STRING && !isFreshString(p->opr.op[1]) && retVal.strVal != NULL )
 					{
 						retVal.strVal = strdup(retVal.strVal);
 						if ( retVal.strVal == NULL )
@@ -638,6 +652,11 @@ Valore interpret(CompilerContext *ctx, nodeType *p)
 				leftVal = interpret(ctx, p->opr.op[0]);
 				rightVal = interpret(ctx, p->opr.op[1]);
 				retVal = BinopValue(ctx, T_OP_PLUS, p->opr.op[0]->type1, leftVal, p->opr.op[1]->type1, rightVal);
+				/* i temporanei della concatenazione sono stati copiati in retVal: vanno liberati */
+				if (isFreshString(p->opr.op[0]))
+					free(leftVal.strVal);
+				if (isFreshString(p->opr.op[1]))
+					free(rightVal.strVal);
 				return retVal;
 			case T_OP_MINUS:
 				leftVal = interpret(ctx, p->opr.op[0]);
