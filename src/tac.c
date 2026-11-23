@@ -844,6 +844,24 @@ void tacOptimizeO1(CompilerContext *ctx, TACList *tac)
     envFree(ctx, &env);
 }
 
+/* Stampa un operando; le stringhe letterali mostrano gli a capo, i tab ecc. come
+   sequenze di escape (\n, \t...) invece di spezzare la riga. Solo per la stampa:
+   gli operandi memorizzati nel TAC restano invariati e i backend li leggono come prima. */
+static void tacPrintOperand(const char *s)
+{
+    if (!s) return;
+    if (s[0] != '"') { fputs(s, stdout); return; }
+    for (; *s; s++) {
+        switch (*s) {
+            case '\n': fputs("\\n", stdout); break;
+            case '\t': fputs("\\t", stdout); break;
+            case '\r': fputs("\\r", stdout); break;
+            case '\\': fputs("\\\\", stdout); break;
+            default:   putchar(*s);
+        }
+    }
+}
+
 void tacPrint(CompilerContext *ctx, const TACList *list)
 {
 	(void)ctx;
@@ -852,29 +870,29 @@ void tacPrint(CompilerContext *ctx, const TACList *list)
         const TACInstr *in = &list->items[i];
         if (in->dead) continue;
         switch (in->op) {
-            case TAC_ASSIGN:    printf("%s = %s\n", in->res, in->arg1); break;
-            case TAC_NEG:       printf("%s = neg %s\n", in->res, in->arg1); break;
-            case TAC_NOT:       printf("%s = not %s\n", in->res, in->arg1); break;
-            case TAC_ADD:       printf("%s = %s + %s\n", in->res, in->arg1, in->arg2); break;
-            case TAC_SUB:       printf("%s = %s - %s\n", in->res, in->arg1, in->arg2); break;
-            case TAC_MUL:       printf("%s = %s * %s\n", in->res, in->arg1, in->arg2); break;
-            case TAC_DIV:       printf("%s = %s / %s\n", in->res, in->arg1, in->arg2); break;
-            case TAC_LT:        printf("%s = %s < %s\n", in->res, in->arg1, in->arg2); break;
-            case TAC_LE:        printf("%s = %s <= %s\n", in->res, in->arg1, in->arg2); break;
-            case TAC_GT:        printf("%s = %s > %s\n", in->res, in->arg1, in->arg2); break;
-            case TAC_GE:        printf("%s = %s >= %s\n", in->res, in->arg1, in->arg2); break;
-            case TAC_EQ:        printf("%s = %s == %s\n", in->res, in->arg1, in->arg2); break;
-            case TAC_NE:        printf("%s = %s != %s\n", in->res, in->arg1, in->arg2); break;
-            case TAC_AND:       printf("%s = %s and %s\n", in->res, in->arg1, in->arg2); break;
-            case TAC_OR:        printf("%s = %s or %s\n", in->res, in->arg1, in->arg2); break;
-            case TAC_LOAD_IDX:  printf("%s = %s[%s]\n", in->res, in->arg1, in->arg2); break;
-            case TAC_STORE_IDX: printf("%s[%s] = %s\n", in->res, in->arg1, in->arg2); break;
-            case TAC_LABEL:     printf("%s:\n", in->res); break;
-            case TAC_GOTO:      printf("goto %s\n", in->res); break;
-            case TAC_IF_FALSE:  printf("ifFalse %s goto %s\n", in->arg1, in->res); break;
-            case TAC_IF_TRUE:   printf("if %s goto %s\n", in->arg1, in->res); break;
-            case TAC_PRINT:     printf("print %s\n", in->arg1); break;
-            case TAC_READ:      printf("read %s\n", in->res); break;
+            case TAC_ASSIGN:    tacPrintOperand(in->res); fputs(" = ", stdout); tacPrintOperand(in->arg1); fputs("\n", stdout); break;
+            case TAC_NEG:       tacPrintOperand(in->res); fputs(" = neg ", stdout); tacPrintOperand(in->arg1); fputs("\n", stdout); break;
+            case TAC_NOT:       tacPrintOperand(in->res); fputs(" = not ", stdout); tacPrintOperand(in->arg1); fputs("\n", stdout); break;
+            case TAC_ADD:       tacPrintOperand(in->res); fputs(" = ", stdout); tacPrintOperand(in->arg1); fputs(" + ", stdout); tacPrintOperand(in->arg2); fputs("\n", stdout); break;
+            case TAC_SUB:       tacPrintOperand(in->res); fputs(" = ", stdout); tacPrintOperand(in->arg1); fputs(" - ", stdout); tacPrintOperand(in->arg2); fputs("\n", stdout); break;
+            case TAC_MUL:       tacPrintOperand(in->res); fputs(" = ", stdout); tacPrintOperand(in->arg1); fputs(" * ", stdout); tacPrintOperand(in->arg2); fputs("\n", stdout); break;
+            case TAC_DIV:       tacPrintOperand(in->res); fputs(" = ", stdout); tacPrintOperand(in->arg1); fputs(" / ", stdout); tacPrintOperand(in->arg2); fputs("\n", stdout); break;
+            case TAC_LT:        tacPrintOperand(in->res); fputs(" = ", stdout); tacPrintOperand(in->arg1); fputs(" < ", stdout); tacPrintOperand(in->arg2); fputs("\n", stdout); break;
+            case TAC_LE:        tacPrintOperand(in->res); fputs(" = ", stdout); tacPrintOperand(in->arg1); fputs(" <= ", stdout); tacPrintOperand(in->arg2); fputs("\n", stdout); break;
+            case TAC_GT:        tacPrintOperand(in->res); fputs(" = ", stdout); tacPrintOperand(in->arg1); fputs(" > ", stdout); tacPrintOperand(in->arg2); fputs("\n", stdout); break;
+            case TAC_GE:        tacPrintOperand(in->res); fputs(" = ", stdout); tacPrintOperand(in->arg1); fputs(" >= ", stdout); tacPrintOperand(in->arg2); fputs("\n", stdout); break;
+            case TAC_EQ:        tacPrintOperand(in->res); fputs(" = ", stdout); tacPrintOperand(in->arg1); fputs(" == ", stdout); tacPrintOperand(in->arg2); fputs("\n", stdout); break;
+            case TAC_NE:        tacPrintOperand(in->res); fputs(" = ", stdout); tacPrintOperand(in->arg1); fputs(" != ", stdout); tacPrintOperand(in->arg2); fputs("\n", stdout); break;
+            case TAC_AND:       tacPrintOperand(in->res); fputs(" = ", stdout); tacPrintOperand(in->arg1); fputs(" and ", stdout); tacPrintOperand(in->arg2); fputs("\n", stdout); break;
+            case TAC_OR:        tacPrintOperand(in->res); fputs(" = ", stdout); tacPrintOperand(in->arg1); fputs(" or ", stdout); tacPrintOperand(in->arg2); fputs("\n", stdout); break;
+            case TAC_LOAD_IDX:  tacPrintOperand(in->res); fputs(" = ", stdout); tacPrintOperand(in->arg1); fputs("[", stdout); tacPrintOperand(in->arg2); fputs("]\n", stdout); break;
+            case TAC_STORE_IDX: tacPrintOperand(in->res); fputs("[", stdout); tacPrintOperand(in->arg1); fputs("] = ", stdout); tacPrintOperand(in->arg2); fputs("\n", stdout); break;
+            case TAC_LABEL:     tacPrintOperand(in->res); fputs(":\n", stdout); break;
+            case TAC_GOTO:      fputs("goto ", stdout); tacPrintOperand(in->res); fputs("\n", stdout); break;
+            case TAC_IF_FALSE:  fputs("ifFalse ", stdout); tacPrintOperand(in->arg1); fputs(" goto ", stdout); tacPrintOperand(in->res); fputs("\n", stdout); break;
+            case TAC_IF_TRUE:   fputs("if ", stdout); tacPrintOperand(in->arg1); fputs(" goto ", stdout); tacPrintOperand(in->res); fputs("\n", stdout); break;
+            case TAC_PRINT:     fputs("print ", stdout); tacPrintOperand(in->arg1); fputs("\n", stdout); break;
+            case TAC_READ:      fputs("read ", stdout); tacPrintOperand(in->res); fputs("\n", stdout); break;
         }
     }
 }
