@@ -8,9 +8,10 @@ begin
 	do
 	begin
 		string y = "Ciao ciao";
-		int x = 8;
+		int x = 3;
 		print x;
 		print "\n" + y + "\n";
+		x = x - 1;
 	end
 	while ( x > 0 )
 	

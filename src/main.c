@@ -1122,6 +1122,17 @@ nasm -f elf64 prg_test/test_all_optimizations.asm -o prg_test/test_all_optimizat
 gcc -no-pie prg_test/test_all_optimizations.o -o prg_test/test_all_optimizations
 
 ./prg_test/test_all_optimizations
+
+------------------------------------------------------------------------
+
+src/myCompiler prg_test/test_scope.prg asm
+
+nasm -f elf64 prg_test/test_scope.asm -o prg_test/test_scope.o
+
+gcc -no-pie prg_test/test_scope.o -o prg_test/test_scope
+
+./prg_test/test_scope
+
 */
 
 int main(int argc, char **argv)
