@@ -132,6 +132,8 @@ Valore BinopValue(CompilerContext *ctx, int op, enumTipo1 lhsT1, Valore lhsValue
 	Valore retVal;
 	enumTipo1 t1;
 
+	memset(&retVal, 0, sizeof(retVal));
+
 	if ( lhsT1 == T_INTEGER && rhsT1 == T_INTEGER )
 	{
 		t1 = T_INTEGER;
@@ -165,37 +167,37 @@ Valore BinopValue(CompilerContext *ctx, int op, enumTipo1 lhsT1, Valore lhsValue
 		if ( t1 == T_INTEGER )
 			retVal.iVal = lhsValue.iVal < rhsValue.iVal;
 		else if ( t1 == T_REAL )
-			retVal.dblVal = lhsValue.dblVal < rhsValue.dblVal;
+			retVal.iVal = lhsValue.dblVal < rhsValue.dblVal;
 		break;
 	case T_OP_LE:
 		if ( t1 == T_INTEGER )
 			retVal.iVal = lhsValue.iVal <= rhsValue.iVal;
 		else if ( t1 == T_REAL )
-			retVal.dblVal = lhsValue.dblVal <= rhsValue.dblVal;
+			retVal.iVal = lhsValue.dblVal <= rhsValue.dblVal;
 		break;
 	case T_OP_EQ:
 		if ( t1 == T_INTEGER )
 			retVal.iVal = lhsValue.iVal == rhsValue.iVal;
 		else if ( t1 == T_REAL )
-			retVal.dblVal = lhsValue.dblVal == rhsValue.dblVal;
+			retVal.iVal = lhsValue.dblVal == rhsValue.dblVal;
 		break;
 	case T_OP_NE:
 		if ( t1 == T_INTEGER )
 			retVal.iVal = lhsValue.iVal != rhsValue.iVal;
 		else if ( t1 == T_REAL )
-			retVal.dblVal = lhsValue.dblVal != rhsValue.dblVal;
+			retVal.iVal = lhsValue.dblVal != rhsValue.dblVal;
 		break;
 	case T_OP_GT:
 		if ( t1 == T_INTEGER )
 			retVal.iVal = lhsValue.iVal > rhsValue.iVal;
 		else if ( t1 == T_REAL )
-			retVal.dblVal = lhsValue.dblVal > rhsValue.dblVal;
+			retVal.iVal = lhsValue.dblVal > rhsValue.dblVal;
 		break;
 	case T_OP_GE:
 		if ( t1 == T_INTEGER )
 			retVal.iVal = lhsValue.iVal >= rhsValue.iVal;
 		else if ( t1 == T_REAL )
-			retVal.dblVal = lhsValue.dblVal >= rhsValue.dblVal;
+			retVal.iVal = lhsValue.dblVal >= rhsValue.dblVal;
 		break;
 	case T_OP_PLUS:
 		if ( t1 == T_INTEGER )
@@ -588,6 +590,20 @@ Valore interpret(CompilerContext *ctx, nodeType *p)
 				else
 				{
 					retVal = leftVal;
+
+					/* Stringa proveniente da una costante o da una variabile: lo scope deve possederne
+					   una copia, altrimenti lo stesso buffer verrebbe liberato sia da freeNode (AST o
+					   altra variabile) sia da htFree. Il risultato di un'espressione (es. concatenazione)
+					   e' gia' un buffer nuovo: lo prende lo scope. */
+					if ( p->opr.op[0]->type1 == T_STRING && p->opr.op[1]->type != typeOperator && retVal.strVal != NULL )
+					{
+						retVal.strVal = strdup(retVal.strVal);
+						if ( retVal.strVal == NULL )
+						{
+							printf("Errore: memoria insufficiente.\n");
+							return valZero;
+						}
+					}
 				}
 				scopeUpdateValue(ctx, &ctx->interpScope,
 								p->opr.op[0]->id.name,

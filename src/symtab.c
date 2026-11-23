@@ -52,6 +52,14 @@ HashTable* htNewNode(CompilerContext *ctx, char *Key, enumTipo0 t0, enumTipo1 t1
 		return NULL;
 	}
 	strcpy(n->Key, Key);
+	n->uniqueName = (char*)malloc(strlen(Key)+1);
+	if ( n->uniqueName == NULL )
+	{
+		free(n->Key);
+		free(n);
+		return NULL;
+	}
+	strcpy(n->uniqueName, Key);
 	n->Tipo0 = t0;
 	n->Tipo1 = t1;
 	n->Tipo2 = t2;
@@ -75,6 +83,7 @@ HashTable* htNewNode(CompilerContext *ctx, char *Key, enumTipo0 t0, enumTipo1 t1
 			n->Value.strVal = (char*)malloc(sizeof(char)*1);
 			if ( ! n->Value.strVal )
 			{
+				free(n->uniqueName);
 				free(n->Key);
 				free(n);
 				return NULL;
@@ -110,6 +119,7 @@ int htFind(CompilerContext *ctx, HashTable **pHashTable, char *Key, HashTable *p
 		if ( strcmp(t->Key, Key) == 0 )
 		{
 			pDati->Key = t->Key;
+			pDati->uniqueName = t->uniqueName;
 			pDati->Tipo0 = t->Tipo0;
 			pDati->Tipo1 = t->Tipo1;
 			pDati->Tipo2 = t->Tipo2;
@@ -174,6 +184,11 @@ void htFree(CompilerContext *ctx, HashTable* first)
 		{
 			free(n1->Key);
 			n1->Key = NULL;
+		}
+		if ( n1->uniqueName )
+		{
+			free(n1->uniqueName);
+			n1->uniqueName = NULL;
 		}
 
 		if ( n1->Tipo0 == T_SIMPLE && n1->Tipo1 == T_STRING )
@@ -487,4 +502,132 @@ int scopeUpdateValue(CompilerContext *ctx, Scope *pScope, char *Key, enumTipo0 t
 
 	printf("Errore: variabile '%s' non dichiarata\n", Key);
 	return 0;
+}
+
+
+// -------------------------- Nomi univoci e scope persistenti -----------------------------------------
+
+static int htIndexOf(const char *Key)
+{
+	int index = 0;
+	int a = 31415;
+	const char *s = Key;
+
+	for(; *s != '\0'; s++)
+		index = (a*index + *s) % HT_SIZE;
+	if ( index < 0 )
+		index *= -1;
+
+	return index;
+}
+
+/* Vero se 'cand' e' gia' usato come nome univoco da una variabile qualsiasi,
+   sia negli scope ancora aperti sia in quelli gia' chiusi (spostati in stack[0]). */
+static int uniqueNameInUse(Scope *pScope, const char *cand)
+{
+	int x, k;
+	HashTable *t;
+
+	for ( x = 0; x <= pScope->top; x++ )
+	{
+		HashTable **pHT = pScope->stack[x];
+		if ( pHT == NULL )
+			continue;
+		for ( k = 0; k < HT_SIZE; k++ )
+		{
+			for ( t = pHT[k]; t != NULL; t = t->next )
+			{
+				if ( t->uniqueName != NULL && strcmp(t->uniqueName, cand) == 0 )
+					return 1;
+			}
+		}
+	}
+
+	return 0;
+}
+
+void scopeAssignUniqueName(CompilerContext *ctx, Scope *pScope, const char *Key)
+{
+	(void)ctx;
+	HashTable **pHT = pScope->stack[pScope->top];
+	HashTable *t;
+	char cand[512];
+	int n = 0;
+
+	for ( t = pHT[htIndexOf(Key)]; t != NULL; t = t->next )
+	{
+		if ( strcmp(t->Key, Key) == 0 )
+			break;
+	}
+	if ( t == NULL )
+		return;
+
+	/* Lo scope radice mantiene i nomi originali (i nomi dei sorgenti non
+	   contengono mai '.', quindi "x.1" non puo' collidere con una variabile utente). */
+	if ( pScope->top > 0 )
+	{
+		/* Il nodo appena inserito ha gia' uniqueName == Key: lo escludiamo
+		   dal controllo temporaneamente. */
+		char *saved = t->uniqueName;
+		t->uniqueName = NULL;
+
+		snprintf(cand, sizeof(cand), "%s", Key);
+		while ( uniqueNameInUse(pScope, cand) )
+		{
+			n++;
+			snprintf(cand, sizeof(cand), "%s.%d", Key, n);
+		}
+
+		t->uniqueName = saved;
+		if ( n > 0 )
+		{
+			char *newName = (char*)malloc(strlen(cand) + 1);
+			if ( newName != NULL )
+			{
+				strcpy(newName, cand);
+				free(t->uniqueName);
+				t->uniqueName = newName;
+			}
+		}
+	}
+}
+
+int scopePopKeep(CompilerContext *ctx, Scope *pScope)
+{
+	(void)ctx;
+	HashTable **pHT;
+	HashTable **pRoot;
+	int x;
+
+	if ( pScope->top <= 0 )
+		return pScope->top;
+
+	pHT = pScope->stack[pScope->top];
+	pRoot = pScope->stack[0];
+
+	for ( x = 0; x < HT_SIZE; x++ )
+	{
+		HashTable *n = pHT[x];
+		while ( n != NULL )
+		{
+			HashTable *next = n->next;
+			int idx = htIndexOf(n->uniqueName);
+
+			/* la chiave diventa il nome univoco */
+			free(n->Key);
+			n->Key = (char*)malloc(strlen(n->uniqueName) + 1);
+			strcpy(n->Key, n->uniqueName);
+
+			n->next = pRoot[idx];
+			pRoot[idx] = n;
+
+			n = next;
+		}
+	}
+
+	free(pHT);
+	pScope->stack[pScope->top] = NULL;
+	pScope->top--;
+
+	return pScope->top;
 }

@@ -57,6 +57,14 @@ void ctx_interp_cleanup(CompilerContext *ctx)
 
     scopeFree(ctx, &ctx->interpScope);
 
+    /* nodi di inizializzazione mai agganciati all'albero (errori di parsing) */
+    for (i = 0; i < ctx->g_initCount; i++)
+        freeNode(ctx, ctx->g_initNodes[i]);
+    free(ctx->g_initNodes);
+    ctx->g_initNodes = NULL;
+    ctx->g_initCount = 0;
+    ctx->g_initCap = 0;
+
     if (ctx->g_currConstType == T_STRING && ctx->g_currConstValue.strVal != NULL) {
         free(ctx->g_currConstValue.strVal);
         ctx->g_currConstValue.strVal = NULL;

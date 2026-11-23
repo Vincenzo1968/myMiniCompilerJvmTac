@@ -86,6 +86,10 @@ typedef struct tagHashTable
 	char bInizializzato;
 	char bDecl;
 	int frameIndex;
+	/* Nome univoco nell'intero programma (es. "x", "x.1", "x.2"...): e' quello
+	   usato da TAC, JVM e ASM, cosi' variabili omonime di scope diversi non
+	   collidono. Per le variabili dello scope globale coincide con Key. */
+	char *uniqueName;
 	struct tagHashTable *next;
 } HashTable;
 
@@ -105,6 +109,12 @@ void htPrintTAC(CompilerContext *ctx, HashTable **pHashTable);
 void scopeInit(CompilerContext *ctx, Scope *pScope);
 void scopePush(CompilerContext *ctx, Scope *pScope);
 int  scopePop(CompilerContext *ctx, Scope *pScope);
+/* Come scopePop, ma NON distrugge le variabili dello scope: le sposta nello scope
+   radice (stack[0]) con chiave = uniqueName, cosi' TAC/JVM/ASM possono ancora
+   risolverle dopo il parsing. Usata solo dal parser su g_Scope. */
+int  scopePopKeep(CompilerContext *ctx, Scope *pScope);
+/* Assegna alla variabile appena dichiarata nello scope corrente un nome univoco. */
+void scopeAssignUniqueName(CompilerContext *ctx, Scope *pScope, const char *Key);
 void scopeFree(CompilerContext *ctx, Scope *pScope);
 int  scopeFind(CompilerContext *ctx, Scope* pScope, char *Key, HashTable *pDati);
 int  scopeInsert(CompilerContext *ctx, Scope *pScope, char *Key, enumTipo0 t0, enumTipo1 t1, enumTipo2 t2, Valore v, char bInizializzato, int frameIndex);

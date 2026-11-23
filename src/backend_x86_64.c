@@ -144,8 +144,8 @@ void x86_64Generate(CompilerContext *ctx, TACList *tac, Scope *pScope, const cha
 {
     (void)pScope;
 
-    FILE *out = fopen(outputFileName, "w");
-    if (!out) {
+    FILE *fp = fopen(outputFileName, "w");
+    if (!fp) {
         printf("Errore: impossibile aprire il file %s per la scrittura.\n", outputFileName);
         return;
     }
@@ -191,25 +191,16 @@ void x86_64Generate(CompilerContext *ctx, TACList *tac, Scope *pScope, const cha
         frame_size = ((frame_size / 16) + 1) * 16;
     }
 
-    /* PASSAGGIO 2: Intestazione e sezione dati */
-    fprintf(out, "global main\n");
-    fprintf(out, "extern printf\n");
-    fprintf(out, "extern scanf\n\n");
-    
-    fprintf(out, "section .data\n");
-    fprintf(out, "    fmt_int       db \"%%d\", 10, 0\n");
-    fprintf(out, "    fmt_real      db \"%%f\", 10, 0\n");
-    fprintf(out, "    fmt_str       db \"%%s\", 0\n");
-    fprintf(out, "    fmt_scan_int  db \"%%d\", 0\n");
-    fprintf(out, "    fmt_scan_real db \"%%lf\", 0\n");
-    
-    for (int i = 0; i < ctx->real_const_count; i++) {
-        fprintf(out, "    %-12s dq %f\n", ctx->real_consts[i].label, ctx->real_consts[i].value);
+    /* Il testo viene prodotto in un buffer: la sezione .data va scritta dopo,
+       perche' le costanti real vengono registrate mentre si traducono le istruzioni. */
+    char *textBuf = NULL;
+    size_t textLen = 0;
+    FILE *out = open_memstream(&textBuf, &textLen);
+    if (!out) {
+        printf("Errore: memoria insufficiente.\n");
+        fclose(fp);
+        return;
     }
-    for (int i = 0; i < st.count; i++) {
-        emit_nasm_string_def(out, st.items[i].label, st.items[i].raw);
-    }
-    fprintf(out, "\n");
 
     /* PASSAGGIO 3: Sezione testo e prologo */
     fprintf(out, "section .text\n");
@@ -450,6 +441,30 @@ void x86_64Generate(CompilerContext *ctx, TACList *tac, Scope *pScope, const cha
 	fprintf(out, "    ret\n");
 	fprintf(out, "section .note.GNU-stack noalloc noexec nowrite progbits\n");
 	fclose(out);
+
+    /* PASSAGGIO 2: Intestazione e sezione dati */
+    fprintf(fp, "global main\n");
+    fprintf(fp, "extern printf\n");
+    fprintf(fp, "extern scanf\n\n");
+    
+    fprintf(fp, "section .data\n");
+    fprintf(fp, "    fmt_int       db \"%%d\", 10, 0\n");
+    fprintf(fp, "    fmt_real      db \"%%f\", 10, 0\n");
+    fprintf(fp, "    fmt_str       db \"%%s\", 0\n");
+    fprintf(fp, "    fmt_scan_int  db \"%%d\", 0\n");
+    fprintf(fp, "    fmt_scan_real db \"%%lf\", 0\n");
+    
+    for (int i = 0; i < ctx->real_const_count; i++) {
+        fprintf(fp, "    %-12s dq %f\n", ctx->real_consts[i].label, ctx->real_consts[i].value);
+    }
+    for (int i = 0; i < st.count; i++) {
+        emit_nasm_string_def(fp, st.items[i].label, st.items[i].raw);
+    }
+    fprintf(fp, "\n");
+
+	fwrite(textBuf, 1, textLen, fp);
+	free(textBuf);
+	fclose(fp);
 	for (int i = 0; i < vt.count; i++)
 		free(vt.items[i].name);
 	free(vt.items);
