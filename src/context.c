@@ -74,7 +74,11 @@ void ctx_interp_cleanup(CompilerContext *ctx)
     for (i = 0; i < ctx->interpDecls.count; i++) {
         InterpVarDecl *d = &ctx->interpDecls.decls[i];
         free(d->name);
-        if (d->t1 == T_STRING && d->bInizializzato && d->val.strVal != NULL) {
+        if (d->t0 == T_ARRAY) {
+            arrayDefFreeEmpty(d->val.pArrayDef);
+            d->val.pArrayDef = NULL;
+        }
+        if (d->t0 != T_ARRAY && d->t1 == T_STRING && d->bInizializzato && d->val.strVal != NULL) {
             free(d->val.strVal);
         }
     }

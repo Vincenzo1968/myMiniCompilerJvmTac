@@ -631,3 +631,54 @@ int scopePopKeep(CompilerContext *ctx, Scope *pScope)
 
 	return pScope->top;
 }
+
+
+ArrayDef *arrayDefClone(const ArrayDef *src, enumTipo1 t1)
+{
+	ArrayDef *a;
+	size_t count = 1;
+	size_t elemSize;
+	int k;
+
+	if ( src == NULL || src->sizes == NULL )
+		return NULL;
+
+	for ( k = 0; k < src->countIndexes; k++ )
+		count *= (size_t)src->sizes[k];
+
+	if ( t1 == T_REAL )
+		elemSize = sizeof(double);
+	else if ( t1 == T_STRING )
+		elemSize = sizeof(char*);
+	else
+		elemSize = sizeof(int);
+
+	a = (ArrayDef*)calloc(1, sizeof(ArrayDef));
+	if ( a == NULL )
+		return NULL;
+
+	a->countIndexes = src->countIndexes;
+	a->indexes = NULL;
+	a->sizes = (int*)malloc((size_t)src->countIndexes * sizeof(int));
+	a->pArray = calloc(count, elemSize);
+	if ( a->sizes == NULL || a->pArray == NULL )
+	{
+		free(a->sizes);
+		free(a->pArray);
+		free(a);
+		return NULL;
+	}
+	for ( k = 0; k < src->countIndexes; k++ )
+		a->sizes[k] = src->sizes[k];
+
+	return a;
+}
+
+void arrayDefFreeEmpty(ArrayDef *a)
+{
+	if ( a == NULL )
+		return;
+	free(a->pArray);
+	free(a->sizes);
+	free(a);
+}

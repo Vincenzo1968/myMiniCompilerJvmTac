@@ -451,6 +451,9 @@ int program(CompilerContext *ctx)
 }
 
 //decl_list : {decl};
+static void interpRecordDecl(CompilerContext *ctx, const char *name, enumTipo0 t0, enumTipo1 t1,
+                             enumTipo2 t2, Valore val, char bInizializzato);
+
 int decl_list(CompilerContext *ctx)
 {
 	while ( ctx->g_Token.Type == T_KW_ARRAY ||
@@ -725,6 +728,12 @@ int decl(CompilerContext *ctx)
 		value.pArrayDef->indexes = NULL;
 		scopeInsert(ctx, &ctx->g_Scope, token.Value.vString, T_ARRAY, ctx->g_currType, T_VAR, value, 0, ctx->g_NextFrameIndex);
 		scopeAssignUniqueName(ctx, &ctx->g_Scope, token.Value.vString);
+		{
+			/* l'interprete ha il suo scope: gli registro una copia dell'array */
+			Valore rv = value;
+			rv.pArrayDef = arrayDefClone(value.pArrayDef, (enumTipo1)ctx->g_currType);
+			interpRecordDecl(ctx, token.Value.vString, T_ARRAY, (enumTipo1)ctx->g_currType, T_VAR, rv, 0);
+		}
 		if ( ctx->g_genJVM )
 		{
 			ctx->g_NextFrameIndex++;

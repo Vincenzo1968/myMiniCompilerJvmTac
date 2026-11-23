@@ -276,7 +276,9 @@ static void interpInitGlobalScope(CompilerContext *ctx)
 		if (d->blockId == -1)
 		{
 			Valore v = d->val;
-			if (d->t1 == T_STRING && d->bInizializzato && d->val.strVal != NULL)
+			if (d->t0 == T_ARRAY)
+				v.pArrayDef = arrayDefClone(d->val.pArrayDef, d->t1);
+			else if (d->t1 == T_STRING && d->bInizializzato && d->val.strVal != NULL)
 				v.strVal = strdup(d->val.strVal);
 			scopeInsert(ctx, &ctx->interpScope, d->name, d->t0, d->t1, d->t2, v, d->bInizializzato, 0);
 		}
@@ -296,7 +298,9 @@ static void interpEnterBlock(CompilerContext *ctx, nodeType *blockNode)
 		if (d->blockId == targetBlockId)
 		{
 			Valore v = d->val;
-			if (d->t1 == T_STRING && d->bInizializzato && d->val.strVal != NULL)
+			if (d->t0 == T_ARRAY)
+				v.pArrayDef = arrayDefClone(d->val.pArrayDef, d->t1);
+			else if (d->t1 == T_STRING && d->bInizializzato && d->val.strVal != NULL)
 				v.strVal = strdup(d->val.strVal);
 			scopeInsert(ctx, &ctx->interpScope, d->name, d->t0, d->t1, d->t2, v, d->bInizializzato, 0);
 		}
@@ -605,7 +609,9 @@ Valore interpret(CompilerContext *ctx, nodeType *p)
 						}
 					}
 				}
-				scopeUpdateValue(ctx, &ctx->interpScope,
+				/* per gli array l'elemento e' gia' stato scritto sul posto: lo scope tiene il suo storage */
+					if (p->opr.op[0]->type0 != T_ARRAY)
+					scopeUpdateValue(ctx, &ctx->interpScope,
 								p->opr.op[0]->id.name,
 								p->opr.op[0]->type0,
 								p->opr.op[0]->type1,
