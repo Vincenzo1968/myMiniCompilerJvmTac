@@ -56,7 +56,10 @@ void funcFreeParams(FuncParam *params, int nparams)
     if (!params)
         return;
     for (i = 0; i < nparams; i++)
+    {
         free(params[i].name);
+        free(params[i].uniqueName);
+    }
     free(params);
 }
 

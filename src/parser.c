@@ -745,6 +745,13 @@ static int parseFuncDefinition(CompilerContext *ctx)
 		}
 		scopeInsert(ctx, &ctx->g_Scope, fp->name, fp->t0, fp->t1, T_VAR, v, 1, 0);
 		scopeAssignUniqueName(ctx, &ctx->g_Scope, fp->name);
+		{
+			HashTable ht;
+			free(fp->uniqueName);
+			fp->uniqueName = NULL;
+			if ( scopeFind(ctx, &ctx->g_Scope, fp->name, &ht) )
+				fp->uniqueName = strdup(ht.uniqueName);
+		}
 	}
 
 	ok = code_block(ctx);

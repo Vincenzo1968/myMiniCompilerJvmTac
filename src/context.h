@@ -34,6 +34,7 @@ typedef struct {
 /* Funzioni (prototipi e definizioni) */
 typedef struct {
     char *name;
+    char *uniqueName;   /* nome univoco nell'intero programma (usato da TAC e backend) */
     enumTipo0 t0;       /* T_SIMPLE oppure T_ARRAY (sempre per riferimento) */
     enumTipo1 t1;
     int isRef;          /* parametro scalare passato per riferimento ('ref') */

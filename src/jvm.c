@@ -1528,6 +1528,9 @@ static void MakeBytecodeFromTAC(CompilerContext *ctx, const TACList *tac, jvmHas
 			jvmStoreDest(ctx, in->res, rType, pScope, &tt);
 			break;
 		}
+		default:
+			/* istruzioni di funzione: non ancora supportate dal backend JVM (fase 3) */
+			break;
 		}
 	}
 

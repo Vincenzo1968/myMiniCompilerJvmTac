@@ -344,6 +344,53 @@ static char *emitTAC(CompilerContext *ctx, TACList *tac, Scope *pScope, nodeType
         case T_CODE_BLOCK:
             return emitTAC(ctx, tac, pScope, p->opr.op[0]);
 
+        case T_FUNC_CALL: {
+            const char *fname = p->opr.op[0]->id.name;
+            int fi = funcFind(ctx, fname);
+            int n = p->opr.nops - 1, i;
+            char *vals[33] = {0};
+            char nbuf[16];
+            const FuncDef *fd;
+            if (fi < 0) {
+                printf("Errore TAC: funzione '%s' non dichiarata\n", fname);
+                return NULL;
+            }
+            fd = &ctx->funcs[fi];
+            /* prima si valutano tutti gli argomenti per valore, poi si emettono i param
+               consecutivi: una chiamata annidata non si infila tra due 'param' */
+            for (i = 0; i < n && i < 32; i++) {
+                if (fd->params[i].t0 == T_ARRAY || fd->params[i].isRef)
+                    continue;
+                vals[i] = emitTAC(ctx, tac, pScope, p->opr.op[i + 1]);
+            }
+            for (i = 0; i < n && i < 32; i++) {
+                nodeType *a = p->opr.op[i + 1];
+                if (fd->params[i].t0 == T_ARRAY)
+                    tacEmit(ctx, tac, TAC_PARAM_ARR, a->id.uniqueName, NULL, NULL, fd->params[i].t1);
+                else if (fd->params[i].isRef)
+                    tacEmit(ctx, tac, TAC_PARAM_REF, a->id.uniqueName, NULL, NULL, fd->params[i].t1);
+                else
+                    tacEmit(ctx, tac, TAC_PARAM, vals[i], NULL, NULL, fd->params[i].t1);
+                free(vals[i]);
+            }
+            snprintf(nbuf, sizeof(nbuf), "%d", n);
+            if (fd->isVoid) {
+                tacEmit(ctx, tac, TAC_CALL, fname, nbuf, NULL, T_INTEGER);
+                return NULL;
+            } else {
+                char *t = newTemp(ctx);
+                tacEmit(ctx, tac, TAC_CALL, fname, nbuf, t, fd->retType);
+                return t;
+            }
+        }
+
+        case T_KW_RETURN: {
+            char *v = p->opr.op[0] ? emitTAC(ctx, tac, pScope, p->opr.op[0]) : NULL;
+            tacEmit(ctx, tac, TAC_RETURN, v, NULL, NULL, p->opr.op[0] ? p->opr.op[0]->type1 : T_INTEGER);
+            free(v);
+            return NULL;
+        }
+
         case T_KW_WHILE: {
             char *lStart = newLabel(ctx);
             char *lEnd = newLabel(ctx);
@@ -893,7 +940,56 @@ void tacPrint(CompilerContext *ctx, const TACList *list)
             case TAC_IF_TRUE:   fputs("if ", stdout); tacPrintOperand(in->arg1); fputs(" goto ", stdout); tacPrintOperand(in->res); fputs("\n", stdout); break;
             case TAC_PRINT:     fputs("print ", stdout); tacPrintOperand(in->arg1); fputs("\n", stdout); break;
             case TAC_READ:      fputs("read ", stdout); tacPrintOperand(in->res); fputs("\n", stdout); break;
+            case TAC_FUNC:      printf("\nfunc %s %s(%s):\n", in->arg2 ? in->arg2 : "void", in->res, in->arg1 ? in->arg1 : ""); break;
+            case TAC_ENDFUNC:   printf("endfunc %s\n", in->res); break;
+            case TAC_PARAM:     fputs("param ", stdout); tacPrintOperand(in->arg1); fputs("\n", stdout); break;
+            case TAC_PARAM_REF: printf("param ref %s\n", in->arg1); break;
+            case TAC_PARAM_ARR: printf("param array %s\n", in->arg1); break;
+            case TAC_CALL:
+                if (in->res) printf("%s = ", in->res);
+                printf("call %s, %s\n", in->arg1, in->arg2);
+                break;
+            case TAC_RETURN:
+                if (in->arg1) { fputs("return ", stdout); tacPrintOperand(in->arg1); fputs("\n", stdout); }
+                else fputs("return\n", stdout);
+                break;
         }
+    }
+}
+
+static const char *typeName(enumTipo1 t)
+{
+    switch (t) {
+        case T_INTEGER: return "int";
+        case T_REAL:    return "real";
+        case T_STRING:  return "string";
+        case T_BOOLEAN: return "bool";
+    }
+    return "int";
+}
+
+/* Dopo il blocco principale: ogni funzione definita, tra 'func' e 'endfunc'. */
+static void tacEmitFunctions(CompilerContext *ctx, TACList *tac, Scope *pScope)
+{
+    int i, j;
+    tacEmit(ctx, tac, TAC_ENDFUNC, NULL, NULL, "main", T_INTEGER);
+    for (i = 0; i < ctx->funcCount; i++) {
+        const FuncDef *f = &ctx->funcs[i];
+        char hdr[1024];
+        size_t len = 0;
+        if (!f->defined || !f->body) continue;
+        hdr[0] = '\0';
+        for (j = 0; j < f->nparams; j++) {
+            const FuncParam *fp = &f->params[j];
+            len += (size_t)snprintf(hdr + len, sizeof(hdr) - len, "%s%s%s",
+                                    j ? ", " : "",
+                                    fp->t0 == T_ARRAY ? "array " : (fp->isRef ? "ref " : ""),
+                                    fp->uniqueName ? fp->uniqueName : fp->name);
+            if (len >= sizeof(hdr)) { len = sizeof(hdr) - 1; break; }
+        }
+        tacEmit(ctx, tac, TAC_FUNC, hdr, f->isVoid ? "void" : typeName(f->retType), f->name, f->isVoid ? T_INTEGER : f->retType);
+        free(emitTAC(ctx, tac, pScope, f->body));
+        tacEmit(ctx, tac, TAC_ENDFUNC, NULL, NULL, f->name, T_INTEGER);
     }
 }
 
@@ -909,6 +1005,12 @@ void tacBuild(CompilerContext *ctx, nodeType **ppTree, Scope *pScope, int optLev
         return;
     }
 
+    if (ctx->funcCount > 0 && optLevel > 0) {
+        /* TODO (fase 2): le ottimizzazioni non conoscono ancora chiamate e frame di funzione */
+        fprintf(stderr, "Nota: in presenza di funzioni le ottimizzazioni -O1..-O3 sono disabilitate (si usa -O0).\n");
+        optLevel = 0;
+    }
+
     if (optLevel >= 1) {
         pTree = tacOptimizeAST(ctx, pTree);
         if (ppTree) {
@@ -917,6 +1019,9 @@ void tacBuild(CompilerContext *ctx, nodeType **ppTree, Scope *pScope, int optLev
     }
 
     free(emitTAC(ctx, outTac, pScope, pTree));
+
+    if (ctx->funcCount > 0)
+        tacEmitFunctions(ctx, outTac, pScope);
 
     if (optLevel >= 1) {
         tacOptimizeO1(ctx, outTac);

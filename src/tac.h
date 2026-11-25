@@ -51,7 +51,15 @@ typedef enum {
     TAC_IF_FALSE,  // ifFalse arg1 goto res
     TAC_IF_TRUE,   // if arg1 goto res
     TAC_PRINT,     // print arg1
-    TAC_READ       // read res
+    TAC_READ,      // read res
+    /* funzioni (aggiunte in coda per non spostare i valori esistenti) */
+    TAC_FUNC,      // func res(arg1) : inizio funzione; arg1 = parametri, arg2 = tipo di ritorno
+    TAC_ENDFUNC,   // endfunc res : fine funzione (res = nome; "main" chiude il blocco principale)
+    TAC_PARAM,     // param arg1 : argomento per valore
+    TAC_PARAM_REF, // param ref arg1 : variabile scalare passata per riferimento
+    TAC_PARAM_ARR, // param array arg1 : array passato per riferimento
+    TAC_CALL,      // [res =] call arg1, arg2 : arg1 = funzione, arg2 = numero di argomenti
+    TAC_RETURN     // return [arg1]
 } TACOp;
 
 typedef struct {
