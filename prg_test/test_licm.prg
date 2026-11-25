@@ -21,4 +21,5 @@ begin
 
     print "Eqque qua: ";
     print s;
+    print "\n";
 end
