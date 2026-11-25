@@ -77,7 +77,12 @@ typedef enum tagTokenType
 	T_OP_MULT,		// '*'
 	T_OP_DIV,		// '/'
 	T_STMT_LIST,
-	T_CODE_BLOCK
+	T_CODE_BLOCK,
+	/* funzioni (aggiunti in coda per non spostare i valori esistenti) */
+	T_KW_VOID,
+	T_KW_REF,
+	T_KW_RETURN,
+	T_FUNC_CALL		// nodo AST: op[0] = id con il nome, op[1..] = argomenti
 }TokenTypeEnum;
 
 typedef struct tagToken
@@ -129,5 +134,8 @@ int LeggiFile(CompilerContext *ctx, char *szFileName);
 void FreeInputbuffer(CompilerContext *ctx);
 
 void GetNextToken(CompilerContext *ctx, Token *pToken);
+/* Guarda avanti senza consumare: con il token corrente = tipo (o 'void'), vero se
+   seguono T_ID e '(' , cioe' se si tratta del prototipo/definizione di una funzione. */
+int PeekIsFunctionDecl(CompilerContext *ctx);
 
 #endif /* __MYSCANNER__ */

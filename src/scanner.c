@@ -116,10 +116,36 @@ static int tokenOwnsString(CompilerContext *ctx, TokenTypeEnum t)
         case T_KW_BEGIN: case T_KW_END: case T_KW_ARRAY: case T_KW_OF:
         case T_KW_STRING: case T_KW_INT: case T_KW_REAL: case T_KW_BOOL:
         case T_KW_FALSE: case T_KW_TRUE: case T_KW_PRINT: case T_KW_READ:
+        case T_KW_VOID: case T_KW_REF: case T_KW_RETURN:
             return 1;
         default:
             return 0;   /* T_INT_LITERAL, T_REAL_LITERAL, T_UNKNOWN, T_EOF, ... */
     }
+}
+
+int PeekIsFunctionDecl(CompilerContext *ctx)
+{
+	/* salva lo stato dello scanner, legge due token e lo ripristina */
+	int savedPos = ctx->g_pos, savedLine = ctx->g_line, savedCol = ctx->g_column, savedDepth = ctx->g_depth;
+	Token t;
+	int res = 0;
+
+	memset(&t, 0, sizeof(t));
+	t.Type = T_UNKNOWN;
+	GetNextToken(ctx, &t);
+	if ( t.Type == T_ID )
+	{
+		GetNextToken(ctx, &t);
+		res = (t.Type == T_OPAREN);
+	}
+	if ( tokenOwnsString(ctx, t.Type) && t.Value.vString != NULL )
+		free(t.Value.vString);
+
+	ctx->g_pos = savedPos;
+	ctx->g_line = savedLine;
+	ctx->g_column = savedCol;
+	ctx->g_depth = savedDepth;
+	return res;
 }
 
 void GetNextToken(CompilerContext *ctx, Token *pToken)
@@ -376,6 +402,12 @@ void GetNextToken(CompilerContext *ctx, Token *pToken)
 					pToken->Type = T_KW_FALSE;
 				else if ( strcmp(lexeme, "true") == 0 )
 					pToken->Type = T_KW_TRUE;
+				else if ( strcmp(lexeme, "void") == 0 )
+					pToken->Type = T_KW_VOID;
+				else if ( strcmp(lexeme, "ref") == 0 )
+					pToken->Type = T_KW_REF;
+				else if ( strcmp(lexeme, "return") == 0 )
+					pToken->Type = T_KW_RETURN;
 				else if ( strcmp(lexeme, "print") == 0 )
 					pToken->Type = T_KW_PRINT;
 				else if ( strcmp(lexeme, "read") == 0 )
