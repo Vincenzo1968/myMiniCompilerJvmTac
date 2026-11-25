@@ -31,6 +31,26 @@ typedef struct {
     char bInizializzato;
 } InterpVarDecl;
 
+/* Funzioni (prototipi e definizioni) */
+typedef struct {
+    char *name;
+    enumTipo0 t0;       /* T_SIMPLE oppure T_ARRAY (sempre per riferimento) */
+    enumTipo1 t1;
+    int isRef;          /* parametro scalare passato per riferimento ('ref') */
+    int dims;           /* numero di dimensioni se array */
+} FuncParam;
+
+typedef struct {
+    char *name;
+    int isVoid;
+    enumTipo1 retType;  /* significativo solo se !isVoid */
+    int nparams;
+    FuncParam *params;
+    int defined;        /* 1 dopo la definizione (corpo) */
+    int line;
+    nodeType *body;     /* T_CODE_BLOCK del corpo (NULL finche' non definita) */
+} FuncDef;
+
 typedef struct {
     InterpVarDecl *decls;
     int count;
@@ -85,6 +105,16 @@ typedef struct CompilerContext {
     int g_initCount;
     int g_initCap;
 
+    /* funzioni */
+    FuncDef *funcs;
+    int funcCount;
+    int funcCap;
+    int g_curFunc;          /* indice della funzione in corso di parsing, -1 nel programma principale */
+    /* interprete: stato del 'return' in corso */
+    int interpReturning;
+    Valore interpRetVal;
+    enumTipo1 interpRetType;
+
     /* da scanner.c */
     char *g_szInput;
     int g_pos;
@@ -99,5 +129,13 @@ typedef struct CompilerContext {
 
 void ctx_init(CompilerContext *ctx);
 void ctx_interp_cleanup(CompilerContext *ctx);
+
+/* Tabella delle funzioni. funcFind: indice o -1. funcDeclare: aggiunge (prende possesso
+   di params) e restituisce l'indice. funcSignatureEquals: stesso tipo di ritorno e stessi parametri. */
+int funcFind(CompilerContext *ctx, const char *name);
+int funcDeclare(CompilerContext *ctx, const char *name, int isVoid, enumTipo1 retType,
+                int nparams, FuncParam *params, int line);
+int funcSignatureEquals(const FuncDef *a, int isVoid, enumTipo1 retType, int nparams, const FuncParam *params);
+void funcFreeParams(FuncParam *params, int nparams);
 
 #endif /* CONTEXT_H */

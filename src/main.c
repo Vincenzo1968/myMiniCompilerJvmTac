@@ -313,12 +313,177 @@ static void interpExitBlock(CompilerContext *ctx, nodeType *blockNode)
 	scopePop(ctx, &ctx->interpScope);
 }
 
-/* Una concatenazione di stringhe produce un buffer nuovo, di cui deve farsi carico
-   chi consuma il risultato (print, un'altra concatenazione, un'assegnazione).
-   Costanti e variabili restituiscono invece un puntatore preso in prestito. */
+/* Una concatenazione di stringhe o la chiamata di una funzione che restituisce una stringa
+   producono un buffer nuovo, di cui deve farsi carico chi consuma il risultato (print, un'altra
+   concatenazione, un'assegnazione). Costanti e variabili restituiscono invece un puntatore
+   preso in prestito. */
 static int isFreshString(const nodeType *n)
 {
-	return n != NULL && n->type == typeOperator && n->opr.oper == T_OP_PLUS && n->type1 == T_STRING;
+	return n != NULL && n->type == typeOperator && n->type1 == T_STRING &&
+	       (n->opr.oper == T_OP_PLUS || n->opr.oper == T_FUNC_CALL);
+}
+
+Valore interpret(CompilerContext *ctx, nodeType *p);
+
+/* Esegue un'istruzione scartandone il valore (libera una stringa restituita da una chiamata). */
+static void interpDiscard(CompilerContext *ctx, nodeType *p)
+{
+	Valore r = interpret(ctx, p);
+	if (isFreshString(p))
+		free(r.strVal);
+}
+
+/* Livello dello scope globale dell'interprete: ctx_init fa scopeInit (livello 0, vuoto) e scopePush
+   (livello 1, dove interpInitGlobalScope inserisce le variabili globali). */
+#define INTERP_GLOBAL_LEVEL 1
+
+/* Chiamata di funzione: argomenti valutati nello scope del chiamante, poi un frame nuovo che
+   vede solo lo scope globale e i propri parametri. I parametri 'ref' scalari sono passati
+   per copia-ritorno (valore finale riscritto nella variabile del chiamante); gli array
+   condividono il vettore del chiamante. */
+static Valore interpCall(CompilerContext *ctx, nodeType *p)
+{
+	Valore zero;
+	Valore args[32];
+	Valore out;
+	HashTable D;
+	HashTable **saved = NULL;
+	int callerTop, nSaved, fi, i, np;
+	FuncDef *fd;
+	const char *fname = p->opr.op[0]->id.name;
+
+	memset(&zero, 0, sizeof(zero));
+	memset(&out, 0, sizeof(out));
+	memset(args, 0, sizeof(args));
+
+	fi = funcFind(ctx, fname);
+	if (fi < 0 || ctx->funcs[fi].body == NULL)
+	{
+		printf("Errore: funzione '%s' non definita.\n", fname);
+		ctx->g_t1 = T_INTEGER;
+		return zero;
+	}
+	fd = &ctx->funcs[fi];
+	np = fd->nparams;
+
+	/* 1. argomenti, nello scope del chiamante */
+	for (i = 0; i < np; i++)
+	{
+		FuncParam *fp = &fd->params[i];
+		nodeType *an = p->opr.op[i + 1];
+
+		if (fp->t0 == T_ARRAY)
+		{
+			if (scopeFind(ctx, &ctx->interpScope, an->id.name, &D))
+				args[i].pArrayDef = D.Value.pArrayDef;
+		}
+		else if (fp->isRef)
+		{
+			if (scopeFind(ctx, &ctx->interpScope, an->id.name, &D))
+			{
+				args[i] = D.Value;
+				if (fp->t1 == T_STRING)
+					args[i].strVal = strdup(D.Value.strVal ? D.Value.strVal : "");
+			}
+		}
+		else
+		{
+			Valore v = interpret(ctx, an);
+			enumTipo1 vt = ctx->g_t1;
+			if (fp->t1 == T_STRING)
+			{
+				if (isFreshString(an))
+					args[i].strVal = v.strVal;
+				else
+					args[i].strVal = strdup(v.strVal ? v.strVal : "");
+			}
+			else
+				AssignTypeChecking(ctx, fp->t1, &args[i], vt, v);
+		}
+	}
+
+	/* 2. il chiamante resta in 'saved'; il frame vede solo gli scope globali (livelli 0 e 1) */
+	callerTop = ctx->interpScope.top;
+	nSaved = callerTop - INTERP_GLOBAL_LEVEL;
+	if (nSaved > 0)
+	{
+		saved = (HashTable**)malloc((size_t)nSaved * sizeof(HashTable*));
+		memcpy(saved, &ctx->interpScope.stack[INTERP_GLOBAL_LEVEL + 1], (size_t)nSaved * sizeof(HashTable*));
+		ctx->interpScope.top = INTERP_GLOBAL_LEVEL;
+	}
+
+	scopePush(ctx, &ctx->interpScope);
+	for (i = 0; i < np; i++)
+	{
+		FuncParam *fp = &fd->params[i];
+		Valore v = args[i];
+		if (fp->t0 == T_ARRAY && v.pArrayDef != NULL)
+		{
+			ArrayDef *sh = (ArrayDef*)calloc(1, sizeof(ArrayDef));
+			sh->countIndexes = v.pArrayDef->countIndexes;
+			sh->sizes = (int*)malloc((size_t)sh->countIndexes * sizeof(int));
+			memcpy(sh->sizes, v.pArrayDef->sizes, (size_t)sh->countIndexes * sizeof(int));
+			sh->pArray = v.pArrayDef->pArray;
+			v.pArrayDef = sh;
+		}
+		scopeInsert(ctx, &ctx->interpScope, fp->name, fp->t0, fp->t1, T_VAR, v, 1, 0);
+	}
+
+	/* 3. corpo */
+	ctx->interpReturning = 0;
+	interpret(ctx, fd->body);
+
+	/* 4. risultati: valori finali dei 'ref', staccamento degli array condivisi */
+	for (i = 0; i < np; i++)
+	{
+		FuncParam *fp = &fd->params[i];
+		if (!scopeFind(ctx, &ctx->interpScope, fp->name, &D))
+			continue;
+		if (fp->t0 == T_ARRAY)
+			D.Value.pArrayDef->pArray = NULL;
+		else if (fp->isRef)
+		{
+			args[i] = D.Value;
+			if (fp->t1 == T_STRING)
+				args[i].strVal = strdup(D.Value.strVal ? D.Value.strVal : "");
+		}
+	}
+	scopePop(ctx, &ctx->interpScope);
+
+	if (nSaved > 0)
+	{
+		memcpy(&ctx->interpScope.stack[INTERP_GLOBAL_LEVEL + 1], saved, (size_t)nSaved * sizeof(HashTable*));
+		free(saved);
+	}
+	ctx->interpScope.top = callerTop;
+
+	/* 5. riscrittura dei 'ref' nelle variabili del chiamante */
+	for (i = 0; i < np; i++)
+	{
+		FuncParam *fp = &fd->params[i];
+		if (fp->t0 != T_ARRAY && fp->isRef)
+			scopeUpdateValue(ctx, &ctx->interpScope, p->opr.op[i + 1]->id.name, T_SIMPLE, fp->t1, T_VAR, args[i], 1, 0);
+	}
+
+	/* 6. valore di ritorno, convertito al tipo della funzione */
+	if (fd->isVoid)
+	{
+		ctx->interpReturning = 0;
+		ctx->g_t1 = T_INTEGER;
+		return zero;
+	}
+	if (ctx->interpReturning)
+	{
+		if (fd->retType == T_STRING)
+			out.strVal = ctx->interpRetVal.strVal;
+		else
+			AssignTypeChecking(ctx, fd->retType, &out, ctx->interpRetType, ctx->interpRetVal);
+	}
+	else if (fd->retType == T_STRING)
+		out.strVal = strdup("");
+	ctx->interpReturning = 0;
+	ctx->g_t1 = fd->retType;
+	return out;
 }
 
 Valore interpret(CompilerContext *ctx, nodeType *p)
@@ -403,21 +568,43 @@ Valore interpret(CompilerContext *ctx, nodeType *p)
 			{
 			case T_KW_WHILE:
 				while(convertToBoolean(ctx, p->type1, interpret(ctx, p->opr.op[0])))
-					interpret(ctx, p->opr.op[1]);
+				{
+					interpDiscard(ctx, p->opr.op[1]);
+					if (ctx->interpReturning)
+						break;
+				}
 				ctx->g_t1 = T_INTEGER;
 				return valZero;
 			case T_KW_DO: // do-while
 				do
 				{
-					interpret(ctx, p->opr.op[0]);
+					interpDiscard(ctx, p->opr.op[0]);
+					if (ctx->interpReturning)
+						break;
 				} while(convertToBoolean(ctx, p->type1, interpret(ctx, p->opr.op[1])));
 				ctx->g_t1 = T_INTEGER;
 				return valZero;
 			case T_KW_IF:
 				if (convertToBoolean(ctx, p->type1, interpret(ctx, p->opr.op[0])))
-					interpret(ctx, p->opr.op[1]);
+					interpDiscard(ctx, p->opr.op[1]);
 				else if (p->opr.nops > 2)
-					interpret(ctx, p->opr.op[2]);
+					interpDiscard(ctx, p->opr.op[2]);
+				ctx->g_t1 = T_INTEGER;
+				return valZero;
+			case T_FUNC_CALL:
+				return interpCall(ctx, p);
+			case T_KW_RETURN:
+				memset(&retVal, 0, sizeof(retVal));
+				if (p->opr.op[0])
+				{
+					retVal = interpret(ctx, p->opr.op[0]);
+					ctx->interpRetType = ctx->g_t1;
+					/* il buffer di una stringa deve sopravvivere allo scope della funzione */
+					if (p->opr.op[0]->type1 == T_STRING && !isFreshString(p->opr.op[0]))
+						retVal.strVal = strdup(retVal.strVal ? retVal.strVal : "");
+				}
+				ctx->interpRetVal = retVal;
+				ctx->interpReturning = 1;
 				ctx->g_t1 = T_INTEGER;
 				return valZero;
 			case T_KW_PRINT:
@@ -537,8 +724,16 @@ Valore interpret(CompilerContext *ctx, nodeType *p)
 				ctx->g_t1 = T_INTEGER;
 				return valZero;
 			case T_STMT_LIST:
-				interpret(ctx, p->opr.op[0]);
-				return interpret(ctx, p->opr.op[1]);
+				interpDiscard(ctx, p->opr.op[0]);
+				if (ctx->interpReturning)
+					return valZero;
+				retVal = interpret(ctx, p->opr.op[1]);
+				if (isFreshString(p->opr.op[1]))
+				{
+					free(retVal.strVal);
+					return valZero;
+				}
+				return retVal;
 			case T_CODE_BLOCK:
 				interpEnterBlock(ctx, p);
 				retVal = interpret(ctx, p->opr.op[0]);

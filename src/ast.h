@@ -73,6 +73,8 @@ typedef struct nodeTypeTag
 
 /* prototypes */
 nodeType *opr(CompilerContext *ctx, int oper, int nops, ...);
+/* Come opr, ma con gli operandi in un array (numero variabile, es. gli argomenti di una chiamata). */
+nodeType *oprN(CompilerContext *ctx, int oper, int nops, nodeType **ops);
 nodeType *id(CompilerContext *ctx, char *name, char *uniqueName, enumTipo0 t0, enumTipo1 t1, enumTipo2 t2, Valore value, char bInizializzato);
 nodeType *con(CompilerContext *ctx, enumTipo1 t1, char *lexeme, Valore value);
 void freeNode(CompilerContext *ctx, nodeType *p);

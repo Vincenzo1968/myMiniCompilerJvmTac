@@ -40,6 +40,7 @@ void ctx_init(CompilerContext *ctx)
     ctx->g_genTAC = 0;
     ctx->g_genJVM = 0;
     ctx->g_NextFrameIndex = 1;
+    ctx->g_curFunc = -1;
 
     /* Valori iniziali da scanner.c */
     ctx->g_szInput = NULL;
@@ -49,11 +50,81 @@ void ctx_init(CompilerContext *ctx)
     ctx->g_depth = 0;    
 }
 
+void funcFreeParams(FuncParam *params, int nparams)
+{
+    int i;
+    if (!params)
+        return;
+    for (i = 0; i < nparams; i++)
+        free(params[i].name);
+    free(params);
+}
+
+int funcFind(CompilerContext *ctx, const char *name)
+{
+    int i;
+    for (i = 0; i < ctx->funcCount; i++)
+        if (strcmp(ctx->funcs[i].name, name) == 0)
+            return i;
+    return -1;
+}
+
+int funcDeclare(CompilerContext *ctx, const char *name, int isVoid, enumTipo1 retType,
+                int nparams, FuncParam *params, int line)
+{
+    FuncDef *f;
+    if (ctx->funcCount >= ctx->funcCap)
+    {
+        int newCap = ctx->funcCap ? ctx->funcCap * 2 : 8;
+        FuncDef *tmp = (FuncDef*)realloc(ctx->funcs, (size_t)newCap * sizeof(FuncDef));
+        if (!tmp)
+            return -1;
+        ctx->funcs = tmp;
+        ctx->funcCap = newCap;
+    }
+    f = &ctx->funcs[ctx->funcCount];
+    memset(f, 0, sizeof(*f));
+    f->name = strdup(name);
+    if (!f->name)
+        return -1;
+    f->isVoid = isVoid;
+    f->retType = retType;
+    f->nparams = nparams;
+    f->params = params;
+    f->line = line;
+    return ctx->funcCount++;
+}
+
+int funcSignatureEquals(const FuncDef *a, int isVoid, enumTipo1 retType, int nparams, const FuncParam *params)
+{
+    int i;
+    if (a->isVoid != isVoid || (!isVoid && a->retType != retType) || a->nparams != nparams)
+        return 0;
+    for (i = 0; i < nparams; i++)
+    {
+        if (a->params[i].t0 != params[i].t0 || a->params[i].t1 != params[i].t1 ||
+            a->params[i].isRef != params[i].isRef || a->params[i].dims != params[i].dims)
+            return 0;
+    }
+    return 1;
+}
+
 void ctx_interp_cleanup(CompilerContext *ctx)
 {
     int i;
     if (!ctx)
         return;
+
+    for (i = 0; i < ctx->funcCount; i++)
+    {
+        free(ctx->funcs[i].name);
+        funcFreeParams(ctx->funcs[i].params, ctx->funcs[i].nparams);
+        freeNode(ctx, ctx->funcs[i].body);
+    }
+    free(ctx->funcs);
+    ctx->funcs = NULL;
+    ctx->funcCount = 0;
+    ctx->funcCap = 0;
 
     scopeFree(ctx, &ctx->interpScope);
 

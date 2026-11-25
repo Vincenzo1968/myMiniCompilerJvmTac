@@ -116,6 +116,32 @@ nodeType *opr(CompilerContext *ctx, int oper, int nops, ...)
     return p;
 }
 
+nodeType *oprN(CompilerContext *ctx, int oper, int nops, nodeType **ops)
+{
+	(void)ctx;
+	nodeType *p = NULL;
+	size_t nodeSize;
+	int i;
+	size_t oprSize = offsetof(nodeType, opr.op) + (size_t)nops * sizeof(nodeType*);
+	nodeSize = (oprSize > sizeof(nodeType)) ? oprSize : sizeof(nodeType);
+
+	if ((p = malloc(nodeSize)) == NULL)
+	{
+		printf("Errore: memoria insufficiente.\n");
+		return NULL;
+	}
+	p->type0 = 0;
+	p->type1 = 0;
+	p->type2 = 0;
+	p->type = typeOperator;
+	p->opr.oper = oper;
+	p->opr.nops = nops;
+	p->opr.blockId = 0;
+	for (i = 0; i < nops; i++)
+		p->opr.op[i] = ops[i];
+	return p;
+}
+
 void freeNode(CompilerContext *ctx, nodeType *p)
 {
     int i;

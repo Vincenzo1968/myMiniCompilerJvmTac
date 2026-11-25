@@ -150,7 +150,7 @@ static int isStmtStart(CompilerContext *ctx, int t)
 	(void)ctx;
     return t == T_KW_PRINT || t == T_KW_READ || t == T_KW_WHILE ||
            t == T_KW_DO    || t == T_KW_IF   || t == T_KW_BEGIN ||
-           t == T_ID;
+           t == T_KW_RETURN || t == T_ID;
 }
 
 /* Gestisce il ';' finale di uno statement: se manca ma il token corrente
@@ -439,6 +439,486 @@ int TypeCheck(CompilerContext *ctx, Valore *value, const Token *pToken)
 
 
 // program : decl_list code_block;
+
+/* ===================================================================== */
+/*  Funzioni                                                             */
+/* ===================================================================== */
+
+#define MAX_FUNC_PARAMS 32
+
+static int argCompat(enumTipo1 param, enumTipo1 arg)
+{
+	/* 0 = errore, 1 = ok, 2 = ok con warning (perdita di dati) */
+	if ( param == arg )
+		return 1;
+	if ( param == T_REAL && arg == T_INTEGER )
+		return 1;
+	if ( param == T_INTEGER && arg == T_REAL )
+		return 2;
+	if ( param == T_BOOLEAN && (arg == T_INTEGER || arg == T_REAL) )
+		return 1;
+	return 0;
+}
+
+static int funcParseError(CompilerContext *ctx, const char *msg)
+{
+	printf("Linea %d Colonna %d: Errore funzione. %s\n", ctx->g_Token.line, ctx->g_Token.column, msg);
+	ctx->g_numErrors++;
+	return 0;
+}
+
+/* header : (type | 'void') T_ID '(' [param {',' param}] ')'
+   param  : ['ref'] type T_ID | 'array' T_ID '[' ']' {'[' ']'} 'of' type */
+static int parseFuncHeader(CompilerContext *ctx, char *name, size_t nameSize, int *pIsVoid, enumTipo1 *pRet,
+                           int *pLine, FuncParam **pParams, int *pCount)
+{
+	FuncParam *params = NULL;
+	int n = 0, i;
+
+	*pParams = NULL;
+	*pCount = 0;
+
+	if ( ctx->g_Token.Type == T_KW_VOID )
+	{
+		*pIsVoid = 1;
+		*pRet = T_INTEGER;
+		GetNextToken(ctx, &ctx->g_Token);
+	}
+	else
+	{
+		*pIsVoid = 0;
+		if ( !type(ctx) )
+			return 0;
+		*pRet = (enumTipo1)ctx->g_currType;
+	}
+
+	if ( ctx->g_Token.Type != T_ID )
+		return funcParseError(ctx, "Atteso il nome della funzione.");
+	snprintf(name, nameSize, "%s", ctx->g_Token.Value.vString);
+	*pLine = ctx->g_Token.line;
+	GetNextToken(ctx, &ctx->g_Token);
+
+	if ( ctx->g_Token.Type != T_OPAREN )
+		return funcParseError(ctx, "Attesa parentesi '('.");
+	GetNextToken(ctx, &ctx->g_Token);
+
+	params = (FuncParam*)calloc(MAX_FUNC_PARAMS, sizeof(FuncParam));
+	if ( !params )
+		return funcParseError(ctx, "Memoria insufficiente.");
+
+	if ( ctx->g_Token.Type != T_CPAREN )
+	{
+		for (;;)
+		{
+			FuncParam *fp;
+			if ( n >= MAX_FUNC_PARAMS )
+			{
+				funcParseError(ctx, "Troppi parametri.");
+				goto fail;
+			}
+			fp = &params[n];
+			fp->t0 = T_SIMPLE;
+
+			if ( ctx->g_Token.Type == T_KW_REF )
+			{
+				fp->isRef = 1;
+				GetNextToken(ctx, &ctx->g_Token);
+			}
+
+			if ( ctx->g_Token.Type == T_KW_ARRAY )
+			{
+				if ( fp->isRef )
+				{
+					funcParseError(ctx, "Gli array sono sempre passati per riferimento: 'ref' non e' ammesso.");
+					goto fail;
+				}
+				GetNextToken(ctx, &ctx->g_Token);
+				if ( ctx->g_Token.Type != T_ID )
+				{
+					funcParseError(ctx, "Atteso il nome del parametro array.");
+					goto fail;
+				}
+				fp->name = strdup(ctx->g_Token.Value.vString);
+				GetNextToken(ctx, &ctx->g_Token);
+				while ( ctx->g_Token.Type == T_QOPAREN )
+				{
+					GetNextToken(ctx, &ctx->g_Token);
+					if ( ctx->g_Token.Type != T_QCPAREN )
+					{
+						funcParseError(ctx, "Attesa parentesi ']' (le dimensioni dei parametri array non si indicano).");
+						n++;
+						goto fail;
+					}
+					fp->dims++;
+					GetNextToken(ctx, &ctx->g_Token);
+				}
+				if ( fp->dims == 0 )
+				{
+					funcParseError(ctx, "Un parametro array richiede almeno '[]'.");
+					n++;
+					goto fail;
+				}
+				if ( ctx->g_Token.Type != T_KW_OF )
+				{
+					funcParseError(ctx, "Attesa keyword 'of'.");
+					n++;
+					goto fail;
+				}
+				GetNextToken(ctx, &ctx->g_Token);
+				if ( !type(ctx) )
+				{
+					n++;
+					goto fail;
+				}
+				fp->t0 = T_ARRAY;
+				fp->t1 = (enumTipo1)ctx->g_currType;
+			}
+			else
+			{
+				if ( !type(ctx) )
+					goto fail;
+				fp->t1 = (enumTipo1)ctx->g_currType;
+				if ( ctx->g_Token.Type != T_ID )
+				{
+					funcParseError(ctx, "Atteso il nome del parametro.");
+					goto fail;
+				}
+				fp->name = strdup(ctx->g_Token.Value.vString);
+				GetNextToken(ctx, &ctx->g_Token);
+			}
+
+			for ( i = 0; i < n; i++ )
+			{
+				if ( strcmp(params[i].name, fp->name) == 0 )
+				{
+					printf("Linea %d Colonna %d: Errore funzione. Parametro '%s' duplicato.\n",
+					       ctx->g_Token.line, ctx->g_Token.column, fp->name);
+					ctx->g_numErrors++;
+					n++;
+					goto fail;
+				}
+			}
+			n++;
+
+			if ( ctx->g_Token.Type == T_COMMA )
+			{
+				GetNextToken(ctx, &ctx->g_Token);
+				continue;
+			}
+			break;
+		}
+	}
+
+	if ( ctx->g_Token.Type != T_CPAREN )
+	{
+		funcParseError(ctx, "Attesa parentesi ')'.");
+		goto fail;
+	}
+	GetNextToken(ctx, &ctx->g_Token);
+
+	*pParams = params;
+	*pCount = n;
+	return 1;
+
+fail:
+	funcFreeParams(params, n);
+	return 0;
+}
+
+/* prototipo : header ';'   (ammesso solo prima del blocco principale) */
+static int parseFuncPrototype(CompilerContext *ctx)
+{
+	char name[256];
+	int isVoid, line, n, idx;
+	enumTipo1 ret;
+	FuncParam *params;
+
+	if ( !parseFuncHeader(ctx, name, sizeof(name), &isVoid, &ret, &line, &params, &n) )
+		return 0;
+
+	if ( ctx->g_Token.Type != T_SEMICOLON )
+	{
+		funcFreeParams(params, n);
+		return funcParseError(ctx, "Atteso ';' dopo il prototipo (le definizioni vanno dopo il blocco principale).");
+	}
+	GetNextToken(ctx, &ctx->g_Token);
+
+	idx = funcFind(ctx, name);
+	if ( idx >= 0 )
+	{
+		int same = funcSignatureEquals(&ctx->funcs[idx], isVoid, ret, n, params);
+		funcFreeParams(params, n);
+		if ( !same )
+		{
+			printf("Linea %d: Errore funzione. Il prototipo di '%s' e' in conflitto con una dichiarazione precedente.\n", line, name);
+			ctx->g_numErrors++;
+			return 0;
+		}
+		return 1;
+	}
+
+	if ( scopeFind(ctx, &ctx->g_Scope, name, &(HashTable){0}) )
+	{
+		funcFreeParams(params, n);
+		printf("Linea %d: Errore funzione. '%s' e' gia' dichiarato come variabile.\n", line, name);
+		ctx->g_numErrors++;
+		return 0;
+	}
+
+	if ( funcDeclare(ctx, name, isVoid, ret, n, params, line) < 0 )
+	{
+		funcFreeParams(params, n);
+		return funcParseError(ctx, "Memoria insufficiente.");
+	}
+	return 1;
+}
+
+/* definizione : header code_block   (dopo il blocco principale) */
+static int parseFuncDefinition(CompilerContext *ctx)
+{
+	char name[256];
+	int isVoid, line, n, idx, i, ok;
+	enumTipo1 ret;
+	FuncParam *params;
+
+	if ( !parseFuncHeader(ctx, name, sizeof(name), &isVoid, &ret, &line, &params, &n) )
+		return 0;
+
+	if ( ctx->g_Token.Type == T_SEMICOLON )
+	{
+		funcFreeParams(params, n);
+		return funcParseError(ctx, "I prototipi vanno dichiarati in cima al file, prima del blocco principale.");
+	}
+
+	idx = funcFind(ctx, name);
+	if ( idx >= 0 )
+	{
+		int same = funcSignatureEquals(&ctx->funcs[idx], isVoid, ret, n, params);
+		funcFreeParams(params, n);
+		if ( !same )
+		{
+			printf("Linea %d: Errore funzione. La definizione di '%s' non corrisponde al prototipo.\n", line, name);
+			ctx->g_numErrors++;
+			return 0;
+		}
+		if ( ctx->funcs[idx].defined )
+		{
+			printf("Linea %d: Errore funzione. '%s' e' gia' stata definita.\n", line, name);
+			ctx->g_numErrors++;
+			return 0;
+		}
+		/* i parametri vengono presi dal prototipo (stessa firma) */
+	}
+	else
+	{
+		if ( scopeFind(ctx, &ctx->g_Scope, name, &(HashTable){0}) )
+		{
+			funcFreeParams(params, n);
+			printf("Linea %d: Errore funzione. '%s' e' gia' dichiarato come variabile.\n", line, name);
+			ctx->g_numErrors++;
+			return 0;
+		}
+		idx = funcDeclare(ctx, name, isVoid, ret, n, params, line);
+		if ( idx < 0 )
+		{
+			funcFreeParams(params, n);
+			return funcParseError(ctx, "Memoria insufficiente.");
+		}
+	}
+
+	/* scope dei parametri; il corpo (code_block) apre il proprio scope per le variabili locali */
+	ctx->g_curFunc = idx;
+	scopePush(ctx, &ctx->g_Scope);
+	for ( i = 0; i < ctx->funcs[idx].nparams; i++ )
+	{
+		FuncParam *fp = &ctx->funcs[idx].params[i];
+		Valore v;
+		memset(&v, 0, sizeof(v));
+		if ( fp->t0 == T_ARRAY )
+		{
+			v.pArrayDef = (ArrayDef*)calloc(1, sizeof(ArrayDef));
+			if ( v.pArrayDef )
+			{
+				v.pArrayDef->countIndexes = fp->dims;
+				v.pArrayDef->sizes = (int*)calloc((size_t)fp->dims, sizeof(int));
+			}
+		}
+		scopeInsert(ctx, &ctx->g_Scope, fp->name, fp->t0, fp->t1, T_VAR, v, 1, 0);
+		scopeAssignUniqueName(ctx, &ctx->g_Scope, fp->name);
+	}
+
+	ok = code_block(ctx);
+
+	scopePopKeep(ctx, &ctx->g_Scope);
+	ctx->g_curFunc = -1;
+
+	if ( !ok )
+		return 0;
+
+	ctx->funcs[idx].body = ctx->g_stack[ctx->g_top--];
+	ctx->funcs[idx].defined = 1;
+	return 1;
+}
+
+/* Chiamata: T_ID '(' [arg {',' arg}] ')'. Lascia il nodo T_FUNC_CALL in cima a g_stack.
+   op[0] = id con il nome (type1 = tipo di ritorno), op[1..] = argomenti.
+   Per un parametro 'ref' l'argomento e' un id scalare; per un array e' un id array senza indici. */
+static int parseCall(CompilerContext *ctx)
+{
+	char name[256];
+	int idx, i, nops = 0;
+	int line = ctx->g_Token.line, column = ctx->g_Token.column;
+	nodeType *ops[MAX_FUNC_PARAMS + 1];
+	FuncDef *fd;
+	Valore zero;
+	nodeType *call;
+
+	memset(&zero, 0, sizeof(zero));
+	snprintf(name, sizeof(name), "%s", ctx->g_Token.Value.vString);
+	idx = funcFind(ctx, name);
+	fd = &ctx->funcs[idx];
+
+	if ( !ctx->g_isCodeBlock )
+	{
+		printf("Linea %d Colonna %d: Errore chiamata. Le chiamate di funzione non sono ammesse nelle dichiarazioni.\n", line, column);
+		ctx->g_numErrors++;
+		return 0;
+	}
+
+	GetNextToken(ctx, &ctx->g_Token);
+	if ( ctx->g_Token.Type != T_OPAREN )
+	{
+		printf("Linea %d Colonna %d: Errore chiamata. Attesa parentesi '(' dopo '%s'.\n", ctx->g_Token.line, ctx->g_Token.column, name);
+		ctx->g_numErrors++;
+		return 0;
+	}
+	GetNextToken(ctx, &ctx->g_Token);
+
+	ops[nops++] = id(ctx, name, name, T_SIMPLE, fd->isVoid ? T_INTEGER : fd->retType, T_VAR, zero, 1);
+
+	for ( i = 0; i < fd->nparams; i++ )
+	{
+		FuncParam *fp = &fd->params[i];
+
+		if ( i > 0 )
+		{
+			if ( ctx->g_Token.Type != T_COMMA )
+			{
+				printf("Linea %d Colonna %d: Errore chiamata. '%s' richiede %d argomenti: manca una ','.\n",
+				       ctx->g_Token.line, ctx->g_Token.column, name, fd->nparams);
+				ctx->g_numErrors++;
+				goto fail;
+			}
+			GetNextToken(ctx, &ctx->g_Token);
+		}
+
+		if ( fp->t0 == T_ARRAY || fp->isRef )
+		{
+			HashTable ht;
+			Valore av;
+
+			if ( ctx->g_Token.Type != T_ID || !scopeFind(ctx, &ctx->g_Scope, ctx->g_Token.Value.vString, &ht) )
+			{
+				printf("Linea %d Colonna %d: Errore chiamata. L'argomento %d di '%s' deve essere %s.\n",
+				       ctx->g_Token.line, ctx->g_Token.column, i + 1, name,
+				       fp->t0 == T_ARRAY ? "un array" : "una variabile (parametro 'ref')");
+				ctx->g_numErrors++;
+				goto fail;
+			}
+			if ( fp->t0 == T_ARRAY )
+			{
+				if ( ht.Tipo0 != T_ARRAY || ht.Tipo1 != fp->t1 || ht.Value.pArrayDef->countIndexes != fp->dims )
+				{
+					printf("Linea %d Colonna %d: Errore chiamata. L'argomento %d di '%s' deve essere un array di %d dimensioni dello stesso tipo del parametro.\n",
+					       ctx->g_Token.line, ctx->g_Token.column, i + 1, name, fp->dims);
+					ctx->g_numErrors++;
+					goto fail;
+				}
+				if ( !allocArrayDefWrapper(ctx, &ht, &av) )
+					goto fail;
+				ops[nops++] = id(ctx, ctx->g_Token.Value.vString, ht.uniqueName, T_ARRAY, ht.Tipo1, ht.Tipo2, av, 1);
+			}
+			else
+			{
+				if ( ht.Tipo0 != T_SIMPLE || ht.Tipo2 != T_VAR || ht.Tipo1 != fp->t1 )
+				{
+					printf("Linea %d Colonna %d: Errore chiamata. L'argomento %d di '%s' (parametro 'ref') deve essere una variabile scalare dello stesso tipo.\n",
+					       ctx->g_Token.line, ctx->g_Token.column, i + 1, name);
+					ctx->g_numErrors++;
+					goto fail;
+				}
+				/* un parametro 'ref' puo' essere anche solo scritto: la variabile risulta inizializzata */
+				scopeUpdateValue(ctx, &ctx->g_Scope, ht.Key, ht.Tipo0, ht.Tipo1, ht.Tipo2, ht.Value, 1, -1);
+				ops[nops++] = id(ctx, ctx->g_Token.Value.vString, ht.uniqueName, T_SIMPLE, ht.Tipo1, ht.Tipo2, ht.Value, 1);
+			}
+			GetNextToken(ctx, &ctx->g_Token);
+			if ( ctx->g_Token.Type == T_QOPAREN )
+			{
+				printf("Linea %d Colonna %d: Errore chiamata. L'argomento %d di '%s' non puo' essere un elemento di array.\n",
+				       ctx->g_Token.line, ctx->g_Token.column, i + 1, name);
+				ctx->g_numErrors++;
+				goto fail;
+			}
+		}
+		else
+		{
+			int c;
+			if ( !expr(ctx) )
+				goto fail;
+			ops[nops++] = ctx->g_stack[ctx->g_top--];
+			c = argCompat(fp->t1, ops[nops - 1]->type1);
+			if ( ops[nops - 1]->type0 == T_ARRAY || c == 0 )
+			{
+				printf("Linea %d Colonna %d: Errore chiamata. Tipo dell'argomento %d di '%s' non compatibile con il parametro.\n",
+				       ctx->g_Token.line, ctx->g_Token.column, i + 1, name);
+				ctx->g_numErrors++;
+				goto fail;
+			}
+			if ( c == 2 )
+			{
+				printf("Linea %d Colonna %d: Warning chiamata. Argomento %d di '%s': conversione real -> int, potrebbe verificarsi una perdita di dati.\n",
+				       line, column, i + 1, name);
+				ctx->g_numWarnings++;
+			}
+		}
+	}
+
+	if ( ctx->g_Token.Type != T_CPAREN )
+	{
+		printf("Linea %d Colonna %d: Errore chiamata. '%s' accetta %d argomenti: attesa parentesi ')'.\n",
+		       ctx->g_Token.line, ctx->g_Token.column, name, fd->nparams);
+		ctx->g_numErrors++;
+		goto fail;
+	}
+	GetNextToken(ctx, &ctx->g_Token);
+
+	call = oprN(ctx, T_FUNC_CALL, nops, ops);
+	call->type0 = T_SIMPLE;
+	call->type1 = fd->isVoid ? T_INTEGER : fd->retType;
+	call->type2 = T_VAR;
+	ctx->g_stack[++ctx->g_top] = call;
+	return 1;
+
+fail:
+	for ( i = 0; i < nops; i++ )
+		freeNode(ctx, ops[i]);
+	return 0;
+}
+
+static void checkAllFunctionsDefined(CompilerContext *ctx)
+{
+	int i;
+	for ( i = 0; i < ctx->funcCount; i++ )
+	{
+		if ( !ctx->funcs[i].defined )
+		{
+			printf("Linea %d: Errore funzione. '%s' e' dichiarata ma non e' mai stata definita.\n", ctx->funcs[i].line, ctx->funcs[i].name);
+			ctx->g_numErrors++;
+		}
+	}
+}
+
+//program : {decl | prototipo} code_block {definizione};
 int program(CompilerContext *ctx)
 {
 	if ( !decl_list(ctx) )
@@ -446,6 +926,15 @@ int program(CompilerContext *ctx)
 
 	if ( !code_block(ctx) )
 		return 0;
+
+	while ( ctx->g_Token.Type == T_KW_VOID || ctx->g_Token.Type == T_KW_INT || ctx->g_Token.Type == T_KW_REAL ||
+	        ctx->g_Token.Type == T_KW_BOOL || ctx->g_Token.Type == T_KW_STRING )
+	{
+		if ( !parseFuncDefinition(ctx) )
+			return 0;
+	}
+
+	checkAllFunctionsDefined(ctx);
 
 	return 1;
 }
@@ -456,13 +945,25 @@ static void interpRecordDecl(CompilerContext *ctx, const char *name, enumTipo0 t
 
 int decl_list(CompilerContext *ctx)
 {
+	/* i prototipi sono ammessi solo nel livello piu' esterno, prima del blocco principale */
 	while ( ctx->g_Token.Type == T_KW_ARRAY ||
 		ctx->g_Token.Type == T_KW_INT ||
 		ctx->g_Token.Type == T_KW_REAL ||
 		ctx->g_Token.Type == T_KW_BOOL ||
-		ctx->g_Token.Type == T_KW_STRING )
+		ctx->g_Token.Type == T_KW_STRING ||
+		(ctx->g_Token.Type == T_KW_VOID && !ctx->g_isCodeBlock) )
+	{
+		if ( !ctx->g_isCodeBlock &&
+		     (ctx->g_Token.Type == T_KW_VOID ||
+		      (ctx->g_Token.Type != T_KW_ARRAY && PeekIsFunctionDecl(ctx))) )
+		{
+			if ( !parseFuncPrototype(ctx) )
+				return 0;
+			continue;
+		}
 		if ( !decl(ctx) )
 			return 0;
+	}
 
 	return 1;
 }
@@ -1170,6 +1671,62 @@ int stmt(CompilerContext *ctx)
 
 	switch ( ctx->g_Token.Type )
 	{
+	case T_KW_RETURN:
+		line = ctx->g_Token.line;
+		column = ctx->g_Token.column;
+		if ( ctx->g_curFunc < 0 )
+		{
+			printf("Linea %d Colonna %d: Errore stmt. 'return' e' ammesso solo dentro una funzione.\n", line, column);
+			ctx->g_numErrors++;
+			return 0;
+		}
+		GetNextToken(ctx, &ctx->g_Token);
+		if ( ctx->funcs[ctx->g_curFunc].isVoid )
+		{
+			if ( ctx->g_Token.Type != T_SEMICOLON )
+			{
+				printf("Linea %d Colonna %d: Errore stmt. Una funzione void non puo' restituire un valore.\n", line, column);
+				ctx->g_numErrors++;
+				return 0;
+			}
+			GetNextToken(ctx, &ctx->g_Token);
+			ctx->g_stack[++ctx->g_top] = opr(ctx, T_KW_RETURN, 1, NULL);
+		}
+		else
+		{
+			int c;
+			if ( ctx->g_Token.Type == T_SEMICOLON )
+			{
+				printf("Linea %d Colonna %d: Errore stmt. La funzione '%s' deve restituire un valore.\n", line, column, ctx->funcs[ctx->g_curFunc].name);
+				ctx->g_numErrors++;
+				return 0;
+			}
+			if ( !expr(ctx) )
+				return 0;
+			c = argCompat(ctx->funcs[ctx->g_curFunc].retType, ctx->g_stack[ctx->g_top]->type1);
+			if ( ctx->g_stack[ctx->g_top]->type0 == T_ARRAY || c == 0 )
+			{
+				printf("Linea %d Colonna %d: Errore stmt. Il valore di 'return' non e' compatibile con il tipo di ritorno di '%s'.\n",
+				       line, column, ctx->funcs[ctx->g_curFunc].name);
+				ctx->g_numErrors++;
+				freeNode(ctx, ctx->g_stack[ctx->g_top--]);
+				return 0;
+			}
+			if ( c == 2 )
+			{
+				printf("Linea %d Colonna %d: Warning stmt. 'return': conversione real -> int, potrebbe verificarsi una perdita di dati.\n", line, column);
+				ctx->g_numWarnings++;
+			}
+			if ( !expectStmtSemicolon(ctx) )
+			{
+				freeNode(ctx, ctx->g_stack[ctx->g_top--]);
+				return 0;
+			}
+			left = ctx->g_stack[ctx->g_top--];
+			ctx->g_stack[++ctx->g_top] = opr(ctx, T_KW_RETURN, 1, left);
+		}
+		break;
+
 	case T_KW_PRINT:
 		GetNextToken(ctx, &ctx->g_Token);
 		if ( !expr(ctx) )
@@ -1378,6 +1935,19 @@ int stmt(CompilerContext *ctx)
 	}
 
 	case T_ID:
+		if ( !scopeFind(ctx, &ctx->g_Scope, ctx->g_Token.Value.vString, &hashTable) &&
+		     funcFind(ctx, ctx->g_Token.Value.vString) >= 0 )
+		{
+			/* chiamata di funzione usata come istruzione */
+			if ( !parseCall(ctx) )
+				return 0;
+			if ( !expectStmtSemicolon(ctx) )
+			{
+				freeNode(ctx, ctx->g_stack[ctx->g_top--]);
+				return 0;
+			}
+			break;
+		}
 		if ( !scopeFind(ctx, &ctx->g_Scope, ctx->g_Token.Value.vString, &hashTable) )
 		{
 			printf("Linea %d Colonna %d: Errore stmt. Identificatore '%s' non dichiarato.\n",
@@ -2003,6 +2573,19 @@ int expr4(CompilerContext *ctx)
 		ctx->g_stack[ctx->g_top]->type2 = T_VAR;
 		break;
 	case T_ID:
+		if ( !scopeFind(ctx, &ctx->g_Scope, ctx->g_Token.Value.vString, &hashTable) &&
+		     funcFind(ctx, ctx->g_Token.Value.vString) >= 0 )
+		{
+			int fIdx = funcFind(ctx, ctx->g_Token.Value.vString);
+			if ( ctx->funcs[fIdx].isVoid )
+			{
+				printf("Linea %d Colonna %d: Errore expr4. La funzione void '%s' non restituisce un valore.\n",
+						ctx->g_Token.line, ctx->g_Token.column, ctx->g_Token.Value.vString);
+				ctx->g_numErrors++;
+				return 0;
+			}
+			return parseCall(ctx);
+		}
 		if ( !scopeFind(ctx, &ctx->g_Scope, ctx->g_Token.Value.vString, &hashTable) )
 		{
 			printf("Linea %d Colonna %d: Errore expr4. Identificatore '%s' non dichiarato.\n",
