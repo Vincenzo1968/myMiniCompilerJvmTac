@@ -122,6 +122,17 @@ static int isOneConst(CompilerContext *ctx, nodeType *n)
     return 0;
 }
 
+/* Vero se il sottoalbero contiene una chiamata di funzione (ha effetti collaterali). */
+static int astHasCall(const nodeType *n)
+{
+    int i;
+    if (!n || n->type != typeOperator) return 0;
+    if (n->opr.oper == T_FUNC_CALL) return 1;
+    for (i = 0; i < n->opr.nops; i++)
+        if (astHasCall(n->opr.op[i])) return 1;
+    return 0;
+}
+
 nodeType *tacOptimizeAST(CompilerContext *ctx, nodeType *p)
 {
     int i;
@@ -226,7 +237,8 @@ nodeType *tacOptimizeAST(CompilerContext *ctx, nodeType *p)
         if (p->opr.oper == T_OP_MULT) {
             if (isOneConst(ctx, p->opr.op[1])) { nodeType *k = p->opr.op[0]; p->opr.op[0] = NULL; freeNode(ctx, p); return k; }
             if (isOneConst(ctx, p->opr.op[0])) { nodeType *k = p->opr.op[1]; p->opr.op[1] = NULL; freeNode(ctx, p); return k; }
-            if (isZeroConst(ctx, p->opr.op[0]) || isZeroConst(ctx, p->opr.op[1])) {
+            if ((isZeroConst(ctx, p->opr.op[0]) || isZeroConst(ctx, p->opr.op[1])) &&
+                !astHasCall(p->opr.op[0]) && !astHasCall(p->opr.op[1])) {
                 Valore v;
                 char lex[16];
                 enumTipo1 t = (p->type1 == T_REAL) ? T_REAL : T_INTEGER;
@@ -638,10 +650,20 @@ static int isBoolLit(CompilerContext *ctx, const char *s, int *outBool)
     return 0;
 }
 
+/* Una variabile globale e' visibile alle altre funzioni: in un programma con funzioni le sue
+   scritture non si possono eliminare come "mai lette" e il suo valore non e' noto all'ingresso. */
+static int tacIsEscaping(CompilerContext *ctx, const char *name)
+{
+    HashTable d;
+    if (!name || ctx->funcCount == 0) return 0;
+    memset(&d, 0, sizeof(d));
+    return scopeFind(ctx, &ctx->g_Scope, (char *)name, &d) && d.isGlobal;
+}
+
 static int countUses(CompilerContext *ctx, const TACList *tac, const char *name)
 {
-	(void)ctx;
     int i, uses = 0;
+    if (tacIsEscaping(ctx, name)) return 1;
     for (i = 0; i < tac->count; i++) {
         const TACInstr *in = &tac->items[i];
         if (in->dead) continue;
@@ -708,6 +730,19 @@ void tacOptimizeO1(CompilerContext *ctx, TACList *tac)
                         changed = 1;
                     }
                 }
+                envClear(ctx, &env);
+                continue;
+            }
+
+            /* una chiamata puo' leggere e scrivere globali e variabili passate per
+               riferimento: nessuna informazione sui valori sopravvive */
+            if (in->op == TAC_CALL) {
+                envClear(ctx, &env);
+                if (in->res) envSet(ctx, &env, in->res, NULL);
+                continue;
+            }
+            /* arg1 di param ref / param array e' il nome della variabile, non un valore */
+            if (in->op == TAC_PARAM_REF || in->op == TAC_PARAM_ARR) {
                 envClear(ctx, &env);
                 continue;
             }
@@ -847,7 +882,7 @@ void tacOptimizeO1(CompilerContext *ctx, TACList *tac)
             if (in->dead) continue;
             if (in->res && in->op != TAC_LABEL && in->op != TAC_GOTO &&
                 in->op != TAC_IF_FALSE && in->op != TAC_IF_TRUE &&
-                in->op != TAC_STORE_IDX && in->op != TAC_READ) {
+                in->op != TAC_STORE_IDX && in->op != TAC_READ && in->op != TAC_CALL) {
                 if (countUses(ctx, tac, in->res) == 0) {
                     in->dead = 1;
                     changed = 1;
@@ -968,19 +1003,53 @@ static const char *typeName(enumTipo1 t)
     return "int";
 }
 
+static int tacHasCall(const TACList *t)
+{
+    int i;
+    for (i = 0; i < t->count; i++)
+        if (t->items[i].op == TAC_CALL) return 1;
+    return 0;
+}
+
+/* Ottimizza un segmento (main o corpo di funzione) con il livello massimo sicuro:
+   - parametri 'ref': due parametri possono riferirsi alla stessa variabile -> nessuna ottimizzazione;
+   - parametri array o chiamate: alias / effetti collaterali invisibili ai passi globali -> al piu' -O1. */
+static void tacOptimizeSegment(CompilerContext *ctx, TACList *seg, int optLevel, int hasRef, int hasArr)
+{
+    if (hasRef) optLevel = 0;
+    else if ((hasArr || tacHasCall(seg)) && optLevel > 1) optLevel = 1;
+    if (optLevel >= 1) tacOptimizeO1(ctx, seg);
+    if (optLevel >= 2) tacOptimizeO2(ctx, seg);
+    if (optLevel >= 3) tacOptimizeO3(ctx, seg);
+}
+
+static void tacAppendMove(CompilerContext *ctx, TACList *dst, TACList *src)
+{
+    int i;
+    for (i = 0; i < src->count; i++) {
+        TACInstr *in = &src->items[i];
+        tacEmit(ctx, dst, in->op, in->arg1, in->arg2, in->res, in->type1);
+        dst->items[dst->count - 1].dead = in->dead;
+    }
+    tacFree(ctx, src);
+}
+
 /* Dopo il blocco principale: ogni funzione definita, tra 'func' e 'endfunc'. */
-static void tacEmitFunctions(CompilerContext *ctx, TACList *tac, Scope *pScope)
+static void tacEmitFunctions(CompilerContext *ctx, TACList *tac, Scope *pScope, int optLevel)
 {
     int i, j;
     tacEmit(ctx, tac, TAC_ENDFUNC, NULL, NULL, "main", T_INTEGER);
     for (i = 0; i < ctx->funcCount; i++) {
-        const FuncDef *f = &ctx->funcs[i];
+        FuncDef *f = &ctx->funcs[i];
         char hdr[1024];
         size_t len = 0;
+        int hasRef = 0, hasArr = 0;
+        TACList seg;
         if (!f->defined || !f->body) continue;
         hdr[0] = '\0';
         for (j = 0; j < f->nparams; j++) {
             const FuncParam *fp = &f->params[j];
+            if (fp->t0 == T_ARRAY) hasArr = 1; else if (fp->isRef) hasRef = 1;
             len += (size_t)snprintf(hdr + len, sizeof(hdr) - len, "%s%s%s",
                                     j ? ", " : "",
                                     fp->t0 == T_ARRAY ? "array " : (fp->isRef ? "ref " : ""),
@@ -988,7 +1057,12 @@ static void tacEmitFunctions(CompilerContext *ctx, TACList *tac, Scope *pScope)
             if (len >= sizeof(hdr)) { len = sizeof(hdr) - 1; break; }
         }
         tacEmit(ctx, tac, TAC_FUNC, hdr, f->isVoid ? "void" : typeName(f->retType), f->name, f->isVoid ? T_INTEGER : f->retType);
-        free(emitTAC(ctx, tac, pScope, f->body));
+        if (optLevel >= 1 && !hasRef)
+            f->body = tacOptimizeAST(ctx, f->body);
+        tacInit(ctx, &seg);
+        free(emitTAC(ctx, &seg, pScope, f->body));
+        tacOptimizeSegment(ctx, &seg, optLevel, hasRef, hasArr);
+        tacAppendMove(ctx, tac, &seg);
         tacEmit(ctx, tac, TAC_ENDFUNC, NULL, NULL, f->name, T_INTEGER);
     }
 }
@@ -996,6 +1070,7 @@ static void tacEmitFunctions(CompilerContext *ctx, TACList *tac, Scope *pScope)
 void tacBuild(CompilerContext *ctx, nodeType **ppTree, Scope *pScope, int optLevel, TACList *outTac)
 {
     nodeType *pTree = ppTree ? *ppTree : NULL;
+    TACList mainSeg;
 
     ctx->g_label = 1;
     ctx->g_temp = 1;
@@ -1005,12 +1080,6 @@ void tacBuild(CompilerContext *ctx, nodeType **ppTree, Scope *pScope, int optLev
         return;
     }
 
-    if (ctx->funcCount > 0 && optLevel > 0) {
-        /* TODO (fase 2): le ottimizzazioni non conoscono ancora chiamate e frame di funzione */
-        fprintf(stderr, "Nota: in presenza di funzioni le ottimizzazioni -O1..-O3 sono disabilitate (si usa -O0).\n");
-        optLevel = 0;
-    }
-
     if (optLevel >= 1) {
         pTree = tacOptimizeAST(ctx, pTree);
         if (ppTree) {
@@ -1018,22 +1087,13 @@ void tacBuild(CompilerContext *ctx, nodeType **ppTree, Scope *pScope, int optLev
         }
     }
 
-    free(emitTAC(ctx, outTac, pScope, pTree));
+    tacInit(ctx, &mainSeg);
+    free(emitTAC(ctx, &mainSeg, pScope, pTree));
+    tacOptimizeSegment(ctx, &mainSeg, optLevel, 0, 0);
+    tacAppendMove(ctx, outTac, &mainSeg);
 
     if (ctx->funcCount > 0)
-        tacEmitFunctions(ctx, outTac, pScope);
-
-    if (optLevel >= 1) {
-        tacOptimizeO1(ctx, outTac);
-    }
-
-    if (optLevel >= 2) {
-        tacOptimizeO2(ctx, outTac);
-    }
-
-    if (optLevel >= 3) {
-        tacOptimizeO3(ctx, outTac);
-    }
+        tacEmitFunctions(ctx, outTac, pScope, optLevel);
 }
 
 void tacGenerate(CompilerContext *ctx, nodeType *pTree, Scope *pScope, int optLevel)
@@ -1122,7 +1182,7 @@ static void cfgBuild(CompilerContext *ctx, const TACList *tac, CFG *cfg)
         if (op == TAC_LABEL) {
             isLeader[i] = 1;
         }
-        if (op == TAC_GOTO || op == TAC_IF_FALSE || op == TAC_IF_TRUE) {
+        if (op == TAC_GOTO || op == TAC_IF_FALSE || op == TAC_IF_TRUE || op == TAC_RETURN) {
             if (i + 1 < tac->count) {
                 isLeader[i + 1] = 1;
             }
@@ -1160,6 +1220,8 @@ static void cfgBuild(CompilerContext *ctx, const TACList *tac, CFG *cfg)
             int target = cfgFindBlockByLabel(ctx, tac, cfg, last->res);
             if (b + 1 < cfg->numBlocks) cfgAddEdge(ctx, cfg, b, b + 1);
             if (target >= 0) cfgAddEdge(ctx, cfg, b, target);
+        } else if (last->op == TAC_RETURN) {
+            /* uscita dalla funzione: nessun successore */
         } else {
             if (b + 1 < cfg->numBlocks) cfgAddEdge(ctx, cfg, b, b + 1);
         }
@@ -1580,6 +1642,11 @@ static void cfgComputeLiveness(CompilerContext *ctx, const TACList *tac, const C
             int s;
 
             memset(outB, 0, (size_t)numVars);
+            if (cfg->blocks[b].numSuccs == 0) {
+                /* blocco d'uscita: le globali sono osservabili da chi ha chiamato */
+                for (v = 0; v < numVars; v++)
+                    outB[v] = (unsigned char)tacIsEscaping(ctx, vars[v]);
+            }
             for (s = 0; s < cfg->blocks[b].numSuccs; s++) {
                 int succ = cfg->blocks[b].succs[s];
                 const unsigned char *inS = inSets + (size_t)succ * (size_t)numVars;
@@ -1631,7 +1698,7 @@ static int cfgGlobalLivenessDCE(CompilerContext *ctx, TACList *tac, const CFG *c
             int id;
             if (in->dead) continue;
 
-            if (in->res && isScalarWriteOp(ctx, in->op) && in->op != TAC_READ) {
+            if (in->res && isScalarWriteOp(ctx, in->op) && in->op != TAC_READ && in->op != TAC_CALL) {
                 id = findOrAddVar(ctx, &vars, &numVars, &numVars, in->res, 0);
                 if (id >= 0 && !live[id]) {
                     in->dead = 1;
@@ -2756,6 +2823,19 @@ static int tacLinearIVSR(CompilerContext *ctx, TACList *tac)
         }
         if (end == -1) continue;
 
+        /* Solo cicli innermost "semplici": nessuna label o salto incondizionato nel corpo
+           (altrimenti si scambierebbe l'induzione di un ciclo interno per quella di questo) */
+        {
+            int simple = 1;
+            for (k = i + 1; k < end && simple; k++) {
+                if (tac->items[k].dead) continue;
+                if (tac->items[k].op == TAC_LABEL || tac->items[k].op == TAC_GOTO ||
+                    tac->items[k].op == TAC_RETURN)
+                    simple = 0;
+            }
+            if (!simple) continue;
+        }
+
         /* 2. Trova la variabile di induzione (BIV), es: t7 = i + 1; i = t7 */
         char *biv = NULL;
         int step = 0;
@@ -2777,6 +2857,15 @@ static int tacLinearIVSR(CompilerContext *ctx, TACList *tac)
                     }
                 }
             }
+        }
+
+        if (biv) {
+            int writes = 0;
+            for (k = i + 1; k < end; k++) {
+                TACInstr *w = &tac->items[k];
+                if (!w->dead && w->res && isScalarWriteOp(ctx, w->op) && strcmp(w->res, biv) == 0) writes++;
+            }
+            if (writes != 1) { free(biv); biv = NULL; }
         }
 
         if (biv) {
