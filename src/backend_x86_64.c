@@ -70,47 +70,54 @@ static const char* get_real_const_label(CompilerContext *ctx, double val)
     return ctx->real_consts[ctx->real_const_count - 1].label;
 }
 
-static int get_var_offset(const char *name, enumTipo1 type, VarTable *vt)
-{
-    if (!name) return 0;
-    for (int i = 0; i < vt->count; i++) {
-        if (strcmp(vt->items[i].name, name) == 0) {
-            return vt->items[i].offset;
-        }
-    }
-    if (vt->count >= vt->capacity) {
-        int newCap = (vt->capacity == 0) ? 64 : vt->capacity * 2;
-        vt->items = (VarSlot *)realloc(vt->items, newCap * sizeof(VarSlot));
-        vt->capacity = newCap;
-    }
-    vt->items[vt->count].name = strdup(name);
-    vt->items[vt->count].offset = vt->current_offset;
-    vt->items[vt->count].type1 = type;
-    vt->current_offset -= 8;
-    vt->count++;
-    return vt->items[vt->count - 1].offset;
-}
-
-/* Spazio per un array nello stack frame: blocco contiguo, elemento k all'indirizzo base + k*size.
-   Ritorna l'offset (negativo rispetto a rbp) del primo elemento. */
-static int get_array_offset(const char *name, enumTipo1 type, int bytes, VarTable *vt)
+static VarSlot *find_slot(VarTable *vt, const char *name)
 {
     for (int i = 0; i < vt->count; i++)
         if (strcmp(vt->items[i].name, name) == 0)
-            return vt->items[i].offset;
-    bytes = (bytes + 7) & ~7;
-    if (bytes < 8) bytes = 8;
+            return &vt->items[i];
+    return NULL;
+}
+
+static VarSlot *new_slot(VarTable *vt, const char *name, enumTipo1 type, int offset, int kind)
+{
     if (vt->count >= vt->capacity) {
         int newCap = (vt->capacity == 0) ? 64 : vt->capacity * 2;
         vt->items = (VarSlot *)realloc(vt->items, newCap * sizeof(VarSlot));
         vt->capacity = newCap;
     }
-    vt->items[vt->count].name = strdup(name);
-    vt->items[vt->count].offset = vt->current_offset - (bytes - 8);
-    vt->items[vt->count].type1 = type;
-    vt->current_offset -= bytes;
-    vt->count++;
-    return vt->items[vt->count - 1].offset;
+    VarSlot *sl = &vt->items[vt->count++];
+    sl->name = strdup(name);
+    sl->offset = offset;
+    sl->type1 = type;
+    sl->kind = kind;
+    return sl;
+}
+
+/* Slot di 8 byte nello stack frame (se la variabile non c'e' ancora) e suo offset. */
+static int get_var_offset(const char *name, enumTipo1 type, VarTable *vt)
+{
+    if (!name) return 0;
+    VarSlot *sl = find_slot(vt, name);
+    if (sl) return sl->offset;
+    sl = new_slot(vt, name, type, vt->current_offset, SLOT_FRAME);
+    vt->current_offset -= 8;
+    return sl->offset;
+}
+
+static void add_global(GlobalTable *gt, const char *name, enumTipo1 type, int bytes)
+{
+    for (int i = 0; i < gt->count; i++)
+        if (strcmp(gt->items[i].name, name) == 0)
+            return;
+    if (gt->count >= gt->capacity) {
+        int newCap = (gt->capacity == 0) ? 32 : gt->capacity * 2;
+        gt->items = (GlobalVar *)realloc(gt->items, newCap * sizeof(GlobalVar));
+        gt->capacity = newCap;
+    }
+    gt->items[gt->count].name = strdup(name);
+    gt->items[gt->count].type1 = type;
+    gt->items[gt->count].bytes = (bytes + 7) & ~7;
+    gt->count++;
 }
 
 /* Byte occupati da un elemento (stessi valori usati dal TAC per gli offset). */
@@ -125,16 +132,32 @@ static int element_size(enumTipo1 t)
     return 4;
 }
 
-static int array_total_bytes(CompilerContext *ctx, Scope *pScope, const char *name, enumTipo1 elemType)
+/* Registra un array: statico se globale, altrimenti blocco contiguo nello stack frame
+   (elemento k all'indirizzo base + k*size). Gli array parametro sono gia' registrati. */
+static void register_array(CompilerContext *ctx, Scope *pScope, const char *name, VarTable *vt)
 {
     HashTable d;
     long long n = 1;
+    int bytes;
+    if (find_slot(vt, name)) return;
     memset(&d, 0, sizeof(d));
-    if (pScope && scopeFind(ctx, pScope, (char *)name, &d) && d.Tipo0 == T_ARRAY && d.Value.pArrayDef) {
-        for (int k = 0; k < d.Value.pArrayDef->countIndexes; k++)
-            n *= d.Value.pArrayDef->sizes[k];
+    if (!(pScope && scopeFind(ctx, pScope, (char *)name, &d) && d.Tipo0 == T_ARRAY && d.Value.pArrayDef)) {
+        get_var_offset(name, T_INTEGER, vt);
+        return;
     }
-    return (int)(n * element_size(elemType));
+    for (int k = 0; k < d.Value.pArrayDef->countIndexes; k++)
+        n *= d.Value.pArrayDef->sizes[k];
+    bytes = (int)(n * element_size(d.Tipo1));
+    bytes = (bytes + 7) & ~7;
+    if (bytes < 8) bytes = 8;
+
+    if (d.isGlobal) {
+        add_global(vt->gt, name, d.Tipo1, bytes);
+        new_slot(vt, name, d.Tipo1, 0, SLOT_GLOBAL);
+    } else {
+        new_slot(vt, name, d.Tipo1, vt->current_offset - (bytes - 8), SLOT_FRAME);
+        vt->current_offset -= bytes;
+    }
 }
 
 static bool is_bool_literal(const char *str)
@@ -160,7 +183,7 @@ static long long const_ivalue(const char *str)
 }
 
 /* Tipo di un operando TAC: letterali dal loro aspetto, variabili e temporanei
-   dal tipo con cui sono stati registrati nello stack frame. */
+   dal tipo con cui sono stati registrati. */
 static enumTipo1 operand_type(const char *s, VarTable *vt, enumTipo1 dflt)
 {
     if (!s) return dflt;
@@ -168,29 +191,86 @@ static enumTipo1 operand_type(const char *s, VarTable *vt, enumTipo1 dflt)
     if (is_bool_literal(s)) return T_BOOLEAN;
     if (is_numeric_constant(s))
         return (strpbrk(s, ".eE") != NULL) ? T_REAL : T_INTEGER;
-    for (int i = 0; i < vt->count; i++) {
-        if (strcmp(vt->items[i].name, s) == 0)
-            return vt->items[i].type1;
-    }
-    return dflt;
+    VarSlot *sl = find_slot(vt, s);
+    return sl ? sl->type1 : dflt;
 }
 
-/* Registra nello stack frame una variabile o un temporaneo. Per le variabili
-   dell'utente il tipo e' quello dichiarato (la symtab contiene i nomi univoci). */
+/* Registra una variabile o un temporaneo. Per le variabili dell'utente il tipo e' quello
+   dichiarato (la symtab contiene i nomi univoci); le globali vanno in memoria statica. */
 static void register_operand(CompilerContext *ctx, Scope *pScope, const char *name, enumTipo1 dflt, VarTable *vt)
 {
     enumTipo1 t = dflt;
     HashTable d;
+    if (find_slot(vt, name)) return;
     memset(&d, 0, sizeof(d));
-    if (pScope && scopeFind(ctx, pScope, (char *)name, &d))
+    if (pScope && scopeFind(ctx, pScope, (char *)name, &d)) {
         t = d.Tipo1;
+        if (d.isGlobal && d.Tipo0 == T_SIMPLE) {
+            add_global(vt->gt, name, t, 8);
+            new_slot(vt, name, t, 0, SLOT_GLOBAL);
+            return;
+        }
+    }
     get_var_offset(name, t, vt);
+}
+
+/* Operando di memoria di una variabile scalare: "[rbp + n]", "[rel g_x]" oppure "[r10]"
+   (parametro 'ref': prima si carica in r10 l'indirizzo). */
+static void mem_ref(FILE *out, VarTable *vt, const char *name, enumTipo1 type, char *buf, size_t n)
+{
+    VarSlot *sl = find_slot(vt, name);
+    if (!sl) {
+        get_var_offset(name, type, vt);
+        sl = find_slot(vt, name);
+    }
+    switch (sl->kind) {
+        case SLOT_GLOBAL:
+            snprintf(buf, n, "[rel g_%s]", name);
+            break;
+        case SLOT_REFPARAM:
+            fprintf(out, "    mov r10, [rbp + %d]\n", sl->offset);
+            snprintf(buf, n, "[r10]");
+            break;
+        default:
+            snprintf(buf, n, "[rbp + %d]", sl->offset);
+            break;
+    }
+}
+
+/* Indirizzo base di un array in un registro. */
+static void array_base(FILE *out, VarTable *vt, const char *name, const char *reg)
+{
+    VarSlot *sl = find_slot(vt, name);
+    if (!sl) {
+        fprintf(out, "    xor %s, %s\n", reg, reg);
+        return;
+    }
+    switch (sl->kind) {
+        case SLOT_GLOBAL:   fprintf(out, "    lea %s, [rel g_%s]\n", reg, name); break;
+        case SLOT_ARRPARAM: fprintf(out, "    mov %s, [rbp + %d]\n", reg, sl->offset); break;
+        default:            fprintf(out, "    lea %s, [rbp + %d]\n", reg, sl->offset); break;
+    }
+}
+
+/* Indirizzo di una variabile scalare in un registro (per 'param ref' e per scanf). */
+static void var_address(FILE *out, VarTable *vt, const char *name, enumTipo1 type, const char *reg)
+{
+    VarSlot *sl = find_slot(vt, name);
+    if (!sl) {
+        get_var_offset(name, type, vt);
+        sl = find_slot(vt, name);
+    }
+    switch (sl->kind) {
+        case SLOT_GLOBAL:   fprintf(out, "    lea %s, [rel g_%s]\n", reg, name); break;
+        case SLOT_REFPARAM: fprintf(out, "    mov %s, [rbp + %d]\n", reg, sl->offset); break;
+        default:            fprintf(out, "    lea %s, [rbp + %d]\n", reg, sl->offset); break;
+    }
 }
 
 /* Una stringa non inizializzata (puntatore NULL) si comporta come "" (come nell'interprete). */
 static void emit_string_default(FILE *out, VarTable *vt)
 {
-    int n = vt->lbl++;
+    int n = vt->gt->lbl++;
     fprintf(out, "    test rax, rax\n");
     fprintf(out, "    jnz .Lstr%d\n", n);
     fprintf(out, "    lea rax, [rel str_empty]\n");
@@ -199,6 +279,7 @@ static void emit_string_default(FILE *out, VarTable *vt)
 
 static void emit_load_operand(CompilerContext *ctx, FILE *out, const char *operand, enumTipo1 type, VarTable *vt, StrConstTable *st)
 {
+    char m[64];
     if (!operand) return;
 
     if (is_string_literal(operand)) {
@@ -219,11 +300,11 @@ static void emit_load_operand(CompilerContext *ctx, FILE *out, const char *opera
         return;
     }
 
-    int offset = get_var_offset(operand, type, vt);
+    mem_ref(out, vt, operand, type, m, sizeof(m));
     if (type == T_REAL) {
-        fprintf(out, "    movsd xmm0, [rbp + %d]\n", offset);
+        fprintf(out, "    movsd xmm0, %s\n", m);
     } else {
-        fprintf(out, "    mov rax, [rbp + %d]\n", offset);
+        fprintf(out, "    mov rax, %s\n", m);
         if (type == T_STRING)
             emit_string_default(out, vt);
     }
@@ -232,16 +313,18 @@ static void emit_load_operand(CompilerContext *ctx, FILE *out, const char *opera
 /* Carica un operando come double in xmm<reg>, convertendolo se e' intero. */
 static void emit_load_real(CompilerContext *ctx, FILE *out, const char *operand, VarTable *vt, int reg)
 {
+    char m[64];
     if (is_numeric_constant(operand)) {
         const char *label = get_real_const_label(ctx, is_bool_literal(operand) ? (double)const_ivalue(operand) : strtod(operand, NULL));
         fprintf(out, "    movsd xmm%d, [rel %s]\n", reg, label);
         return;
     }
-    int offset = get_var_offset(operand, T_REAL, vt);
-    if (operand_type(operand, vt, T_REAL) == T_REAL) {
-        fprintf(out, "    movsd xmm%d, [rbp + %d]\n", reg, offset);
+    enumTipo1 t = operand_type(operand, vt, T_REAL);
+    mem_ref(out, vt, operand, T_REAL, m, sizeof(m));
+    if (t == T_REAL) {
+        fprintf(out, "    movsd xmm%d, %s\n", reg, m);
     } else {
-        fprintf(out, "    mov rax, [rbp + %d]\n", offset);
+        fprintf(out, "    mov rax, %s\n", m);
         fprintf(out, "    cvtsi2sd xmm%d, rax\n", reg);
     }
 }
@@ -249,10 +332,13 @@ static void emit_load_real(CompilerContext *ctx, FILE *out, const char *operand,
 /* Carica un operando intero/booleano in un registro generale (costante inclusa). */
 static void emit_load_int_reg(FILE *out, const char *operand, VarTable *vt, const char *reg)
 {
-    if (is_numeric_constant(operand))
+    char m[64];
+    if (is_numeric_constant(operand)) {
         fprintf(out, "    mov %s, %lld\n", reg, const_ivalue(operand));
-    else
-        fprintf(out, "    mov %s, [rbp + %d]\n", reg, get_var_offset(operand, T_INTEGER, vt));
+    } else {
+        mem_ref(out, vt, operand, T_INTEGER, m, sizeof(m));
+        fprintf(out, "    mov %s, %s\n", reg, m);
+    }
 }
 
 /* Carica un operando nel registro del tipo di destinazione (rax o xmm0), convertendo se serve:
@@ -273,37 +359,43 @@ static void emit_load_as(CompilerContext *ctx, FILE *out, const char *operand, e
 
 static void emit_store_operand(FILE *out, const char *dest, enumTipo1 type, VarTable *vt)
 {
+    char m[64];
     if (!dest) return;
-    int offset = get_var_offset(dest, type, vt);
+    mem_ref(out, vt, dest, type, m, sizeof(m));
     if (type == T_REAL) {
-        fprintf(out, "    movsd [rbp + %d], xmm0\n", offset);
+        fprintf(out, "    movsd %s, xmm0\n", m);
     } else {
-        fprintf(out, "    mov [rbp + %d], rax\n", offset);
+        fprintf(out, "    mov %s, rax\n", m);
     }
 }
 
-void x86_64Generate(CompilerContext *ctx, TACList *tac, Scope *pScope, const char *outputFileName)
+/* Genera una funzione (fd != NULL) oppure il blocco principale (fd == NULL) a partire
+   dalle istruzioni TAC [start, end). Ogni funzione ha il proprio stack frame.
+   Convenzione di chiamata: argomenti impilati in ordine (il primo per primo, 8 byte
+   ciascuno), a chi chiama il compito di toglierli; risultato in rax (xmm0 se real). */
+static void gen_segment(CompilerContext *ctx, FILE *out, TACList *tac, int start, int end, Scope *pScope,
+                        StrConstTable *st_, GlobalTable *gt, const FuncDef *fd)
 {
-    FILE *fp = fopen(outputFileName, "w");
-    if (!fp) {
-        printf("Errore: impossibile aprire il file %s per la scrittura.\n", outputFileName);
-        return;
-    }
-
     VarTable vt;
+    StrConstTable st = *st_;   /* copia di lavoro, riscritta in st_ alla fine */
     vt.items = NULL;
     vt.count = 0;
     vt.capacity = 0;
     vt.current_offset = -8;
-    vt.lbl = 0;
+    vt.gt = gt;
 
-    StrConstTable st;
-    st.items = NULL;
-    st.count = 0;
-    st.capacity = 0;
+    /* argomenti: p0 all'indirizzo piu' alto, poi a scendere (rbp+8 = indirizzo di ritorno) */
+    if (fd) {
+        for (int k = 0; k < fd->nparams; k++) {
+            const FuncParam *fp = &fd->params[k];
+            int off = 16 + 8 * (fd->nparams - 1 - k);
+            new_slot(&vt, fp->uniqueName ? fp->uniqueName : fp->name, fp->t1, off,
+                     fp->t0 == T_ARRAY ? SLOT_ARRPARAM : (fp->isRef ? SLOT_REFPARAM : SLOT_FRAME));
+        }
+    }
 
-    /* PASSAGGIO 1: Scansione per costanti stringa e stack frame */
-    for (int i = 0; i < tac->count; i++) {
+    /* PASSAGGIO 1: costanti stringa, variabili e temporanei */
+    for (int i = start; i < end; i++) {
         const TACInstr *in = &tac->items[i];
         if (in->dead) continue;
 
@@ -313,7 +405,7 @@ void x86_64Generate(CompilerContext *ctx, TACList *tac, Scope *pScope, const cha
         if (in->op == TAC_LOAD_IDX || in->op == TAC_STORE_IDX) {
             const char *arr = (in->op == TAC_LOAD_IDX) ? in->arg1 : in->res;
             const char *off = (in->op == TAC_LOAD_IDX) ? in->arg2 : in->arg1;
-            get_array_offset(arr, in->type1, array_total_bytes(ctx, pScope, arr, in->type1), &vt);
+            register_array(ctx, pScope, arr, &vt);
             if (off && !is_numeric_constant(off))
                 register_operand(ctx, pScope, off, T_INTEGER, &vt);
             if (in->op == TAC_LOAD_IDX) {
@@ -324,6 +416,17 @@ void x86_64Generate(CompilerContext *ctx, TACList *tac, Scope *pScope, const cha
                 else if (!is_numeric_constant(in->arg2))
                     register_operand(ctx, pScope, in->arg2, in->type1, &vt);
             }
+            continue;
+        }
+
+        if (in->op == TAC_PARAM_ARR) {
+            register_array(ctx, pScope, in->arg1, &vt);
+            continue;
+        }
+
+        if (in->op == TAC_CALL) {
+            /* arg1 = nome della funzione, arg2 = numero di argomenti: non sono variabili */
+            if (in->res) register_operand(ctx, pScope, in->res, in->type1, &vt);
             continue;
         }
 
@@ -359,32 +462,23 @@ void x86_64Generate(CompilerContext *ctx, TACList *tac, Scope *pScope, const cha
         frame_size = ((frame_size / 16) + 1) * 16;
     }
 
-    /* Il testo viene prodotto in un buffer: la sezione .data va scritta dopo,
-       perche' le costanti real vengono registrate mentre si traducono le istruzioni. */
-    char *textBuf = NULL;
-    size_t textLen = 0;
-    FILE *out = open_memstream(&textBuf, &textLen);
-    if (!out) {
-        printf("Errore: memoria insufficiente.\n");
-        fclose(fp);
-        return;
-    }
-
-    /* PASSAGGIO 3: Sezione testo e prologo */
-    fprintf(out, "section .text\n");
-    fprintf(out, "main:\n");
+    /* PASSAGGIO 3: prologo */
+    if (fd)
+        fprintf(out, "f_%s:\n", fd->name);
+    else
+        fprintf(out, "main:\n");
     fprintf(out, "    push rbp\n");
     fprintf(out, "    mov rbp, rsp\n");
     fprintf(out, "    sub rsp, %d  ; Allocazione stack frame\n\n", frame_size);
-    
+
     fprintf(out, "    ; Inizializza lo stack frame a zero\n");
     fprintf(out, "    mov rcx, %d\n", frame_size / 8);
     fprintf(out, "    xor rax, rax\n");
     fprintf(out, "    lea rdi, [rbp - %d]\n", frame_size);
     fprintf(out, "    rep stosq\n\n");
 
-    /* PASSAGGIO 4: Traduzione istruzioni TAC */
-    for (int i = 0; i < tac->count; i++)
+    /* PASSAGGIO 4: traduzione delle istruzioni TAC */
+    for (int i = start; i < end; i++)
     {
         const TACInstr *in = &tac->items[i];
         if (in->dead) continue;
@@ -541,21 +635,10 @@ void x86_64Generate(CompilerContext *ctx, TACList *tac, Scope *pScope, const cha
             }
             case TAC_READ:
             {
-                int offset = get_var_offset(in->res, in->type1, &vt);
-                if (in->type1 == T_REAL)
-                {
-                    fprintf(out, "    mov rdi, fmt_scan_real\n");
-                    fprintf(out, "    lea rsi, [rbp + %d]\n", offset);
-                    fprintf(out, "    mov rax, 0\n");
-                    fprintf(out, "    call scanf\n");
-                }
-                else
-                {
-                    fprintf(out, "    mov rdi, fmt_scan_int\n");
-                    fprintf(out, "    lea rsi, [rbp + %d]\n", offset);
-                    fprintf(out, "    mov rax, 0\n");
-                    fprintf(out, "    call scanf\n");
-                }
+                var_address(out, &vt, in->res, in->type1, "rsi");
+                fprintf(out, "    mov rdi, %s\n", in->type1 == T_REAL ? "fmt_scan_real" : "fmt_scan_int");
+                fprintf(out, "    mov rax, 0\n");
+                fprintf(out, "    call scanf\n");
                 break;
             }
             case TAC_LOAD_IDX:
@@ -565,7 +648,6 @@ void x86_64Generate(CompilerContext *ctx, TACList *tac, Scope *pScope, const cha
                 const char *arr = isLoad ? in->arg1 : in->res;
                 const char *off = isLoad ? in->arg2 : in->arg1;
                 enumTipo1 et = in->type1;
-                int base = get_array_offset(arr, et, 0, &vt);
 
                 if (!isLoad)
                 {
@@ -573,7 +655,7 @@ void x86_64Generate(CompilerContext *ctx, TACList *tac, Scope *pScope, const cha
                     emit_load_as(ctx, out, in->arg2, et, &vt, &st);
                 }
                 emit_load_int_reg(out, off, &vt, "rcx");
-                fprintf(out, "    lea r11, [rbp + %d]\n", base);
+                array_base(out, &vt, arr, "r11");
                 fprintf(out, "    add r11, rcx\n");
 
                 if (isLoad)
@@ -645,21 +727,134 @@ void x86_64Generate(CompilerContext *ctx, TACList *tac, Scope *pScope, const cha
                 emit_store_operand(out, in->res, T_BOOLEAN, &vt);
                 break;
             }
+            case TAC_PARAM:
+            case TAC_PARAM_REF:
+            case TAC_PARAM_ARR:
+                /* gli argomenti vengono impilati tutti insieme da TAC_CALL */
+                break;
+
+            case TAC_CALL:
+            {
+                int n = atoi(in->arg2 ? in->arg2 : "0");
+                int fi = funcFind(ctx, in->arg1);
+                int pad = n & 1;     /* rsp deve essere multiplo di 16 al momento della call */
+                if (fi < 0)
+                {
+                    fprintf(out, "    ; funzione '%s' sconosciuta\n", in->arg1);
+                    break;
+                }
+                if (pad) fprintf(out, "    sub rsp, 8\n");
+                for (int k = 0; k < n; k++)
+                {
+                    const TACInstr *pi = &tac->items[i - n + k];
+                    const FuncParam *fp = &ctx->funcs[fi].params[k];
+                    if (pi->op == TAC_PARAM_ARR)
+                    {
+                        array_base(out, &vt, pi->arg1, "rax");
+                    }
+                    else if (pi->op == TAC_PARAM_REF)
+                    {
+                        var_address(out, &vt, pi->arg1, fp->t1, "rax");
+                    }
+                    else
+                    {
+                        emit_load_as(ctx, out, pi->arg1, fp->t1, &vt, &st);
+                        if (fp->t1 == T_REAL)
+                            fprintf(out, "    movq rax, xmm0\n");
+                    }
+                    fprintf(out, "    push rax\n");
+                }
+                fprintf(out, "    call f_%s\n", in->arg1);
+                if (n + pad > 0) fprintf(out, "    add rsp, %d\n", 8 * (n + pad));
+                if (in->res)
+                    emit_store_operand(out, in->res, in->type1, &vt);
+                break;
+            }
+
+            case TAC_RETURN:
+                if (fd && !fd->isVoid && in->arg1)
+                    emit_load_as(ctx, out, in->arg1, fd->retType, &vt, &st);
+                fprintf(out, "    leave\n");
+                fprintf(out, "    ret\n");
+                break;
+
              default:
                  fprintf(out, "    ; Istruzione TAC non gestita: %d\n", in->op);
                  break;
          }
          fprintf(out, "\n");
     }
-    
-	// PASSAGGIO 5: Epilogo
-	fprintf(out, "    mov rax, 0      ; Codice di ritorno 0\n");
-	fprintf(out, "    leave\n");
-	fprintf(out, "    ret\n");
-	fprintf(out, "section .note.GNU-stack noalloc noexec nowrite progbits\n");
-	fclose(out);
 
-    /* PASSAGGIO 2: Intestazione e sezione dati */
+    /* PASSAGGIO 5: epilogo (uscita senza 'return': valore 0) */
+    if (fd && !fd->isVoid && fd->retType == T_REAL)
+        fprintf(out, "    xorpd xmm0, xmm0\n");
+    else
+        fprintf(out, "    mov rax, 0\n");
+    fprintf(out, "    leave\n");
+    fprintf(out, "    ret\n\n");
+
+    *st_ = st;
+    for (int i = 0; i < vt.count; i++)
+        free(vt.items[i].name);
+    free(vt.items);
+}
+
+void x86_64Generate(CompilerContext *ctx, TACList *tac, Scope *pScope, const char *outputFileName)
+{
+    FILE *fp = fopen(outputFileName, "w");
+    if (!fp) {
+        printf("Errore: impossibile aprire il file %s per la scrittura.\n", outputFileName);
+        return;
+    }
+
+    StrConstTable st;
+    st.items = NULL;
+    st.count = 0;
+    st.capacity = 0;
+
+    GlobalTable gt;
+    memset(&gt, 0, sizeof(gt));
+
+    /* Il testo viene prodotto in un buffer: le sezioni .data e .bss vanno scritte prima,
+       ma le costanti real e le variabili globali si scoprono mentre si traducono le istruzioni. */
+    char *textBuf = NULL;
+    size_t textLen = 0;
+    FILE *out = open_memstream(&textBuf, &textLen);
+    if (!out) {
+        printf("Errore: memoria insufficiente.\n");
+        fclose(fp);
+        return;
+    }
+
+    fprintf(out, "section .text\n");
+
+    /* il blocco principale finisce con 'endfunc main' (se ci sono funzioni), poi func/endfunc */
+    int mainEnd = tac->count;
+    for (int i = 0; i < tac->count; i++) {
+        if (tac->items[i].op == TAC_ENDFUNC && tac->items[i].res && strcmp(tac->items[i].res, "main") == 0) {
+            mainEnd = i;
+            break;
+        }
+    }
+    gen_segment(ctx, out, tac, 0, mainEnd, pScope, &st, &gt, NULL);
+
+    for (int i = mainEnd + 1; i < tac->count; i++) {
+        const TACInstr *in = &tac->items[i];
+        if (in->op == TAC_FUNC) {
+            int j = i + 1;
+            while (j < tac->count && tac->items[j].op != TAC_ENDFUNC)
+                j++;
+            int fi = funcFind(ctx, in->res);
+            if (fi >= 0)
+                gen_segment(ctx, out, tac, i + 1, j, pScope, &st, &gt, &ctx->funcs[fi]);
+            i = j;
+        }
+    }
+
+    fprintf(out, "section .note.GNU-stack noalloc noexec nowrite progbits\n");
+    fclose(out);
+
+    /* Intestazione e sezioni dati */
     fprintf(fp, "global main\n");
     fprintf(fp, "extern printf\n");
     fprintf(fp, "extern scanf\n");
@@ -667,7 +862,7 @@ void x86_64Generate(CompilerContext *ctx, TACList *tac, Scope *pScope, const cha
     fprintf(fp, "extern malloc\n");
     fprintf(fp, "extern strcpy\n");
     fprintf(fp, "extern strcat\n\n");
-    
+
     fprintf(fp, "section .data\n");
     fprintf(fp, "    fmt_int       db \"%%d\", 10, 0\n");
     fprintf(fp, "    fmt_real      db \"%%f\", 10, 0\n");
@@ -675,7 +870,7 @@ void x86_64Generate(CompilerContext *ctx, TACList *tac, Scope *pScope, const cha
     fprintf(fp, "    fmt_scan_int  db \"%%d\", 0\n");
     fprintf(fp, "    fmt_scan_real db \"%%lf\", 0\n");
     fprintf(fp, "    str_empty     db 0\n");
-    
+
     for (int i = 0; i < ctx->real_const_count; i++) {
         fprintf(fp, "    %-12s dq %f\n", ctx->real_consts[i].label, ctx->real_consts[i].value);
     }
@@ -684,23 +879,32 @@ void x86_64Generate(CompilerContext *ctx, TACList *tac, Scope *pScope, const cha
     }
     fprintf(fp, "\n");
 
-	fwrite(textBuf, 1, textLen, fp);
-	free(textBuf);
-	fclose(fp);
-	for (int i = 0; i < vt.count; i++)
-		free(vt.items[i].name);
-	free(vt.items);
-	
-	for (int i = 0; i < st.count; i++)
-	{
-		free(st.items[i].label);
-		free(st.items[i].raw);
-	}
-	free(st.items);
-	
-	for (int i = 0; i < ctx->real_const_count; i++)
-		free(ctx->real_consts[i].label);
-	free(ctx->real_consts);
-	ctx->real_consts = NULL;
-	ctx->real_const_count = 0;
+    if (gt.count > 0) {
+        fprintf(fp, "section .bss\n");
+        fprintf(fp, "    alignb 8\n");
+        for (int i = 0; i < gt.count; i++)
+            fprintf(fp, "    g_%-10s resb %d\n", gt.items[i].name, gt.items[i].bytes);
+        fprintf(fp, "\n");
+    }
+
+    fwrite(textBuf, 1, textLen, fp);
+    free(textBuf);
+    fclose(fp);
+
+    for (int i = 0; i < st.count; i++)
+    {
+        free(st.items[i].label);
+        free(st.items[i].raw);
+    }
+    free(st.items);
+
+    for (int i = 0; i < gt.count; i++)
+        free(gt.items[i].name);
+    free(gt.items);
+
+    for (int i = 0; i < ctx->real_const_count; i++)
+        free(ctx->real_consts[i].label);
+    free(ctx->real_consts);
+    ctx->real_consts = NULL;
+    ctx->real_const_count = 0;
 }

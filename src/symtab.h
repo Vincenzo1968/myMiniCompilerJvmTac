@@ -90,6 +90,9 @@ typedef struct tagHashTable
 	   usato da TAC, JVM e ASM, cosi' variabili omonime di scope diversi non
 	   collidono. Per le variabili dello scope globale coincide con Key. */
 	char *uniqueName;
+	/* 1 se la variabile e' dichiarata a livello globale (prima del blocco principale):
+	   i backend la tengono in memoria statica, visibile a tutte le funzioni. */
+	char isGlobal;
 	struct tagHashTable *next;
 } HashTable;
 

@@ -6,20 +6,43 @@
 #include "symtab.h"
 
 /* =========================================================================
- * Strutture per la mappatura delle variabili sullo stack frame
+ * Strutture per la mappatura delle variabili
  * ========================================================================= */
+
+/* Dove vive una variabile:
+ *   SLOT_FRAME    nello stack frame della funzione (offset da rbp; positivo per gli argomenti)
+ *   SLOT_GLOBAL   in memoria statica (.bss), etichetta g_<nome>
+ *   SLOT_REFPARAM parametro 'ref': lo slot contiene l'indirizzo della variabile del chiamante
+ *   SLOT_ARRPARAM parametro array: lo slot contiene l'indirizzo base dell'array del chiamante */
+enum { SLOT_FRAME = 0, SLOT_GLOBAL, SLOT_REFPARAM, SLOT_ARRPARAM };
+
 typedef struct {
     char *name;
-    int offset;        // Offset negativo rispetto a rbp
+    int offset;        // Offset rispetto a rbp
     enumTipo1 type1;
+    int kind;          // SLOT_*
 } VarSlot;
+
+/* Variabili globali: condivise da tutte le funzioni. */
+typedef struct {
+    char *name;
+    enumTipo1 type1;
+    int bytes;
+} GlobalVar;
+
+typedef struct {
+    GlobalVar *items;
+    int count;
+    int capacity;
+    int lbl;           // contatore per le label locali (.Lnn), unico in tutto il file
+} GlobalTable;
 
 typedef struct {
     VarSlot *items;
     int count;
     int capacity;
     int current_offset; // Inizia a -8 e decresce di 8
-    int lbl;            // contatore per le label locali (.Lnn)
+    GlobalTable *gt;
 } VarTable;
 
 /* 

@@ -67,6 +67,7 @@ HashTable* htNewNode(CompilerContext *ctx, char *Key, enumTipo0 t0, enumTipo1 t1
 	n->bInizializzato = bInizializzato;
 	n->bDecl = bDecl;
 	n->frameIndex = frameIndex;
+	n->isGlobal = 0;
 	n->next = NULL;
 
 	if ( t0 != T_ARRAY && !bInizializzato )
@@ -126,6 +127,7 @@ int htFind(CompilerContext *ctx, HashTable **pHashTable, char *Key, HashTable *p
 			pDati->Value = t->Value;
 			pDati->bInizializzato = t->bInizializzato;
 			pDati->frameIndex = t->frameIndex;
+			pDati->isGlobal = t->isGlobal;
 			return index;
 		}
 		t = t->next;
@@ -561,6 +563,8 @@ void scopeAssignUniqueName(CompilerContext *ctx, Scope *pScope, const char *Key)
 	}
 	if ( t == NULL )
 		return;
+
+	t->isGlobal = (pScope->top == 0);
 
 	/* Lo scope radice mantiene i nomi originali (i nomi dei sorgenti non
 	   contengono mai '.', quindi "x.1" non puo' collidere con una variabile utente). */
