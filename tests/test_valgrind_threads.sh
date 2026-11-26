@@ -135,16 +135,14 @@ if [ "$NEED_BUILD" -eq 1 ]; then
         SRC_FILES+=("$f")
     done
 
-    (
+    if ! (
         cd "$OUTPUT_DIR" || exit 1
         gcc -std=c11 -O2 -g -pthread \
             -I"$PROJECT_ROOT" \
             -I"$SRC_DIR" \
             "$DEST_SRC" "${SRC_FILES[@]}" \
             -o "$TEST_BIN"
-    )
-
-    if [ $? -ne 0 ]; then
+    ); then
         echo "Errore durante la compilazione di test_pthread_inproc." >&2
         exit 1
     fi
@@ -155,6 +153,7 @@ TMPLOG=$(mktemp)                                    || exit 1
 TMPSUPP=$(mktemp)                                   || exit 1
 TMPWORK=$(mktemp -d "$OUTPUT_DIR/threads_work.XXXXXX") || exit 1
 
+# shellcheck disable=SC2317  # invocata indirettamente da trap
 cleanup() { rm -rf -- "$TMPLOG" "$TMPSUPP" "$TMPWORK"; }
 trap cleanup EXIT
 
