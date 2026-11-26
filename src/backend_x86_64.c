@@ -91,6 +91,52 @@ static int get_var_offset(const char *name, enumTipo1 type, VarTable *vt)
     return vt->items[vt->count - 1].offset;
 }
 
+/* Spazio per un array nello stack frame: blocco contiguo, elemento k all'indirizzo base + k*size.
+   Ritorna l'offset (negativo rispetto a rbp) del primo elemento. */
+static int get_array_offset(const char *name, enumTipo1 type, int bytes, VarTable *vt)
+{
+    for (int i = 0; i < vt->count; i++)
+        if (strcmp(vt->items[i].name, name) == 0)
+            return vt->items[i].offset;
+    bytes = (bytes + 7) & ~7;
+    if (bytes < 8) bytes = 8;
+    if (vt->count >= vt->capacity) {
+        int newCap = (vt->capacity == 0) ? 64 : vt->capacity * 2;
+        vt->items = (VarSlot *)realloc(vt->items, newCap * sizeof(VarSlot));
+        vt->capacity = newCap;
+    }
+    vt->items[vt->count].name = strdup(name);
+    vt->items[vt->count].offset = vt->current_offset - (bytes - 8);
+    vt->items[vt->count].type1 = type;
+    vt->current_offset -= bytes;
+    vt->count++;
+    return vt->items[vt->count - 1].offset;
+}
+
+/* Byte occupati da un elemento (stessi valori usati dal TAC per gli offset). */
+static int element_size(enumTipo1 t)
+{
+    switch (t) {
+        case T_INTEGER: return 4;
+        case T_REAL:    return 8;
+        case T_BOOLEAN: return 1;
+        case T_STRING:  return 8;
+    }
+    return 4;
+}
+
+static int array_total_bytes(CompilerContext *ctx, Scope *pScope, const char *name, enumTipo1 elemType)
+{
+    HashTable d;
+    long long n = 1;
+    memset(&d, 0, sizeof(d));
+    if (pScope && scopeFind(ctx, pScope, (char *)name, &d) && d.Tipo0 == T_ARRAY && d.Value.pArrayDef) {
+        for (int k = 0; k < d.Value.pArrayDef->countIndexes; k++)
+            n *= d.Value.pArrayDef->sizes[k];
+    }
+    return (int)(n * element_size(elemType));
+}
+
 static bool is_bool_literal(const char *str)
 {
     return str && (strcmp(str, "true") == 0 || strcmp(str, "false") == 0);
@@ -141,6 +187,16 @@ static void register_operand(CompilerContext *ctx, Scope *pScope, const char *na
     get_var_offset(name, t, vt);
 }
 
+/* Una stringa non inizializzata (puntatore NULL) si comporta come "" (come nell'interprete). */
+static void emit_string_default(FILE *out, VarTable *vt)
+{
+    int n = vt->lbl++;
+    fprintf(out, "    test rax, rax\n");
+    fprintf(out, "    jnz .Lstr%d\n", n);
+    fprintf(out, "    lea rax, [rel str_empty]\n");
+    fprintf(out, ".Lstr%d:\n", n);
+}
+
 static void emit_load_operand(CompilerContext *ctx, FILE *out, const char *operand, enumTipo1 type, VarTable *vt, StrConstTable *st)
 {
     if (!operand) return;
@@ -168,6 +224,8 @@ static void emit_load_operand(CompilerContext *ctx, FILE *out, const char *opera
         fprintf(out, "    movsd xmm0, [rbp + %d]\n", offset);
     } else {
         fprintf(out, "    mov rax, [rbp + %d]\n", offset);
+        if (type == T_STRING)
+            emit_string_default(out, vt);
     }
 }
 
@@ -197,6 +255,22 @@ static void emit_load_int_reg(FILE *out, const char *operand, VarTable *vt, cons
         fprintf(out, "    mov %s, [rbp + %d]\n", reg, get_var_offset(operand, T_INTEGER, vt));
 }
 
+/* Carica un operando nel registro del tipo di destinazione (rax o xmm0), convertendo se serve:
+   int -> real con cvtsi2sd, real -> int/bool con troncamento (cvttsd2si), come l'interprete. */
+static void emit_load_as(CompilerContext *ctx, FILE *out, const char *operand, enumTipo1 dest,
+                         VarTable *vt, StrConstTable *st)
+{
+    enumTipo1 src = operand_type(operand, vt, dest);
+    if (dest == T_REAL) {
+        emit_load_real(ctx, out, operand, vt, 0);
+    } else if (dest != T_STRING && src == T_REAL) {
+        emit_load_real(ctx, out, operand, vt, 0);
+        fprintf(out, "    cvttsd2si rax, xmm0\n");
+    } else {
+        emit_load_operand(ctx, out, operand, dest, vt, st);
+    }
+}
+
 static void emit_store_operand(FILE *out, const char *dest, enumTipo1 type, VarTable *vt)
 {
     if (!dest) return;
@@ -221,6 +295,7 @@ void x86_64Generate(CompilerContext *ctx, TACList *tac, Scope *pScope, const cha
     vt.count = 0;
     vt.capacity = 0;
     vt.current_offset = -8;
+    vt.lbl = 0;
 
     StrConstTable st;
     st.items = NULL;
@@ -233,6 +308,24 @@ void x86_64Generate(CompilerContext *ctx, TACList *tac, Scope *pScope, const cha
         if (in->dead) continue;
 
         bool isCmp = (in->op >= TAC_LT && in->op <= TAC_NE);
+
+        /* accesso ad array: il nome dell'array occupa un blocco, l'offset e' un intero */
+        if (in->op == TAC_LOAD_IDX || in->op == TAC_STORE_IDX) {
+            const char *arr = (in->op == TAC_LOAD_IDX) ? in->arg1 : in->res;
+            const char *off = (in->op == TAC_LOAD_IDX) ? in->arg2 : in->arg1;
+            get_array_offset(arr, in->type1, array_total_bytes(ctx, pScope, arr, in->type1), &vt);
+            if (off && !is_numeric_constant(off))
+                register_operand(ctx, pScope, off, T_INTEGER, &vt);
+            if (in->op == TAC_LOAD_IDX) {
+                if (in->res) register_operand(ctx, pScope, in->res, in->type1, &vt);
+            } else if (in->arg2) {
+                if (is_string_literal(in->arg2))
+                    get_str_const_label(in->arg2, &st);
+                else if (!is_numeric_constant(in->arg2))
+                    register_operand(ctx, pScope, in->arg2, in->type1, &vt);
+            }
+            continue;
+        }
 
         if (in->op != TAC_LABEL && in->op != TAC_GOTO && in->op != TAC_IF_FALSE && in->op != TAC_IF_TRUE) {
             if (in->res && !is_string_literal(in->res) && !is_numeric_constant(in->res))
@@ -339,7 +432,7 @@ void x86_64Generate(CompilerContext *ctx, TACList *tac, Scope *pScope, const cha
                 break;
 
             case TAC_ASSIGN:
-                emit_load_operand(ctx, out, in->arg1, in->type1, &vt, &st);
+                emit_load_as(ctx, out, in->arg1, in->type1, &vt, &st);
                 emit_store_operand(out, in->res, in->type1, &vt);
                 break;
 
@@ -467,8 +560,43 @@ void x86_64Generate(CompilerContext *ctx, TACList *tac, Scope *pScope, const cha
             }
             case TAC_LOAD_IDX:
             case TAC_STORE_IDX:
-                fprintf(out, "    ; TODO: Implementare accesso array\n");
+            {
+                bool isLoad = (in->op == TAC_LOAD_IDX);
+                const char *arr = isLoad ? in->arg1 : in->res;
+                const char *off = isLoad ? in->arg2 : in->arg1;
+                enumTipo1 et = in->type1;
+                int base = get_array_offset(arr, et, 0, &vt);
+
+                if (!isLoad)
+                {
+                    /* valore da memorizzare in rax / xmm0 (prima, perche' rcx e r11 servono dopo) */
+                    emit_load_as(ctx, out, in->arg2, et, &vt, &st);
+                }
+                emit_load_int_reg(out, off, &vt, "rcx");
+                fprintf(out, "    lea r11, [rbp + %d]\n", base);
+                fprintf(out, "    add r11, rcx\n");
+
+                if (isLoad)
+                {
+                    if (et == T_REAL)         fprintf(out, "    movsd xmm0, [r11]\n");
+                    else if (et == T_INTEGER) fprintf(out, "    movsxd rax, dword [r11]\n");
+                    else if (et == T_BOOLEAN) fprintf(out, "    movzx eax, byte [r11]\n");
+                    else
+                    {
+                        fprintf(out, "    mov rax, [r11]\n");
+                        emit_string_default(out, &vt);
+                    }
+                    emit_store_operand(out, in->res, et, &vt);
+                }
+                else
+                {
+                    if (et == T_REAL)         fprintf(out, "    movsd [r11], xmm0\n");
+                    else if (et == T_INTEGER) fprintf(out, "    mov [r11], eax\n");
+                    else if (et == T_BOOLEAN) fprintf(out, "    mov [r11], al\n");
+                    else                      fprintf(out, "    mov [r11], rax\n");
+                }
                 break;
+            }
             case TAC_LT:
             case TAC_LE:
             case TAC_GT:
@@ -546,6 +674,7 @@ void x86_64Generate(CompilerContext *ctx, TACList *tac, Scope *pScope, const cha
     fprintf(fp, "    fmt_str       db \"%%s\", 0\n");
     fprintf(fp, "    fmt_scan_int  db \"%%d\", 0\n");
     fprintf(fp, "    fmt_scan_real db \"%%lf\", 0\n");
+    fprintf(fp, "    str_empty     db 0\n");
     
     for (int i = 0; i < ctx->real_const_count; i++) {
         fprintf(fp, "    %-12s dq %f\n", ctx->real_consts[i].label, ctx->real_consts[i].value);

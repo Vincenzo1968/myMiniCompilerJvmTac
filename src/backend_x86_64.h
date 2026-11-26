@@ -19,6 +19,7 @@ typedef struct {
     int count;
     int capacity;
     int current_offset; // Inizia a -8 e decresce di 8
+    int lbl;            // contatore per le label locali (.Lnn)
 } VarTable;
 
 /* 
