@@ -355,7 +355,7 @@ void GetNextToken(CompilerContext *ctx, Token *pToken)
 			{
 				lexeme[k++] = c;
 			}
-			else if ( c == '_' )
+			else if ( c == '_' || c == '$' ) /* '$' compare solo nei nomi generati per i campi delle struct */
 			{
 				lexeme[k++] = c;
 			}

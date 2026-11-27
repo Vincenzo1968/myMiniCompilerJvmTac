@@ -7,6 +7,8 @@ An educational compiler written in ANSI/C99 featuring a recursive descent parser
 - **Frontend & Memory Safety:** Lexical analyzer (`scanner.c`), recursive descent parser (`parser.c`) with panic-mode error recovery and token checks, AST builder (`ast.c`), and symbol table with clean memory management (zero errors/leaks with Valgrind).
 - **Data Types, Functions & Control Flow:**
   - Primitive types (`int`, `real`, `bool`, `string`), multidimensional arrays, user-defined functions (with prototypes, recursion, `return`, pass-by-value and pass-by-reference `ref`), control structures (`if-else`, `while`, `do-while`, `begin ... end`, `read`, `print`), and logical/relational expressions.
+- **Structs (`structs.c`):**
+  - C-like `struct` types (scalar fields, arrays, nested structs), arrays of structs, whole-struct assignment, and struct parameters/results. Structs are *lowered* at source level before parsing, so every backend and optimization level handles them unchanged.
 - **Three-Address Code (TAC) & Optimizer (`tac.c`):**
   - IR generation and multi-level optimization pipeline:
     - `-O0`: Raw TAC.
@@ -22,9 +24,15 @@ An educational compiler written in ANSI/C99 featuring a recursive descent parser
 
 ```text
 program    : top_list code_block ;
-top_list   : { decl | func_decl } ;
+top_list   : { struct_def | decl | func_decl } ;
+struct_def : 'struct' T_ID '{' { field } '}' ';' ;
+field      : type T_ID { ',' T_ID } ';'
+           | T_ID T_ID { ',' T_ID } ';'                       (* nested struct *)
+           | 'array' T_ID '[' T_INT_LITERAL ']' { '[' T_INT_LITERAL ']' } 'of' ( type | T_ID ) ';'
+           ;
 decl       : type var_list ';'
-           | 'array' T_ID '[' T_INT_LITERAL ']' { '[' T_INT_LITERAL ']' } 'of' type ';'
+           | T_ID T_ID { ',' T_ID } ';'                       (* struct variables *)
+           | 'array' T_ID '[' T_INT_LITERAL ']' { '[' T_INT_LITERAL ']' } 'of' ( type | T_ID ) ';'
            ;
 func_decl  : ( type | 'void' ) T_ID '(' [ param_list ] ')' ( ';' | func_body ) ;
 param_list : param { ',' param } ;
@@ -349,3 +357,32 @@ src/myCompiler prg_test/test_func_opt.prg
 9 3
 50
 ```
+
+### 8. Structs
+
+Struct types are declared at the outermost level, before the main block. A struct variable is declared as `Name p;`, an array of structs as `array v[10] of Name;`; fields are accessed with `.` (`p.x`, `v[i].pos.y`). Structs can be assigned as a whole (`q = p;`, `v[i] = p;`), passed by value or by `ref`, and returned by functions (`p = f(...);`).
+
+```text
+struct Punto { int x; real y; };
+struct Seg   { Punto a; Punto b; string nome; };
+
+Punto mid(Punto p, Punto q);
+```
+
+Internally every struct variable becomes one scalar per leaf field (`p.x` -> `p$x`) and every array of structs one array per leaf field (`v[i].x` -> `v$x[i]`), so the interpreter, TAC, JVM and x86_64 backends need no struct-specific code. To see the rewritten source set `MYCOMPILER_DUMP_LOWERED=1`:
+
+```bash
+MYCOMPILER_DUMP_LOWERED=1 src/myCompiler prg_test/test_struct_basic.prg
+src/myCompiler prg_test/test_struct_basic.prg
+```
+
+```text
+3 13
+8 1.500000
+13
+seg 13 1.500000
+7
+13 1.500000
+```
+
+Current limits: structs cannot be initialized in their declaration or compared as a whole; a struct with array fields is passed only with `ref` and cannot be returned; a struct-returning function is used only as `p = f(...);`; array elements cannot be passed by `ref`.

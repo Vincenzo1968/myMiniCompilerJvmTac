@@ -34,6 +34,7 @@ along with mypdfsearch. If not, see <http://www.gnu.org/licenses/>.
 #include "symtab.h"
 #include "ast.h"
 #include "jvm.h"
+#include "structs.h"
 
 /*
 program : decl_list code_block;
@@ -220,6 +221,15 @@ int Parse(CompilerContext *ctx, char *szFileName, nodeType **pTree, int genTAC, 
 
     if ( !LeggiFile(ctx, szFileName) )
         return 0;
+
+    /* le struct vengono eliminate riscrivendo il sorgente (vedi structs.c) */
+    if ( !structsLower(ctx) )
+    {
+        FreeInputbuffer(ctx);
+        printf("Errori: %d\nWarnings: %d\n", ctx->g_numErrors, ctx->g_numWarnings);
+        (*pTree) = NULL;
+        return 0;
+    }
 
     GetNextToken(ctx, &ctx->g_Token);
 
