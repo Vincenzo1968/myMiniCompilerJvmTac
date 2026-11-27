@@ -42,7 +42,7 @@ nodeType *con(CompilerContext *ctx, enumTipo1 t1, char *lexeme, Valore value)
     nodeSize = sizeof(nodeType);
     if ((p = malloc(nodeSize)) == NULL)
 	{
-		printf("Errore: memoria insufficiente.\n");
+		printf("Error: out of memory.\n");
 		return NULL;
 	}
 
@@ -69,7 +69,7 @@ nodeType *id(CompilerContext *ctx, char *name, char *uniqueName, enumTipo0 t0, e
     nodeSize = sizeof(nodeType);
     if ((p = malloc(nodeSize)) == NULL)
 	{
-		printf("Errore: memoria insufficiente.\n");
+		printf("Error: out of memory.\n");
 		return NULL;
 	}
 
@@ -100,7 +100,7 @@ nodeType *opr(CompilerContext *ctx, int oper, int nops, ...)
 
     if ((p = malloc(nodeSize)) == NULL)
 	{
-		printf("Errore: memoria insufficiente.\n");
+		printf("Error: out of memory.\n");
 		return NULL;
 	}
 	
@@ -128,7 +128,7 @@ nodeType *oprN(CompilerContext *ctx, int oper, int nops, nodeType **ops)
 
 	if ((p = malloc(nodeSize)) == NULL)
 	{
-		printf("Errore: memoria insufficiente.\n");
+		printf("Error: out of memory.\n");
 		return NULL;
 	}
 	p->type0 = 0;

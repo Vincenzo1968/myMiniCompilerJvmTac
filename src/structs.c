@@ -162,9 +162,9 @@ typedef struct {
 static void slError(SL *sl, int line, const char *msg, const char *arg)
 {
 	if (arg)
-		printf("Linea %d: Errore struct. %s '%s'.\n", line, msg, arg);
+		printf("Line %d: Struct error. %s '%s'.\n", line, msg, arg);
 	else
-		printf("Linea %d: Errore struct. %s\n", line, msg);
+		printf("Line %d: Struct error. %s\n", line, msg);
 	sl->ctx->g_numErrors++;
 	sl->err = 1;
 }
@@ -361,11 +361,11 @@ static int parseStructDef(SL *sl, int i)
 	StructDef *ns;
 
 	if (!isKind(sl, i + 1, K_ID) || !isTok(sl, i + 2, "{")) {
-		slError(sl, line, "Sintassi attesa: struct Nome { campi };", NULL);
+		slError(sl, line, "Expected syntax: struct Name { fields };", NULL);
 		return -1;
 	}
 	if (structFind(sl, sl->toks[i + 1].text) >= 0) {
-		slError(sl, line, "Tipo struct gia' definito", sl->toks[i + 1].text);
+		slError(sl, line, "Struct type already defined", sl->toks[i + 1].text);
 		return -1;
 	}
 	ns = (StructDef *)realloc(sl->structs, (size_t)(sl->nstructs + 1) * sizeof(StructDef));
@@ -383,24 +383,24 @@ static int parseStructDef(SL *sl, int i)
 		tmpl.sid = -1;
 
 		if (sl->toks[i].kind == K_EOF) {
-			slError(sl, line, "Definizione di struct non terminata.", NULL);
+			slError(sl, line, "Unterminated struct definition.", NULL);
 			return -1;
 		}
 		if (isTok(sl, i, "array")) {
 			/* array nome[N]... of tipo|Struct ; */
-			if (!isKind(sl, i + 1, K_ID)) { slError(sl, sl->toks[i].line, "Atteso il nome del campo array.", NULL); return -1; }
+			if (!isKind(sl, i + 1, K_ID)) { slError(sl, sl->toks[i].line, "Expected array field name.", NULL); return -1; }
 			snprintf(tmpl.name, sizeof(tmpl.name), "%s", sl->toks[i + 1].text);
 			i += 2;
 			while (isTok(sl, i, "[")) {
 				if (!isKind(sl, i + 1, K_NUM) || !isTok(sl, i + 2, "]") || tmpl.ndims >= SL_MAXDIMS) {
-					slError(sl, sl->toks[i].line, "Dimensione di campo array non valida (attesa una costante intera).", NULL);
+					slError(sl, sl->toks[i].line, "Invalid array field size (expected an integer constant).", NULL);
 					return -1;
 				}
 				snprintf(tmpl.dims[tmpl.ndims++], 16, "%s", sl->toks[i + 1].text);
 				i += 3;
 			}
 			if (tmpl.ndims == 0 || !isTok(sl, i, "of") || !isKind(sl, i + 1, K_ID)) {
-				slError(sl, sl->toks[i].line, "Sintassi campo array: array nome[N] of tipo;", NULL);
+				slError(sl, sl->toks[i].line, "Array field syntax: array name[N] of type;", NULL);
 				return -1;
 			}
 			isArr = 1;
@@ -408,10 +408,10 @@ static int parseStructDef(SL *sl, int i)
 				snprintf(tmpl.typ, sizeof(tmpl.typ), "%s", sl->toks[i + 1].text);
 			} else {
 				tmpl.sid = structFind(sl, sl->toks[i + 1].text);
-				if (tmpl.sid < 0) { slError(sl, sl->toks[i + 1].line, "Tipo sconosciuto", sl->toks[i + 1].text); return -1; }
+				if (tmpl.sid < 0) { slError(sl, sl->toks[i + 1].line, "Unknown type", sl->toks[i + 1].text); return -1; }
 			}
 			i += 2;
-			if (!isTok(sl, i, ";")) { slError(sl, sl->toks[i].line, "Atteso ';' dopo il campo.", NULL); return -1; }
+			if (!isTok(sl, i, ";")) { slError(sl, sl->toks[i].line, "Expected ';' after field.", NULL); return -1; }
 			i++;
 		} else if (isKind(sl, i, K_ID) && (isTypeKw(sl->toks[i].text) || structFind(sl, sl->toks[i].text) >= 0)) {
 			/* tipo nome {, nome} ; */
@@ -421,43 +421,43 @@ static int parseStructDef(SL *sl, int i)
 			else                  tmpl.sid = structFind(sl, tyname);
 			i++;
 			for (;;) {
-				if (!isKind(sl, i, K_ID)) { slError(sl, sl->toks[i].line, "Atteso il nome del campo.", NULL); return -1; }
+				if (!isKind(sl, i, K_ID)) { slError(sl, sl->toks[i].line, "Expected field name.", NULL); return -1; }
 				snprintf(tmpl.name, sizeof(tmpl.name), "%s", sl->toks[i].text);
 				i++;
 				if (isTok(sl, i, ",")) {
 					/* piu' campi dello stesso tipo: registra questo e continua */
 					int k;
 					for (k = 0; k < sd->nfields; k++)
-						if (strcmp(sd->fields[k].name, tmpl.name) == 0) { slError(sl, sl->toks[i].line, "Campo duplicato", tmpl.name); return -1; }
-					if (sd->nfields >= SL_MAXFIELDS) { slError(sl, sl->toks[i].line, "Troppi campi.", NULL); return -1; }
+						if (strcmp(sd->fields[k].name, tmpl.name) == 0) { slError(sl, sl->toks[i].line, "Duplicate field", tmpl.name); return -1; }
+					if (sd->nfields >= SL_MAXFIELDS) { slError(sl, sl->toks[i].line, "Too many fields.", NULL); return -1; }
 					sd->fields[sd->nfields++] = tmpl;
 					i++;
 					continue;
 				}
 				break;
 			}
-			if (!isTok(sl, i, ";")) { slError(sl, sl->toks[i].line, "Atteso ';' dopo il campo.", NULL); return -1; }
+			if (!isTok(sl, i, ";")) { slError(sl, sl->toks[i].line, "Expected ';' after field.", NULL); return -1; }
 			i++;
 		} else {
-			slError(sl, sl->toks[i].line, "Campo non valido nella definizione della struct", sl->toks[i].text);
+			slError(sl, sl->toks[i].line, "Invalid field in struct definition", sl->toks[i].text);
 			return -1;
 		}
 		(void)isArr;
 		{
 			int k;
 			for (k = 0; k < sd->nfields; k++)
-				if (strcmp(sd->fields[k].name, tmpl.name) == 0) { slError(sl, sl->toks[i].line, "Campo duplicato", tmpl.name); return -1; }
-			if (sd->nfields >= SL_MAXFIELDS) { slError(sl, sl->toks[i].line, "Troppi campi.", NULL); return -1; }
+				if (strcmp(sd->fields[k].name, tmpl.name) == 0) { slError(sl, sl->toks[i].line, "Duplicate field", tmpl.name); return -1; }
+			if (sd->nfields >= SL_MAXFIELDS) { slError(sl, sl->toks[i].line, "Too many fields.", NULL); return -1; }
 			sd->fields[sd->nfields++] = tmpl;
 		}
 	}
 	i++; /* '}' */
 	if (!isTok(sl, i, ";")) {
-		slError(sl, sl->toks[i].line, "Atteso ';' dopo '}' nella definizione della struct.", NULL);
+		slError(sl, sl->toks[i].line, "Expected ';' after '}' in struct definition.", NULL);
 		return -1;
 	}
 	if (sd->nfields == 0) {
-		slError(sl, line, "La struct non ha campi.", NULL);
+		slError(sl, line, "Struct has no fields.", NULL);
 		return -1;
 	}
 	sl->nstructs++;
@@ -486,7 +486,7 @@ static int prescan(SL *sl, int *removeFlags)
 		if (isTok(sl, i, "struct") && sl->toks[i].kind == K_ID) {
 			int j;
 			if (depth != 0) {
-				slError(sl, sl->toks[i].line, "Le struct si definiscono al livello piu' esterno, fuori dai blocchi begin...end.", NULL);
+				slError(sl, sl->toks[i].line, "Structs must be defined at the outermost level, outside begin...end blocks.", NULL);
 				return 0;
 			}
 			j = parseStructDef(sl, i);
@@ -582,7 +582,7 @@ static int parsePath(SL *sl, int i, int iend, Path *p)
 		while (i < iend && isTok(sl, i, "[") && p->nidx < p->total) {
 			int close = matchClose(sl, i);
 			if (close < 0 || close >= iend) {
-				slError(sl, p->line, "Parentesi quadra non chiusa.", NULL);
+				slError(sl, p->line, "Unclosed bracket ']'.", NULL);
 				pathFree(p);
 				return 0;
 			}
@@ -593,17 +593,17 @@ static int parsePath(SL *sl, int i, int iend, Path *p)
 			const StructDef *sd;
 			int f;
 			if (p->isLeaf) {
-				slError(sl, p->line, "Il campo non e' una struct: '.' non valido.", NULL);
+				slError(sl, p->line, "Field is not a struct: invalid '.'.", NULL);
 				pathFree(p);
 				return 0;
 			}
 			if (p->nidx < p->total) {
-				slError(sl, p->line, "Indici mancanti prima dell'accesso al campo.", NULL);
+				slError(sl, p->line, "Missing indices before field access.", NULL);
 				pathFree(p);
 				return 0;
 			}
 			if (!isKind(sl, i + 1, K_ID)) {
-				slError(sl, p->line, "Atteso il nome del campo dopo '.'.", NULL);
+				slError(sl, p->line, "Expected field name after '.'.", NULL);
 				pathFree(p);
 				return 0;
 			}
@@ -612,7 +612,7 @@ static int parsePath(SL *sl, int i, int iend, Path *p)
 				if (strcmp(sd->fields[f].name, sl->toks[i + 1].text) == 0) break;
 			if (f == sd->nfields) {
 				char msg[200];
-				snprintf(msg, sizeof(msg), "La struct '%s' non ha il campo", sd->name);
+				snprintf(msg, sizeof(msg), "Struct '%s' has no field", sd->name);
 				slError(sl, p->line, msg, sl->toks[i + 1].text);
 				pathFree(p);
 				return 0;
@@ -636,12 +636,12 @@ static int parsePath(SL *sl, int i, int iend, Path *p)
 
 	p->next = i;
 	if (p->nidx != p->total && p->nidx != 0) {
-		slError(sl, p->line, "Numero di indici non corrispondente.", NULL);
+		slError(sl, p->line, "Mismatched number of indices.", NULL);
 		pathFree(p);
 		return 0;
 	}
 	if (p->isLeaf && p->nidx == 0 && p->total > 0 && p->total != p->leafNdims) {
-		slError(sl, p->line, "Per usare un array di struct il campo array richiede tutti gli indici.", NULL);
+		slError(sl, p->line, "To use an array of structs, the array field requires all indices.", NULL);
 		pathFree(p);
 		return 0;
 	}
@@ -668,11 +668,11 @@ static int expandWhole(SL *sl, const Path *p, char **names, int maxn, int forAss
 	char noDims[1][16];
 
 	if (forAssign && p->nidx == 0 && p->total > 0) {
-		slError(sl, p->line, "L'assegnazione di un intero array di struct non e' supportata (assegnare gli elementi).", NULL);
+		slError(sl, p->line, "Assignment of an entire array of structs is not supported (assign individual elements).", NULL);
 		return -1;
 	}
 	if (!collectLeaves(sl, p->sid, "", noDims, 0, leaves, &nl) || nl > maxn) {
-		slError(sl, p->line, "La struct ha troppi campi.", NULL);
+		slError(sl, p->line, "Struct has too many fields.", NULL);
 		return -1;
 	}
 	for (k = 0; k < nl; k++) {
@@ -680,7 +680,7 @@ static int expandWhole(SL *sl, const Path *p, char **names, int maxn, int forAss
 		int j;
 		memset(&b, 0, sizeof(b));
 		if (leaves[k].ndims > 0 && p->nidx > 0 && !forAssign) {
-			slError(sl, p->line, "Una struct con campi array non si puo' copiare ne' passare per valore, campo", leaves[k].suffix);
+			slError(sl, p->line, "A struct with array fields cannot be copied or passed by value, field", leaves[k].suffix);
 			free(b.s);
 			for (j = 0; j < k; j++) free(names[j]);
 			return -1;
@@ -776,7 +776,7 @@ static int emitStructVar(SL *sl, int line, const char *name, int sid, char dims[
 	(void)noDims;
 
 	if (!collectLeaves(sl, sid, "", dims, 0, leaves, &nl)) {
-		slError(sl, line, "La struct ha troppi campi.", NULL);
+		slError(sl, line, "Struct has too many fields.", NULL);
 		return 0;
 	}
 	for (k = 0; k < nl; k++) {
@@ -809,7 +809,7 @@ static int rewriteFuncHeader(SL *sl, int i, Buf *out)
 	char noDims[1][16];
 
 	if (close < 0) {
-		slError(sl, line, "Parentesi tonda non chiusa nell'intestazione della funzione.", NULL);
+		slError(sl, line, "Unclosed parenthesis ')' in function header.", NULL);
 		return -1;
 	}
 	sl->npending = 0;
@@ -817,12 +817,12 @@ static int rewriteFuncHeader(SL *sl, int i, Buf *out)
 
 	if (retSid >= 0) {
 		if (!collectLeaves(sl, retSid, "", noDims, 0, retLeaves, &nRet)) {
-			slError(sl, line, "La struct ha troppi campi.", NULL);
+			slError(sl, line, "Struct has too many fields.", NULL);
 			return -1;
 		}
 		for (k = 0; k < nRet; k++)
 			if (retLeaves[k].ndims > 0) {
-				slError(sl, line, "Una funzione non puo' restituire una struct con campi array, campo", retLeaves[k].suffix);
+				slError(sl, line, "A function cannot return a struct with array fields, field", retLeaves[k].suffix);
 				return -1;
 			}
 		bufStr(out, "void ");
@@ -851,7 +851,7 @@ static int rewriteFuncHeader(SL *sl, int i, Buf *out)
 			/* array nome[]...[] of tipo */
 			int sidP = -1;
 			isArr = 1;
-			if (!isKind(sl, j + 1, K_ID)) { slError(sl, line, "Atteso il nome del parametro array.", NULL); return -1; }
+			if (!isKind(sl, j + 1, K_ID)) { slError(sl, line, "Expected array parameter name.", NULL); return -1; }
 			snprintf(pname, sizeof(pname), "%s", sl->toks[j + 1].text);
 			j += 2;
 			while (isTok(sl, j, "[") && isTok(sl, j + 1, "]")) { ndimsP++; j += 2; }
@@ -874,10 +874,10 @@ static int rewriteFuncHeader(SL *sl, int i, Buf *out)
 			} else {
 				Leaf lv[SL_MAXLEAVES];
 				int nl = 0;
-				if (!collectLeaves(sl, sidP, "", noDims, 0, lv, &nl)) { slError(sl, line, "La struct ha troppi campi.", NULL); return -1; }
+				if (!collectLeaves(sl, sidP, "", noDims, 0, lv, &nl)) { slError(sl, line, "Struct has too many fields.", NULL); return -1; }
 				for (k = 0; k < nl; k++) {
 					int d;
-					if (lv[k].ndims > 0) { slError(sl, line, "Un parametro array di struct non puo' avere campi array, campo", lv[k].suffix); return -1; }
+					if (lv[k].ndims > 0) { slError(sl, line, "A struct array parameter cannot have array fields, field", lv[k].suffix); return -1; }
 					if (k) bufStr(out, ", ");
 					bufStr(out, "array ");
 					bufStr(out, pname);
@@ -899,13 +899,13 @@ static int rewriteFuncHeader(SL *sl, int i, Buf *out)
 			Leaf lv[SL_MAXLEAVES];
 			int nl = 0;
 			snprintf(pname, sizeof(pname), "%s", sl->toks[j + 1].text);
-			if (!collectLeaves(sl, sidP, "", noDims, 0, lv, &nl)) { slError(sl, line, "La struct ha troppi campi.", NULL); return -1; }
+			if (!collectLeaves(sl, sidP, "", noDims, 0, lv, &nl)) { slError(sl, line, "Struct has too many fields.", NULL); return -1; }
 			for (k = 0; k < nl; k++) {
 				if (k) bufStr(out, ", ");
 				if (lv[k].ndims > 0) {
 					int d;
 					/* campo array: sempre per riferimento, e la struct non puo' essere passata per valore */
-					if (!isRef) { slError(sl, line, "Una struct con campi array si passa solo con 'ref', campo", lv[k].suffix); return -1; }
+					if (!isRef) { slError(sl, line, "A struct with array fields can only be passed with 'ref', field", lv[k].suffix); return -1; }
 					bufStr(out, "array ");
 					bufStr(out, pname);
 					bufCh(out, '$');
@@ -1004,7 +1004,7 @@ static void rewriteRange(SL *sl, int i0, int i1, Buf *out, int flat)
 
 		/* ---- blocchi e scope ---- */
 		if (!flat && strcmp(t->text, "begin") == 0) {
-			if (!slScopePush(sl)) { slError(sl, t->line, "Blocchi troppo annidati.", NULL); return; }
+			if (!slScopePush(sl)) { slError(sl, t->line, "Blocks nested too deeply.", NULL); return; }
 			if (sl->nscopes == 2) {
 				int k;
 				for (k = 0; k < sl->npending; k++)
@@ -1048,15 +1048,15 @@ static void rewriteRange(SL *sl, int i0, int i1, Buf *out, int flat)
 			for (;;) {
 				char nm[64];
 				char noDims[1][16];
-				if (!isKind(sl, j, K_ID)) { slError(sl, t->line, "Atteso il nome della variabile.", NULL); free(d.s); return; }
+				if (!isKind(sl, j, K_ID)) { slError(sl, t->line, "Expected variable name.", NULL); free(d.s); return; }
 				snprintf(nm, sizeof(nm), "%s", sl->toks[j].text);
-				if (isTok(sl, j + 1, "=")) { slError(sl, t->line, "Le struct non si possono inizializzare in dichiarazione.", NULL); free(d.s); return; }
+				if (isTok(sl, j + 1, "=")) { slError(sl, t->line, "Structs cannot be initialized in declaration.", NULL); free(d.s); return; }
 				if (!emitStructVar(sl, t->line, nm, sid, noDims, 0, &d)) { free(d.s); return; }
 				j++;
 				if (isTok(sl, j, ",")) { j++; continue; }
 				break;
 			}
-			if (!isTok(sl, j, ";")) { slError(sl, t->line, "Atteso ';' dopo la dichiarazione.", NULL); free(d.s); return; }
+			if (!isTok(sl, j, ";")) { slError(sl, t->line, "Expected ';' after declaration.", NULL); free(d.s); return; }
 			j++;
 			emitReplacement(sl, i, j, d.s ? d.s : "", out, flat, &first);
 			free(d.s);
@@ -1118,12 +1118,12 @@ static void rewriteRange(SL *sl, int i0, int i1, Buf *out, int flat)
 			Path p;
 			if (!isKind(sl, i + 1, K_ID) || !varLookup(sl, sl->toks[i + 1].text) ||
 			    varLookup(sl, sl->toks[i + 1].text)->sid != sl->curRetSid) {
-				slError(sl, t->line, "In una funzione che restituisce una struct 'return' richiede una variabile struct dello stesso tipo.", NULL);
+				slError(sl, t->line, "In a function returning a struct, 'return' requires a struct variable of the same type.", NULL);
 				return;
 			}
 			if (!parsePath(sl, i + 1, i1, &p)) return;
 			if (p.isLeaf || p.sid != sl->curRetSid || !isTok(sl, p.next, ";")) {
-				slError(sl, t->line, "'return' richiede una variabile struct (o un elemento di array di struct) dello stesso tipo.", NULL);
+				slError(sl, t->line, "'return' requires a struct variable (or an element of an array of structs) of the same type.", NULL);
 				pathFree(&p);
 				return;
 			}
@@ -1192,7 +1192,7 @@ static void rewriteRange(SL *sl, int i0, int i1, Buf *out, int flat)
 							return;
 						}
 						if (q.isLeaf || q.sid != p.sid || !isTok(sl, q.next, ";")) {
-							slError(sl, t->line, "L'assegnazione richiede due struct dello stesso tipo.", NULL);
+							slError(sl, t->line, "Assignment requires two structs of the same type.", NULL);
 							for (k = 0; k < nlhs; k++) free(lhs[k]);
 							pathFree(&p); pathFree(&q);
 							return;
@@ -1257,7 +1257,7 @@ static void rewriteRange(SL *sl, int i0, int i1, Buf *out, int flat)
 					           sl->funcs[funcFindSl(sl, sl->toks[r].text)].retSid == p.sid) {
 						int open = r + 1, close = matchClose(sl, open), k;
 						if (close < 0 || !isTok(sl, close + 1, ";")) {
-							slError(sl, t->line, "Chiamata di funzione non valida.", NULL);
+							slError(sl, t->line, "Invalid function call.", NULL);
 							for (k = 0; k < nlhs; k++) free(lhs[k]);
 							pathFree(&p);
 							return;
@@ -1290,13 +1290,13 @@ static void rewriteRange(SL *sl, int i0, int i1, Buf *out, int flat)
 						continue;
 					} else {
 						int k;
-						slError(sl, t->line, "L'assegnazione di una struct richiede una struct dello stesso tipo o una chiamata di funzione che la restituisce.", NULL);
+						slError(sl, t->line, "Assigning a struct requires a struct of the same type or a function call returning it.", NULL);
 						for (k = 0; k < nlhs; k++) free(lhs[k]);
 						pathFree(&p);
 						return;
 					}
 				}
-				slError(sl, t->line, "Una struct intera si puo' usare solo in un'assegnazione, come argomento di funzione o in 'return'", t->text);
+				slError(sl, t->line, "A whole struct can only be used in an assignment, as a function argument, or in 'return'", t->text);
 				pathFree(&p);
 				return;
 			}
@@ -1307,11 +1307,11 @@ static void rewriteRange(SL *sl, int i0, int i1, Buf *out, int flat)
 			int open = i + 1, close = matchClose(sl, open);
 			Buf call;
 			if (close < 0 || close >= i1) {
-				slError(sl, t->line, "Parentesi tonda non chiusa.", NULL);
+				slError(sl, t->line, "Unclosed parenthesis ')'.", NULL);
 				return;
 			}
 			if (sl->funcs[funcFindSl(sl, t->text)].retSid >= 0) {
-				slError(sl, t->line, "La funzione restituisce una struct: si usa solo come  p = nome(...);  con p dello stesso tipo", t->text);
+				slError(sl, t->line, "Function returns a struct: it can only be used as  p = name(...);  with p of the same type", t->text);
 				return;
 			}
 			memset(&call, 0, sizeof(call));

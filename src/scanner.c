@@ -60,7 +60,7 @@ int LeggiFile(CompilerContext *ctx, char *szFileName)
 	fp = fopen(szFileName, "rb");
 	if ( fp == NULL )
 	{
-		printf("Errore nell'apertura del file %s.\n", szFileName);
+		printf("Error opening file %s.\n", szFileName);
 		return 0;
 	}
 
@@ -80,7 +80,7 @@ int LeggiFile(CompilerContext *ctx, char *szFileName)
 	ctx->g_szInput = (char*)malloc(sizeof(char)*dimFile + 1);
 	if ( !ctx->g_szInput )
 	{
-		printf("Errore: memoria insufficiente.\n");
+		printf("Error: out of memory.\n");
 		fclose(fp);
 		return 0;
 	}
@@ -158,7 +158,7 @@ void GetNextToken(CompilerContext *ctx, Token *pToken)
 
 	if ( ctx->g_szInput == NULL )
 	{
-		printf("Errore scanner: NULL Input\n");
+		printf("Scanner error: NULL input\n");
 		pToken->Type = T_ERROR;
 		return;
 	}
@@ -470,7 +470,7 @@ void GetNextToken(CompilerContext *ctx, Token *pToken)
 				}
 
 				pToken->Type = T_ERROR;
-				printf("Errore scanner: Linea %d Colonna %d: carattere non valido %c\nExpexted: newline, tab o barra rovesciata\n", pToken->line, pToken->column, c);
+				printf("Scanner error: Line %d Column %d: invalid character %c\nExpected: newline, tab, or backslash\n", pToken->line, pToken->column, c);
 				return;
 			}
 			break;
@@ -484,7 +484,7 @@ void GetNextToken(CompilerContext *ctx, Token *pToken)
 			else
 			{
 				pToken->Type = T_ERROR;
-				printf("Errore scanner: Linea %d Colonna %d: carattere non valido %c\nExpected: apice di chiusura\n", pToken->line, pToken->column, c);
+				printf("Scanner error: Line %d Column %d: invalid character %c\nExpected: closing single quote\n", pToken->line, pToken->column, c);
 				return;
 			}
 			break;
@@ -566,7 +566,7 @@ void GetNextToken(CompilerContext *ctx, Token *pToken)
 				ctx->g_column = 1;
 
 				pToken->Type = T_ERROR;
-				printf("Errore scanner: Linea %d Colonna %d: La stringa deve terminare nella stessa riga.\n", pToken->line, pToken->column);
+				printf("Scanner error: Line %d Column %d: String must terminate on the same line.\n", pToken->line, pToken->column);
 				return;
 			}
 			else
@@ -606,14 +606,14 @@ void GetNextToken(CompilerContext *ctx, Token *pToken)
 				ctx->g_column = 1;
 
 				pToken->Type = T_ERROR;
-				printf("Errore scanner: Linea %d Colonna %d: La stringa deve terminare nella stessa riga.\n", pToken->line, pToken->column);
+				printf("Scanner error: Line %d Column %d: String must terminate on the same line.\n", pToken->line, pToken->column);
 
 				return;
 			}
 			else
 			{
 				pToken->Type = T_ERROR;
-				printf("Errore scanner: Linea %d Colonna %d: Carattere speciale '\\%c' non riconosciuto.\n", pToken->line, pToken->column, c);
+				printf("Scanner error: Line %d Column %d: Unrecognized escape character '\\%c'.\n", pToken->line, pToken->column, c);
 				return;
 			}
 			break;
@@ -694,7 +694,7 @@ void GetNextToken(CompilerContext *ctx, Token *pToken)
 			else
 			{
 				pToken->Type = T_ERROR;
-				printf("Errore scanner: Linea %d Colonna %d: Formato numero reale non valido.\n", pToken->line, pToken->column);
+				printf("Scanner error: Line %d Column %d: Invalid real number format.\n", pToken->line, pToken->column);
 				return;
 			}
 			break;
@@ -707,7 +707,7 @@ void GetNextToken(CompilerContext *ctx, Token *pToken)
 			else
 			{
 				pToken->Type = T_ERROR;
-				printf("Errore scanner: Linea %d Colonna %d: Formato numero reale non valido.\n", pToken->line, pToken->column);
+				printf("Scanner error: Line %d Column %d: Invalid real number format.\n", pToken->line, pToken->column);
 				return;
 			}
 			break;
@@ -739,7 +739,7 @@ void GetNextToken(CompilerContext *ctx, Token *pToken)
 			{
 				//pToken->Type = T_DOT;
 				pToken->Type = T_ERROR;
-				printf("Errore scanner: Linea %d Colonna %d: carattere '.' non valido.\n", pToken->line, pToken->column);
+				printf("Scanner error: Line %d Column %d: invalid character '.'.\n", pToken->line, pToken->column);
 				--ctx->g_pos;
 				return;
 			}
@@ -798,7 +798,7 @@ void GetNextToken(CompilerContext *ctx, Token *pToken)
 			else if ( c == '\0' )
 			{
 				pToken->Type = T_ERROR;
-				printf("Errore scanner: Linea %d Colonna %d: attesi caratteri '*/' di fine commento.\nTrovato fine del file.\n", pToken->line, pToken->column);
+				printf("Scanner error: Line %d Column %d: expected '*/' closing comment characters.\nFound end of file.\n", pToken->line, pToken->column);
 				--ctx->g_pos;
 				return;
 			}
@@ -833,7 +833,7 @@ void GetNextToken(CompilerContext *ctx, Token *pToken)
 			else if ( c == '\0' )
 			{
 				pToken->Type = T_ERROR;
-				printf("Errore scanner: Linea %d Colonna %d: attesi caratteri '*/' di fine commento.\nTrovato fine del file.\n", pToken->line, pToken->column);
+				printf("Scanner error: Line %d Column %d: expected '*/' closing comment characters.\nFound end of file.\n", pToken->line, pToken->column);
 				--ctx->g_pos;
 				return;
 			}

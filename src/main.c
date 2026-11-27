@@ -213,7 +213,7 @@ Valore BinopValue(CompilerContext *ctx, int op, enumTipo1 lhsT1, Valore lhsValue
 			retVal.strVal = (char*)malloc(sizeof(char) * (strlen(s1) + strlen(s2)) + 1);
 			if ( !retVal.strVal )
 			{
-				printf("Errore + string: memoria insufficiente.\n");
+				printf("Error + string: out of memory.\n");
 				return retVal;
 			}
 			strcpy(retVal.strVal, s1);
@@ -237,7 +237,7 @@ Valore BinopValue(CompilerContext *ctx, int op, enumTipo1 lhsT1, Valore lhsValue
 		{
 			if ( rhsValue.iVal == 0 )
 			{
-				printf("Errore: divisione per zero.\n");
+				printf("Error: division by zero.\n");
 				retVal.iVal = 0;
 			}
 			else
@@ -249,7 +249,7 @@ Valore BinopValue(CompilerContext *ctx, int op, enumTipo1 lhsT1, Valore lhsValue
 		{
 			if ( rhsValue.dblVal == 0.0 )
 			{
-				printf("Errore: divisione per zero.\n");
+				printf("Error: division by zero.\n");
 				retVal.dblVal = 0;
 			}
 			else
@@ -360,7 +360,7 @@ static Valore interpCall(CompilerContext *ctx, nodeType *p)
 	fi = funcFind(ctx, fname);
 	if (fi < 0 || ctx->funcs[fi].body == NULL)
 	{
-		printf("Errore: funzione '%s' non definita.\n", fname);
+		printf("Error: function '%s' not defined.\n", fname);
 		ctx->g_t1 = T_INTEGER;
 		return zero;
 	}
@@ -555,7 +555,7 @@ Valore interpret(CompilerContext *ctx, nodeType *p)
 			}
 			else
 			{
-				printf("Errore: X identificatore '%s' non dichiarato\n", p->id.name);
+				printf("Error: X identifier '%s' not declared\n", p->id.name);
 				ctx->g_t1 = T_INTEGER;
 				retVal = valZero;
 			}
@@ -704,7 +704,7 @@ Valore interpret(CompilerContext *ctx, nodeType *p)
 						base[loc] = (char*)malloc(sizeof(char) * strlen(rightVal.strVal) + 1);
 						if (!base[loc])
 						{
-							printf("Errore: memoria insufficiente.\n");
+							printf("Error: out of memory.\n");
 							return valZero;
 						}
 						strcpy(base[loc], rightVal.strVal);
@@ -793,7 +793,7 @@ Valore interpret(CompilerContext *ctx, nodeType *p)
 						base[loc] = (char*)malloc(sizeof(char) * strlen(leftVal.strVal) + 1);
 						if (!base[loc])
 						{
-							printf("Errore: memoria insufficiente.\n");
+							printf("Error: out of memory.\n");
 							return valZero;
 						}
 						strcpy(base[loc], leftVal.strVal);
@@ -814,7 +814,7 @@ Valore interpret(CompilerContext *ctx, nodeType *p)
 						retVal.strVal = strdup(retVal.strVal);
 						if ( retVal.strVal == NULL )
 						{
-							printf("Errore: memoria insufficiente.\n");
+							printf("Error: out of memory.\n");
 							return valZero;
 						}
 					}
@@ -973,7 +973,7 @@ Valore GenThreeAddressCode(CompilerContext *ctx, nodeType *p)
 				retVal.strVal = (char*)malloc(sizeof(char)*strlen(p->con.lexeme)+1);
 				if ( !retVal.strVal )
 				{
-					printf("Errore. Memoria insufficiente.\n");
+					printf("Error: out of memory.\n");
 					return valZero;
 				}
 				strcpy(retVal.strVal, p->con.lexeme);
@@ -982,7 +982,7 @@ Valore GenThreeAddressCode(CompilerContext *ctx, nodeType *p)
 				retVal.strVal = (char*)malloc(sizeof(char)*strlen(p->con.value.strVal)*2+3);
 				if ( !retVal.strVal )
 				{
-					printf("Errore. Memoria insufficiente.\n");
+					printf("Error: out of memory.\n");
 					return valZero;
 				}
 				strcpy(retVal.strVal, "\"");
@@ -1020,7 +1020,7 @@ Valore GenThreeAddressCode(CompilerContext *ctx, nodeType *p)
 					retVal.strVal = (char*)malloc(sizeof(char)*strlen(p->id.name)+256);
 					if ( !retVal.strVal )
 					{
-						printf("Errore. Memoria insufficiente.\n");
+						printf("Error: out of memory.\n");
 						return valZero;
 					}
 					strcpy(retVal.strVal, p->id.name);
@@ -1071,7 +1071,7 @@ Valore GenThreeAddressCode(CompilerContext *ctx, nodeType *p)
 					retVal.strVal = (char*)malloc(sizeof(char)*strlen(p->id.name)+1);
 					if ( !retVal.strVal )
 					{
-						printf("Errore. Memoria insufficiente.\n");
+						printf("Error: out of memory.\n");
 						return valZero;
 					}
 					strcpy(retVal.strVal, p->id.name);
@@ -1079,7 +1079,7 @@ Valore GenThreeAddressCode(CompilerContext *ctx, nodeType *p)
 			}
 			else
 			{
-				printf("Errore: X identificatore '%s' non dichiarato\n", p->id.name);
+				printf("Error: X identifier '%s' not declared\n", p->id.name);
 				ctx->g_t1 = T_INTEGER;
 				retVal = valZero;
 			}
@@ -1348,7 +1348,7 @@ int main(int argc, char **argv)
 
 	if ( argc < 2 )
 	{
-		printf("Specificare il nome di un file, prego\n");
+		printf("Please specify a file name.\n");
 		return -1;
 	}
 	
@@ -1416,7 +1416,7 @@ int main(int argc, char **argv)
 			
 			// 4. Chiamata al backend
 			x86_64Generate(&ctx, &tac, &ctx.g_Scope, out_file);
-			printf("Codice assembly generato con successo in: %s\n", out_file);
+			printf("Assembly code successfully generated in: %s\n", out_file);
 			
 			// 5. Pulizia della memoria
 			tacFree(&ctx, &tac);
@@ -1446,7 +1446,7 @@ int main(int argc, char **argv)
 
 	if ( argc < 2 )
 	{
-		printf("Specificare il nome di un file, prego\n");
+		printf("Please specify a file name.\n");
 		return -1;
 	}
 
@@ -1464,41 +1464,41 @@ int main(int argc, char **argv)
 		case T_ERROR:
 			break;
 		case T_UNKNOWN:
-			printf("carattere non riconosciuto: %c\n", token.Value.vChar);
+			printf("unrecognized character: %c\n", token.Value.vChar);
 			break;
 		case T_ID:
 			if ( token.Value.vString != NULL )
 				printf("ID: %s\n", token.Value.vString);
 			break;
 		//case T_CHAR:
-		//	printf("carattere: %c\n", token.Value.vChar);
+		//	printf("character: %c\n", token.Value.vChar);
 		//	break;
 		case T_OPAREN:
-			printf("parentesi tonda aperta: (\n");
+			printf("open parenthesis: (\n");
 			break;
 		case T_CPAREN:
-			printf("parentesi tonda chiusa: )\n");
+			printf("close parenthesis: )\n");
 			break;
 		case T_QOPAREN:
-			printf("parentesi quadra aperta: [\n");
+			printf("open bracket: [\n");
 			break;
 		case T_QCPAREN:
-			printf("parentesi quadra chiusa: ]\n");
+			printf("close bracket: ]\n");
 			break;
 		case T_SEMICOLON:
-			printf("punto e virgola: ;\n");
+			printf("semicolon: ;\n");
 			break;
 		case T_STRING_LITERAL:
-			printf("letterale stringa: %s\n", token.Value.vString);
+			printf("string literal: %s\n", token.Value.vString);
 			break;
 		case T_INT_LITERAL:
-			printf("letterale intero: %s\n", token.lexeme);
+			printf("integer literal: %s\n", token.lexeme);
 			break;
 		case T_REAL_LITERAL:
-			printf("letterale reale: %s\n", token.lexeme);
+			printf("real literal: %s\n", token.lexeme);
 			break;
 		case T_COMMA:
-			printf("virgola: ,\n");
+			printf("comma: ,\n");
 			break;
 		case T_KW_IF:
 			printf("T_KW_IF: if\n");

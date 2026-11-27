@@ -86,7 +86,7 @@ static void jvmUpdateStack(CompilerContext *ctx, int delta)
 static void jvmEmitU1(CompilerContext *ctx, U1 b, int stackDelta)
 {
 	if (ctx->g_IndexBytecodeArray >= JVM_MAX_CODE_BYTES) {
-		printf("Errore JVM: buffer bytecode esaurito.\n");
+		printf("JVM Error: bytecode buffer exhausted.\n");
 		return;
 	}
 	ctx->g_ArrayCode[ctx->g_IndexBytecodeArray++] = b;
@@ -100,7 +100,7 @@ static void jvmEmitU2(CompilerContext *ctx, U2 v)
 	BYTE *buff;
 	U1 fb[8];
 	if (ctx->g_IndexBytecodeArray + 2 > JVM_MAX_CODE_BYTES) {
-		printf("Errore JVM: buffer bytecode esaurito.\n");
+		printf("JVM Error: bytecode buffer exhausted.\n");
 		return;
 	}
 	if (!isBigEndian(ctx)) {
@@ -116,7 +116,7 @@ static void jvmEmitS2(CompilerContext *ctx, S2 v)
 	BYTE *buff;
 	U1 fb[8];
 	if (ctx->g_IndexBytecodeArray + 2 > JVM_MAX_CODE_BYTES) {
-		printf("Errore JVM: buffer bytecode esaurito.\n");
+		printf("JVM Error: bytecode buffer exhausted.\n");
 		return;
 	}
 	if (!isBigEndian(ctx)) {
@@ -209,7 +209,7 @@ void jvmhtInsert(CompilerContext *ctx, jvmHashTable **pHashTable, char *Key, uns
 
 	while (t != NULL) {
 		if (strcmp(t->Key, Key) == 0) {
-			printf("\nErrore: La chiave %s e' gia' presente nella hashtable\n", Key);
+			printf("\nError: Key %s is already present in the hashtable\n", Key);
 			return;
 		}
 		if (t->next == NULL) {
@@ -764,7 +764,7 @@ static void jvmPushString(CompilerContext *ctx, const char *sz, jvmHashTable **p
 	unsigned short idx = 0;
 
 	if (!key) {
-		printf("Errore JVM: memoria insufficiente.\n");
+		printf("JVM Error: out of memory.\n");
 		return;
 	}
 	sprintf(key, "S:%s", sz);
@@ -1523,7 +1523,7 @@ static void jvmLoadOperand(CompilerContext *ctx, const char *opStr, enumTipo1 ta
 		return;
 	}
 
-	printf("Errore JVM: operando '%s' non trovato.\n", opStr ? opStr : "(null)");
+	printf("JVM Error: operand '%s' not found.\n", opStr ? opStr : "(null)");
 	if (targetType == T_REAL) jvmPushDouble(ctx, 0.0, pHT);
 	else                      jvmPushInt(ctx, 0, pHT);
 }
@@ -1811,7 +1811,7 @@ static void MakeBytecodeFromTAC(CompilerContext *ctx, const TACList *tac, int fr
 		case TAC_LOAD_IDX: {
 			VarRef vrL;
 			if (!jvmVarLookup(ctx, pScope, &tt, in->arg1, &vrL)) {
-				printf("Errore JVM: array '%s' non dichiarato.\n", in->arg1);
+				printf("JVM Error: array '%s' not declared.\n", in->arg1);
 				break;
 			}
 			jvmEmitLoadArrayVar(ctx, &vrL, &tt);
@@ -1824,7 +1824,7 @@ static void MakeBytecodeFromTAC(CompilerContext *ctx, const TACList *tac, int fr
 		case TAC_STORE_IDX: {
 			VarRef vrS;
 			if (!jvmVarLookup(ctx, pScope, &tt, in->res, &vrS)) {
-				printf("Errore JVM: array '%s' non dichiarato.\n", in->res);
+				printf("JVM Error: array '%s' not declared.\n", in->res);
 				break;
 			}
 			jvmEmitLoadArrayVar(ctx, &vrS, &tt);
@@ -1904,7 +1904,7 @@ static void MakeBytecodeFromTAC(CompilerContext *ctx, const TACList *tac, int fr
 			}
 			fi = (curCall < to) ? funcFind(ctx, tac->items[curCall].arg1) : -1;
 			if (fi < 0 || paramPos >= ctx->funcs[fi].nparams || paramPos >= 32) {
-				printf("Errore JVM: chiamata di funzione non valida.\n");
+				printf("JVM Error: invalid function call.\n");
 				break;
 			}
 			fp = &ctx->funcs[fi].params[paramPos++];
@@ -1913,7 +1913,7 @@ static void MakeBytecodeFromTAC(CompilerContext *ctx, const TACList *tac, int fr
 			} else {
 				VarRef vrP;
 				if (!jvmVarLookup(ctx, pScope, &tt, in->arg1, &vrP)) {
-					printf("Errore JVM: variabile '%s' non dichiarata.\n", in->arg1);
+					printf("JVM Error: variable '%s' not declared.\n", in->arg1);
 					break;
 				}
 				if (in->op == TAC_PARAM_ARR) {
@@ -1950,7 +1950,7 @@ static void MakeBytecodeFromTAC(CompilerContext *ctx, const TACList *tac, int fr
 			char desc[512];
 			U2 mi;
 			if (fi < 0) {
-				printf("Errore JVM: funzione '%s' non dichiarata.\n", in->arg1);
+				printf("JVM Error: function '%s' not declared.\n", in->arg1);
 				break;
 			}
 			fd = &ctx->funcs[fi];
@@ -2006,7 +2006,7 @@ static void MakeBytecodeFromTAC(CompilerContext *ctx, const TACList *tac, int fr
 			}
 		}
 		if (targetOffset < 0) {
-			printf("Errore JVM: label '%s' non trovata.\n", fixups[i].labelName);
+			printf("JVM Error: label '%s' not found.\n", fixups[i].labelName);
 		} else {
 			S2 rel = (S2)(targetOffset - fixups[i].instrPos);
 			BYTE *buff;
@@ -2295,14 +2295,14 @@ void jvmStart(CompilerContext *ctx, char *szInputFileName, nodeType **ppTree, Sc
 
 	fp = fopen(szOutputFileName, "wb");
 	if (!fp) {
-		printf("Errore. Impossibile creare il file %s.\n", szOutputFileName);
+		printf("Error: unable to create file %s.\n", szOutputFileName);
 		return;
 	}
 
 	memset(&unit, 0, sizeof(unit));
 	pHT = (jvmHashTable**)calloc(JVM_HT_SIZE, sizeof(jvmHashTable*));
 	if (pHT == NULL) {
-		printf("Memoria non sufficiente.\n");
+		printf("Out of memory.\n");
 		fclose(fp);
 		return;
 	}

@@ -84,7 +84,7 @@ static int allocArrayDefWrapper(CompilerContext *ctx, const HashTable *pHT, Valo
     ArrayDef *pArr = (ArrayDef*)malloc(sizeof(ArrayDef));
     if ( !pArr )
     {
-        printf("Errore pArrayDef: memoria insufficiente.\n");
+        printf("Error pArrayDef: out of memory.\n");
         ctx->g_numErrors++;
         return 0;
     }
@@ -99,7 +99,7 @@ static int allocArrayDefWrapper(CompilerContext *ctx, const HashTable *pHT, Valo
         pArr->indexes = (nodeType**)calloc((size_t)pArr->countIndexes, sizeof(nodeType*));
         if ( !pArr->indexes )
         {
-            printf("Errore pArrayDef->indexes: memoria insufficiente.\n");
+            printf("Error pArrayDef->indexes: out of memory.\n");
             ctx->g_numErrors++;
             free(pArr);
             return 0;
@@ -162,7 +162,7 @@ static int expectStmtSemicolon(CompilerContext *ctx)
     if ( match(ctx, T_SEMICOLON) )
         return 1;
 
-    printf("Linea %d Colonna %d: Errore stmt. Atteso semicolon ';'.\n",
+    printf("Line %d Column %d: Statement error. Expected semicolon ';'.\n",
            ctx->g_Token.line, ctx->g_Token.column);
     ctx->g_numErrors++;
 
@@ -185,7 +185,7 @@ static int expectCondRParen(CompilerContext *ctx)
     if ( match(ctx, T_CPAREN) )
         return 1;
 
-    printf("Linea %d Colonna %d: Errore stmt. Attesa parentesi ')'.\n",
+    printf("Line %d Column %d: Statement error. Expected ')'.\n",
            ctx->g_Token.line, ctx->g_Token.column);
     ctx->g_numErrors++;
 
@@ -226,7 +226,7 @@ int Parse(CompilerContext *ctx, char *szFileName, nodeType **pTree, int genTAC, 
     if ( !structsLower(ctx) )
     {
         FreeInputbuffer(ctx);
-        printf("Errori: %d\nWarnings: %d\n", ctx->g_numErrors, ctx->g_numWarnings);
+        printf("Errors: %d\nWarnings: %d\n", ctx->g_numErrors, ctx->g_numWarnings);
         (*pTree) = NULL;
         return 0;
     }
@@ -239,7 +239,7 @@ int Parse(CompilerContext *ctx, char *szFileName, nodeType **pTree, int genTAC, 
     /* Parsing riuscito ma token residui: codice fuori dal programma. */
     if ( ret && ctx->g_Token.Type != T_EOF )
     {
-        printf("Linea %d Colonna %d: Errore. Token inattesi dopo la fine del programma.\n",
+        printf("Line %d Column %d: Error. Unexpected tokens after end of program.\n",
                ctx->g_Token.line, ctx->g_Token.column);
         ctx->g_numErrors++;
         ret = 0;
@@ -260,7 +260,7 @@ int Parse(CompilerContext *ctx, char *szFileName, nodeType **pTree, int genTAC, 
     ret = ctx->g_numErrors ? 0 : 1;
 
     if ( ctx->g_numErrors || ctx->g_numWarnings )
-        printf("Errori: %d\nWarnings: %d\n", ctx->g_numErrors, ctx->g_numWarnings);
+        printf("Errors: %d\nWarnings: %d\n", ctx->g_numErrors, ctx->g_numWarnings);
 
     if ( !ret )
     {
@@ -288,7 +288,7 @@ int match(CompilerContext *ctx, TokenTypeEnum ExpectedToken)
 	}
 	//else
 	//{
-	//	printf("Errore di sintassi\n");
+	//	printf("Syntax error\n");
 	//	exit(1);
 	//}
 
@@ -305,8 +305,8 @@ int TypeCheck(CompilerContext *ctx, Valore *value, const Token *pToken)
 
 		//if ( g_currType == T_BOOLEAN )
 		//{
-		//	printf("Valore   -> %d\n", g_currConstValue.bVal);
-		//	printf("Valore 2 -> %d\n", g_currConstValue.iVal);
+		//	printf("Value    -> %d\n", g_currConstValue.bVal);
+		//	printf("Value 2  -> %d\n", g_currConstValue.iVal);
 		//}
 	}
 	else
@@ -316,10 +316,10 @@ int TypeCheck(CompilerContext *ctx, Valore *value, const Token *pToken)
 		case T_INTEGER:
 			if ( ctx->g_currConstType == T_REAL )
 			{
-				printf("Linea %d Colonna %d: "
+				printf("Line %d Column %d: "
 						"Warning var_list. "
-						"Si sta assegnando un valore di tipo real alla variabile '%s' "
-						"di tipo int. Potrebbe verificarsi una perdita dei dati.\n",
+						"Assigning a value of type real to variable '%s' "
+						"of type int. Data loss may occur.\n",
 						pToken->line,
 						pToken->column,
 						pToken->Value.vString);
@@ -335,10 +335,10 @@ int TypeCheck(CompilerContext *ctx, Valore *value, const Token *pToken)
 			}
 			else if ( ctx->g_currConstType == T_STRING )
 			{
-				printf("Linea %d Colonna %d: "
-						"Errore var_list. "
-						"si sta assegnando un valore di tipo string alla variabile '%s' "
-						"di tipo int.\n",
+				printf("Line %d Column %d: "
+						"var_list error. "
+						"assigning a value of type string to variable '%s' "
+						"of type int.\n",
 						pToken->line,
 						pToken->column,
 						pToken->Value.vString);
@@ -361,10 +361,10 @@ int TypeCheck(CompilerContext *ctx, Valore *value, const Token *pToken)
 			}
 			else if ( ctx->g_currConstType == T_STRING )
 			{
-				printf("Linea %d Colonna %d: "
-						"Errore var_list. "
-						"si sta assegnando un valore di tipo string alla variabile '%s' "
-						"di tipo real.\n",
+				printf("Line %d Column %d: "
+						"var_list error. "
+						"assigning a value of type string to variable '%s' "
+						"of type real.\n",
 						pToken->line,
 						pToken->column,
 						pToken->Value.vString);
@@ -374,10 +374,10 @@ int TypeCheck(CompilerContext *ctx, Valore *value, const Token *pToken)
 		case T_BOOLEAN:
 			if ( ctx->g_currConstType == T_INTEGER )
 			{
-				printf("Linea %d Colonna %d: "
-						"Errore var_list. "
-						"Si sta assegnando un valore di tipo int alla variabile '%s' "
-						"di tipo bool.\n",
+				printf("Line %d Column %d: "
+						"var_list error. "
+						"Assigning a value of type int to variable '%s' "
+						"of type bool.\n",
 						pToken->line,
 						pToken->column,
 						pToken->Value.vString);
@@ -385,10 +385,10 @@ int TypeCheck(CompilerContext *ctx, Valore *value, const Token *pToken)
 			}
 			else if ( ctx->g_currConstType == T_REAL )
 			{
-				printf("Linea %d Colonna %d: "
-						"Errore var_list. "
-						"Si sta assegnando un valore di tipo real alla variabile '%s' "
-						"di tipo bool.\n",
+				printf("Line %d Column %d: "
+						"var_list error. "
+						"Assigning a value of type real to variable '%s' "
+						"of type bool.\n",
 						pToken->line,
 						pToken->column,
 						pToken->Value.vString);
@@ -396,10 +396,10 @@ int TypeCheck(CompilerContext *ctx, Valore *value, const Token *pToken)
 			}
 			else if ( ctx->g_currConstType == T_STRING )
 			{
-				printf("Linea %d Colonna %d: "
-						"Errore var_list. "
-						"si sta assegnando un valore di tipo string alla variabile '%s' "
-						"di tipo bool.\n",
+				printf("Line %d Column %d: "
+						"var_list error. "
+						"assigning a value of type string to variable '%s' "
+						"of type bool.\n",
 						pToken->line,
 						pToken->column,
 						pToken->Value.vString);
@@ -409,10 +409,10 @@ int TypeCheck(CompilerContext *ctx, Valore *value, const Token *pToken)
 		case T_STRING:
 			if ( ctx->g_currConstType == T_INTEGER )
 			{
-				printf("Linea %d Colonna %d: "
-						"Errore var_list. "
-						"Si sta assegnando un valore di tipo int alla variabile '%s' "
-						"di tipo string.\n",
+				printf("Line %d Column %d: "
+						"var_list error. "
+						"Assigning a value of type int to variable '%s' "
+						"of type string.\n",
 						pToken->line,
 						pToken->column,
 						pToken->Value.vString);
@@ -420,10 +420,10 @@ int TypeCheck(CompilerContext *ctx, Valore *value, const Token *pToken)
 			}
 			else if ( ctx->g_currConstType == T_REAL )
 			{
-				printf("Linea %d Colonna %d: "
-						"Errore var_list. "
-						"Si sta assegnando un valore di tipo real alla variabile '%s' "
-						"di tipo string.\n",
+				printf("Line %d Column %d: "
+						"var_list error. "
+						"Assigning a value of type real to variable '%s' "
+						"of type string.\n",
 						pToken->line,
 						pToken->column,
 						pToken->Value.vString);
@@ -431,10 +431,10 @@ int TypeCheck(CompilerContext *ctx, Valore *value, const Token *pToken)
 			}
 			else if ( ctx->g_currConstType == T_BOOLEAN )
 			{
-				printf("Linea %d Colonna %d: "
-						"Errore var_list. "
-						"si sta assegnando un valore di tipo bool alla variabile '%s' "
-						"di tipo string.\n",
+				printf("Line %d Column %d: "
+						"var_list error. "
+						"assigning a value of type bool to variable '%s' "
+						"of type string.\n",
 						pToken->line,
 						pToken->column,
 						pToken->Value.vString);
@@ -472,7 +472,7 @@ static int argCompat(enumTipo1 param, enumTipo1 arg)
 
 static int funcParseError(CompilerContext *ctx, const char *msg)
 {
-	printf("Linea %d Colonna %d: Errore funzione. %s\n", ctx->g_Token.line, ctx->g_Token.column, msg);
+	printf("Line %d Column %d: Function error. %s\n", ctx->g_Token.line, ctx->g_Token.column, msg);
 	ctx->g_numErrors++;
 	return 0;
 }
@@ -503,18 +503,18 @@ static int parseFuncHeader(CompilerContext *ctx, char *name, size_t nameSize, in
 	}
 
 	if ( ctx->g_Token.Type != T_ID )
-		return funcParseError(ctx, "Atteso il nome della funzione.");
+		return funcParseError(ctx, "Expected function name.");
 	snprintf(name, nameSize, "%s", ctx->g_Token.Value.vString);
 	*pLine = ctx->g_Token.line;
 	GetNextToken(ctx, &ctx->g_Token);
 
 	if ( ctx->g_Token.Type != T_OPAREN )
-		return funcParseError(ctx, "Attesa parentesi '('.");
+		return funcParseError(ctx, "Expected '('.");
 	GetNextToken(ctx, &ctx->g_Token);
 
 	params = (FuncParam*)calloc(MAX_FUNC_PARAMS, sizeof(FuncParam));
 	if ( !params )
-		return funcParseError(ctx, "Memoria insufficiente.");
+		return funcParseError(ctx, "Out of memory.");
 
 	if ( ctx->g_Token.Type != T_CPAREN )
 	{
@@ -523,7 +523,7 @@ static int parseFuncHeader(CompilerContext *ctx, char *name, size_t nameSize, in
 			FuncParam *fp;
 			if ( n >= MAX_FUNC_PARAMS )
 			{
-				funcParseError(ctx, "Troppi parametri.");
+				funcParseError(ctx, "Too many parameters.");
 				goto fail;
 			}
 			fp = &params[n];
@@ -539,13 +539,13 @@ static int parseFuncHeader(CompilerContext *ctx, char *name, size_t nameSize, in
 			{
 				if ( fp->isRef )
 				{
-					funcParseError(ctx, "Gli array sono sempre passati per riferimento: 'ref' non e' ammesso.");
+					funcParseError(ctx, "Arrays are always passed by reference: 'ref' is not allowed.");
 					goto fail;
 				}
 				GetNextToken(ctx, &ctx->g_Token);
 				if ( ctx->g_Token.Type != T_ID )
 				{
-					funcParseError(ctx, "Atteso il nome del parametro array.");
+					funcParseError(ctx, "Expected array parameter name.");
 					goto fail;
 				}
 				fp->name = strdup(ctx->g_Token.Value.vString);
@@ -555,7 +555,7 @@ static int parseFuncHeader(CompilerContext *ctx, char *name, size_t nameSize, in
 					GetNextToken(ctx, &ctx->g_Token);
 					if ( ctx->g_Token.Type != T_QCPAREN )
 					{
-						funcParseError(ctx, "Attesa parentesi ']' (le dimensioni dei parametri array non si indicano).");
+						funcParseError(ctx, "Expected ']' (array parameter dimensions must not be specified).");
 						n++;
 						goto fail;
 					}
@@ -564,13 +564,13 @@ static int parseFuncHeader(CompilerContext *ctx, char *name, size_t nameSize, in
 				}
 				if ( fp->dims == 0 )
 				{
-					funcParseError(ctx, "Un parametro array richiede almeno '[]'.");
+					funcParseError(ctx, "An array parameter requires at least '[]'.");
 					n++;
 					goto fail;
 				}
 				if ( ctx->g_Token.Type != T_KW_OF )
 				{
-					funcParseError(ctx, "Attesa keyword 'of'.");
+					funcParseError(ctx, "Expected keyword 'of'.");
 					n++;
 					goto fail;
 				}
@@ -590,7 +590,7 @@ static int parseFuncHeader(CompilerContext *ctx, char *name, size_t nameSize, in
 				fp->t1 = (enumTipo1)ctx->g_currType;
 				if ( ctx->g_Token.Type != T_ID )
 				{
-					funcParseError(ctx, "Atteso il nome del parametro.");
+					funcParseError(ctx, "Expected parameter name.");
 					goto fail;
 				}
 				fp->name = strdup(ctx->g_Token.Value.vString);
@@ -601,7 +601,7 @@ static int parseFuncHeader(CompilerContext *ctx, char *name, size_t nameSize, in
 			{
 				if ( strcmp(params[i].name, fp->name) == 0 )
 				{
-					printf("Linea %d Colonna %d: Errore funzione. Parametro '%s' duplicato.\n",
+					printf("Line %d Column %d: Function error. Duplicate parameter '%s'.\n",
 					       ctx->g_Token.line, ctx->g_Token.column, fp->name);
 					ctx->g_numErrors++;
 					n++;
@@ -621,7 +621,7 @@ static int parseFuncHeader(CompilerContext *ctx, char *name, size_t nameSize, in
 
 	if ( ctx->g_Token.Type != T_CPAREN )
 	{
-		funcParseError(ctx, "Attesa parentesi ')'.");
+		funcParseError(ctx, "Expected ')'. ");
 		goto fail;
 	}
 	GetNextToken(ctx, &ctx->g_Token);
@@ -649,7 +649,7 @@ static int parseFuncPrototype(CompilerContext *ctx)
 	if ( ctx->g_Token.Type != T_SEMICOLON )
 	{
 		funcFreeParams(params, n);
-		return funcParseError(ctx, "Atteso ';' dopo il prototipo (le definizioni vanno dopo il blocco principale).");
+		return funcParseError(ctx, "Expected ';' after prototype (definitions must appear after the main block).");
 	}
 	GetNextToken(ctx, &ctx->g_Token);
 
@@ -660,7 +660,7 @@ static int parseFuncPrototype(CompilerContext *ctx)
 		funcFreeParams(params, n);
 		if ( !same )
 		{
-			printf("Linea %d: Errore funzione. Il prototipo di '%s' e' in conflitto con una dichiarazione precedente.\n", line, name);
+			printf("Line %d: Function error. Prototype of '%s' conflicts with a previous declaration.\n", line, name);
 			ctx->g_numErrors++;
 			return 0;
 		}
@@ -670,7 +670,7 @@ static int parseFuncPrototype(CompilerContext *ctx)
 	if ( scopeFind(ctx, &ctx->g_Scope, name, &(HashTable){0}) )
 	{
 		funcFreeParams(params, n);
-		printf("Linea %d: Errore funzione. '%s' e' gia' dichiarato come variabile.\n", line, name);
+		printf("Line %d: Function error. '%s' is already declared as a variable.\n", line, name);
 		ctx->g_numErrors++;
 		return 0;
 	}
@@ -678,7 +678,7 @@ static int parseFuncPrototype(CompilerContext *ctx)
 	if ( funcDeclare(ctx, name, isVoid, ret, n, params, line) < 0 )
 	{
 		funcFreeParams(params, n);
-		return funcParseError(ctx, "Memoria insufficiente.");
+		return funcParseError(ctx, "Out of memory.");
 	}
 	return 1;
 }
@@ -697,7 +697,7 @@ static int parseFuncDefinition(CompilerContext *ctx)
 	if ( ctx->g_Token.Type == T_SEMICOLON )
 	{
 		funcFreeParams(params, n);
-		return funcParseError(ctx, "I prototipi vanno dichiarati in cima al file, prima del blocco principale.");
+		return funcParseError(ctx, "Prototypes must be declared at the top of the file, before the main block.");
 	}
 
 	idx = funcFind(ctx, name);
@@ -707,13 +707,13 @@ static int parseFuncDefinition(CompilerContext *ctx)
 		funcFreeParams(params, n);
 		if ( !same )
 		{
-			printf("Linea %d: Errore funzione. La definizione di '%s' non corrisponde al prototipo.\n", line, name);
+			printf("Line %d: Function error. Definition of '%s' does not match prototype.\n", line, name);
 			ctx->g_numErrors++;
 			return 0;
 		}
 		if ( ctx->funcs[idx].defined )
 		{
-			printf("Linea %d: Errore funzione. '%s' e' gia' stata definita.\n", line, name);
+			printf("Line %d: Function error. '%s' has already been defined.\n", line, name);
 			ctx->g_numErrors++;
 			return 0;
 		}
@@ -724,7 +724,7 @@ static int parseFuncDefinition(CompilerContext *ctx)
 		if ( scopeFind(ctx, &ctx->g_Scope, name, &(HashTable){0}) )
 		{
 			funcFreeParams(params, n);
-			printf("Linea %d: Errore funzione. '%s' e' gia' dichiarato come variabile.\n", line, name);
+			printf("Line %d: Function error. '%s' is already declared as a variable.\n", line, name);
 			ctx->g_numErrors++;
 			return 0;
 		}
@@ -732,7 +732,7 @@ static int parseFuncDefinition(CompilerContext *ctx)
 		if ( idx < 0 )
 		{
 			funcFreeParams(params, n);
-			return funcParseError(ctx, "Memoria insufficiente.");
+			return funcParseError(ctx, "Out of memory.");
 		}
 	}
 
@@ -797,7 +797,7 @@ static int parseCall(CompilerContext *ctx)
 
 	if ( !ctx->g_isCodeBlock )
 	{
-		printf("Linea %d Colonna %d: Errore chiamata. Le chiamate di funzione non sono ammesse nelle dichiarazioni.\n", line, column);
+		printf("Line %d Column %d: Call error. Function calls are not allowed in declarations.\n", line, column);
 		ctx->g_numErrors++;
 		return 0;
 	}
@@ -805,7 +805,7 @@ static int parseCall(CompilerContext *ctx)
 	GetNextToken(ctx, &ctx->g_Token);
 	if ( ctx->g_Token.Type != T_OPAREN )
 	{
-		printf("Linea %d Colonna %d: Errore chiamata. Attesa parentesi '(' dopo '%s'.\n", ctx->g_Token.line, ctx->g_Token.column, name);
+		printf("Line %d Column %d: Call error. Expected '(' after '%s'.\n", ctx->g_Token.line, ctx->g_Token.column, name);
 		ctx->g_numErrors++;
 		return 0;
 	}
@@ -821,7 +821,7 @@ static int parseCall(CompilerContext *ctx)
 		{
 			if ( ctx->g_Token.Type != T_COMMA )
 			{
-				printf("Linea %d Colonna %d: Errore chiamata. '%s' richiede %d argomenti: manca una ','.\n",
+				printf("Line %d Column %d: Call error. '%s' requires %d arguments: missing ','.\n",
 				       ctx->g_Token.line, ctx->g_Token.column, name, fd->nparams);
 				ctx->g_numErrors++;
 				goto fail;
@@ -836,9 +836,9 @@ static int parseCall(CompilerContext *ctx)
 
 			if ( ctx->g_Token.Type != T_ID || !scopeFind(ctx, &ctx->g_Scope, ctx->g_Token.Value.vString, &ht) )
 			{
-				printf("Linea %d Colonna %d: Errore chiamata. L'argomento %d di '%s' deve essere %s.\n",
+				printf("Line %d Column %d: Call error. Argument %d of '%s' must be %s.\n",
 				       ctx->g_Token.line, ctx->g_Token.column, i + 1, name,
-				       fp->t0 == T_ARRAY ? "un array" : "una variabile (parametro 'ref')");
+				       fp->t0 == T_ARRAY ? "an array" : "a variable ('ref' parameter)");
 				ctx->g_numErrors++;
 				goto fail;
 			}
@@ -846,7 +846,7 @@ static int parseCall(CompilerContext *ctx)
 			{
 				if ( ht.Tipo0 != T_ARRAY || ht.Tipo1 != fp->t1 || ht.Value.pArrayDef->countIndexes != fp->dims )
 				{
-					printf("Linea %d Colonna %d: Errore chiamata. L'argomento %d di '%s' deve essere un array di %d dimensioni dello stesso tipo del parametro.\n",
+					printf("Line %d Column %d: Call error. Argument %d of '%s' must be a %d-dimensional array of the same type as the parameter.\n",
 					       ctx->g_Token.line, ctx->g_Token.column, i + 1, name, fp->dims);
 					ctx->g_numErrors++;
 					goto fail;
@@ -859,7 +859,7 @@ static int parseCall(CompilerContext *ctx)
 			{
 				if ( ht.Tipo0 != T_SIMPLE || ht.Tipo2 != T_VAR || ht.Tipo1 != fp->t1 )
 				{
-					printf("Linea %d Colonna %d: Errore chiamata. L'argomento %d di '%s' (parametro 'ref') deve essere una variabile scalare dello stesso tipo.\n",
+					printf("Line %d Column %d: Call error. Argument %d of '%s' ('ref' parameter) must be a scalar variable of the same type.\n",
 					       ctx->g_Token.line, ctx->g_Token.column, i + 1, name);
 					ctx->g_numErrors++;
 					goto fail;
@@ -871,7 +871,7 @@ static int parseCall(CompilerContext *ctx)
 			GetNextToken(ctx, &ctx->g_Token);
 			if ( ctx->g_Token.Type == T_QOPAREN )
 			{
-				printf("Linea %d Colonna %d: Errore chiamata. L'argomento %d di '%s' non puo' essere un elemento di array.\n",
+				printf("Line %d Column %d: Call error. Argument %d of '%s' cannot be an array element.\n",
 				       ctx->g_Token.line, ctx->g_Token.column, i + 1, name);
 				ctx->g_numErrors++;
 				goto fail;
@@ -886,14 +886,14 @@ static int parseCall(CompilerContext *ctx)
 			c = argCompat(fp->t1, ops[nops - 1]->type1);
 			if ( ops[nops - 1]->type0 == T_ARRAY || c == 0 )
 			{
-				printf("Linea %d Colonna %d: Errore chiamata. Tipo dell'argomento %d di '%s' non compatibile con il parametro.\n",
+				printf("Line %d Column %d: Call error. Type of argument %d of '%s' is incompatible with parameter.\n",
 				       ctx->g_Token.line, ctx->g_Token.column, i + 1, name);
 				ctx->g_numErrors++;
 				goto fail;
 			}
 			if ( c == 2 )
 			{
-				printf("Linea %d Colonna %d: Warning chiamata. Argomento %d di '%s': conversione real -> int, potrebbe verificarsi una perdita di dati.\n",
+				printf("Line %d Column %d: Call warning. Argument %d of '%s': real -> int conversion, data loss may occur.\n",
 				       line, column, i + 1, name);
 				ctx->g_numWarnings++;
 			}
@@ -902,7 +902,7 @@ static int parseCall(CompilerContext *ctx)
 
 	if ( ctx->g_Token.Type != T_CPAREN )
 	{
-		printf("Linea %d Colonna %d: Errore chiamata. '%s' accetta %d argomenti: attesa parentesi ')'.\n",
+		printf("Line %d Column %d: Call error. '%s' accepts %d arguments: expected ')'.\n",
 		       ctx->g_Token.line, ctx->g_Token.column, name, fd->nparams);
 		ctx->g_numErrors++;
 		goto fail;
@@ -929,7 +929,7 @@ static void checkAllFunctionsDefined(CompilerContext *ctx)
 	{
 		if ( !ctx->funcs[i].defined )
 		{
-			printf("Linea %d: Errore funzione. '%s' e' dichiarata ma non e' mai stata definita.\n", ctx->funcs[i].line, ctx->funcs[i].name);
+			printf("Line %d: Function error. '%s' is declared but never defined.\n", ctx->funcs[i].line, ctx->funcs[i].name);
 			ctx->g_numErrors++;
 		}
 	}
@@ -1007,7 +1007,7 @@ int type(CompilerContext *ctx)
 		GetNextToken(ctx, &ctx->g_Token);
 		return 1;
 	default:
-		printf("Linea %d Colonna %d: Errore type. Attesa keyword 'int' o 'real' o 'bool' o 'string'.\n",
+		printf("Line %d Column %d: Type error. Expected keyword 'int', 'real', 'bool', or 'string'.\n",
 		       ctx->g_Token.line, ctx->g_Token.column);
 		ctx->g_numErrors++;
 		return 0;
@@ -1041,7 +1041,7 @@ int decl(CompilerContext *ctx)
 		value.pArrayDef = (ArrayDef*)malloc(sizeof(ArrayDef));
 		if ( !value.pArrayDef )
 		{
-			printf("Errore: memoria insufficiente.\n");
+			printf("Error: out of memory.\n");
 			ctx->g_numErrors++;
 			return 0;
 		}
@@ -1058,7 +1058,7 @@ int decl(CompilerContext *ctx)
 		{
 			if ( strlen(ctx->g_Token.Value.vString) >= sizeof(szIdName) )
 			{
-				printf("Linea %d Colonna %d: Errore decl. Identificatore troppo lungo.\n",
+				printf("Line %d Column %d: Declaration error. Identifier too long.\n",
 						ctx->g_Token.line, ctx->g_Token.column);
 				ctx->g_numErrors++;
 				free(value.pArrayDef);
@@ -1070,7 +1070,7 @@ int decl(CompilerContext *ctx)
 
 		if ( !match(ctx, T_ID) )
 		{
-			printf("Linea %d Colonna %d: Errore decl. Atteso identificatore.\n",
+			printf("Line %d Column %d: Declaration error. Expected identifier.\n",
 				ctx->g_Token.line, ctx->g_Token.column);
 			ctx->g_numErrors++;
 			free(value.pArrayDef);
@@ -1088,7 +1088,7 @@ int decl(CompilerContext *ctx)
 
 		if ( !match(ctx, T_QOPAREN) )
 		{
-			printf("Linea %d Colonna %d: Errore decl. Attesa parentesi '['.\n",
+			printf("Line %d Column %d: Declaration error. Expected '['.\n",
 				ctx->g_Token.line, ctx->g_Token.column);
 			ctx->g_numErrors++;
 			free(value.pArrayDef);
@@ -1099,7 +1099,7 @@ int decl(CompilerContext *ctx)
 		{
 			if ( ctx->g_Token.Value.vInt <= 0 )
 			{
-				printf("Linea %d Colonna %d: Errore decl. La dimensione dell'array deve essere positiva.\n",
+				printf("Line %d Column %d: Declaration error. Array size must be positive.\n",
 						ctx->g_Token.line, ctx->g_Token.column);
 				ctx->g_numErrors++;
 				free(value.pArrayDef);
@@ -1111,7 +1111,7 @@ int decl(CompilerContext *ctx)
 
 		if ( !match(ctx, T_INT_LITERAL) )
 		{
-			printf("Linea %d Colonna %d: Errore decl. Atteso int literal.\n",
+			printf("Line %d Column %d: Declaration error. Expected integer literal.\n",
 				ctx->g_Token.line, ctx->g_Token.column);
 			ctx->g_numErrors++;
 			free(value.pArrayDef);
@@ -1119,7 +1119,7 @@ int decl(CompilerContext *ctx)
 		}
 		if ( !match(ctx, T_QCPAREN) )
 		{
-			printf("Linea %d Colonna %d: Errore decl. Attesa parentesi ']'.\n",
+			printf("Line %d Column %d: Declaration error. Expected ']'.\n",
 				ctx->g_Token.line, ctx->g_Token.column);
 			ctx->g_numErrors++;
 			free(value.pArrayDef);
@@ -1129,7 +1129,7 @@ int decl(CompilerContext *ctx)
 		{
 			if ( !match(ctx, T_QOPAREN) )
 			{
-				printf("Linea %d Colonna %d: Errore decl. Attesa parentesi '['.\n",
+				printf("Line %d Column %d: Declaration error. Expected '['.\n",
 					ctx->g_Token.line, ctx->g_Token.column);
 				ctx->g_numErrors++;
 				free(value.pArrayDef);
@@ -1140,7 +1140,7 @@ int decl(CompilerContext *ctx)
 			{
 				if ( value.pArrayDef->countIndexes >= 89 )
 				{
-					printf("Linea %d Colonna %d: Errore decl. Troppe dimensioni per l'array.\n",
+					printf("Line %d Column %d: Declaration error. Too many array dimensions.\n",
 							ctx->g_Token.line, ctx->g_Token.column);
 					ctx->g_numErrors++;
 					free(value.pArrayDef);
@@ -1148,7 +1148,7 @@ int decl(CompilerContext *ctx)
 				}
 				if ( ctx->g_Token.Value.vInt <= 0 )
 				{
-					printf("Linea %d Colonna %d: Errore decl. La dimensione dell'array deve essere positiva.\n",
+					printf("Line %d Column %d: Declaration error. Array size must be positive.\n",
 							ctx->g_Token.line, ctx->g_Token.column);
 					ctx->g_numErrors++;
 					free(value.pArrayDef);
@@ -1160,7 +1160,7 @@ int decl(CompilerContext *ctx)
 
 			if ( !match(ctx, T_INT_LITERAL) )
 			{
-				printf("Linea %d Colonna %d: Errore decl. Atteso int literal.\n",
+				printf("Line %d Column %d: Declaration error. Expected integer literal.\n",
 					ctx->g_Token.line, ctx->g_Token.column);
 				ctx->g_numErrors++;
 				free(value.pArrayDef);
@@ -1168,7 +1168,7 @@ int decl(CompilerContext *ctx)
 			}
 			if ( !match(ctx, T_QCPAREN) )
 			{
-				printf("Linea %d Colonna %d: Errore decl. Attesa parentesi ']'.\n",
+				printf("Line %d Column %d: Declaration error. Expected ']'.\n",
 					ctx->g_Token.line, ctx->g_Token.column);
 				ctx->g_numErrors++;
 				free(value.pArrayDef);
@@ -1177,7 +1177,7 @@ int decl(CompilerContext *ctx)
 		}
 		if ( !match(ctx, T_KW_OF) )
 		{
-			printf("Linea %d Colonna %d: Errore decl. Attesa keyword 'of'.\n",
+			printf("Line %d Column %d: Declaration error. Expected keyword 'of'.\n",
 				ctx->g_Token.line, ctx->g_Token.column);
 			ctx->g_numErrors++;
 			free(value.pArrayDef);
@@ -1192,7 +1192,7 @@ int decl(CompilerContext *ctx)
 
 		if ( array_size <= 0 )
 		{
-			printf("Linea %d Colonna %d: Errore decl. Dimensione totale array non valida.\n",
+			printf("Line %d Column %d: Declaration error. Invalid total array size.\n",
 					ctx->g_Token.line, ctx->g_Token.column);
 			ctx->g_numErrors++;
 			free(value.pArrayDef);
@@ -1214,7 +1214,7 @@ int decl(CompilerContext *ctx)
 
 		if ( !value.pArrayDef->pArray )
 		{
-			printf("Errore pArrayDef->pArray: memoria insufficiente.\n");
+			printf("Error pArrayDef->pArray: out of memory.\n");
 			ctx->g_numErrors++;
 			free(value.pArrayDef);
 			return 0;
@@ -1222,7 +1222,7 @@ int decl(CompilerContext *ctx)
 
 		if ( !match(ctx, T_SEMICOLON) )
 		{
-			printf("Linea %d Colonna %d: Errore decl. Atteso semicolon ';'.\n",
+			printf("Line %d Column %d: Declaration error. Expected semicolon ';'.\n",
 				ctx->g_Token.line, ctx->g_Token.column);
 			ctx->g_numErrors++;
 			free(value.pArrayDef->pArray);
@@ -1233,7 +1233,7 @@ int decl(CompilerContext *ctx)
 		value.pArrayDef->sizes = (int*)calloc((size_t)value.pArrayDef->countIndexes, sizeof(int));
 		if ( !value.pArrayDef->sizes )
 		{
-			printf("Errore pArrayDef->sizes: memoria insufficiente.\n");
+			printf("Error pArrayDef->sizes: out of memory.\n");
 			ctx->g_numErrors++;
 			free(value.pArrayDef->pArray);
 			free(value.pArrayDef);
@@ -1269,7 +1269,7 @@ int decl(CompilerContext *ctx)
 			return 0;
 		if ( !match(ctx, T_SEMICOLON) )
 		{
-			printf("Linea %d Colonna %d: Errore decl. Atteso semicolon ';'.\n",
+			printf("Line %d Column %d: Declaration error. Expected semicolon ';'.\n",
 				ctx->g_Token.line, ctx->g_Token.column);
 			ctx->g_numErrors++;
 			return 0;
@@ -1454,7 +1454,7 @@ static int parse_var_item(CompilerContext *ctx)
 
 	if (!match(ctx, T_ID))
 	{
-		printf("Linea %d Colonna %d: Errore var_list. Atteso identificatore.\n",
+		printf("Line %d Column %d: var_list error. Expected identifier.\n",
 		       ctx->g_Token.line, ctx->g_Token.column);
 		ctx->g_numErrors++;
 		return 0;
@@ -1562,7 +1562,7 @@ int code_block(CompilerContext *ctx)
 
     if ( !match(ctx, T_KW_BEGIN) )
     {
-        printf("Linea %d Colonna %d: Errore decl. Attesa keyword 'begin'.\n", ctx->g_Token.line, ctx->g_Token.column);
+        printf("Line %d Column %d: Declaration error. Expected keyword 'begin'.\n", ctx->g_Token.line, ctx->g_Token.column);
         ctx->g_numErrors++;
         return 0;
     }
@@ -1584,7 +1584,7 @@ int code_block(CompilerContext *ctx)
 
     if ( !match(ctx, T_KW_END) )
     {
-        printf("Linea %d Colonna %d: Errore decl. Attesa keyword 'end'.\n",
+        printf("Line %d Column %d: Declaration error. Expected keyword 'end'.\n",
                ctx->g_Token.line, ctx->g_Token.column);
         ctx->g_numErrors++;
         return 0;
@@ -1693,7 +1693,7 @@ int stmt(CompilerContext *ctx)
 		column = ctx->g_Token.column;
 		if ( ctx->g_curFunc < 0 )
 		{
-			printf("Linea %d Colonna %d: Errore stmt. 'return' e' ammesso solo dentro una funzione.\n", line, column);
+			printf("Line %d Column %d: Statement error. 'return' is only allowed inside a function.\n", line, column);
 			ctx->g_numErrors++;
 			return 0;
 		}
@@ -1702,7 +1702,7 @@ int stmt(CompilerContext *ctx)
 		{
 			if ( ctx->g_Token.Type != T_SEMICOLON )
 			{
-				printf("Linea %d Colonna %d: Errore stmt. Una funzione void non puo' restituire un valore.\n", line, column);
+				printf("Line %d Column %d: Statement error. A void function cannot return a value.\n", line, column);
 				ctx->g_numErrors++;
 				return 0;
 			}
@@ -1714,7 +1714,7 @@ int stmt(CompilerContext *ctx)
 			int c;
 			if ( ctx->g_Token.Type == T_SEMICOLON )
 			{
-				printf("Linea %d Colonna %d: Errore stmt. La funzione '%s' deve restituire un valore.\n", line, column, ctx->funcs[ctx->g_curFunc].name);
+				printf("Line %d Column %d: Statement error. Function '%s' must return a value.\n", line, column, ctx->funcs[ctx->g_curFunc].name);
 				ctx->g_numErrors++;
 				return 0;
 			}
@@ -1723,7 +1723,7 @@ int stmt(CompilerContext *ctx)
 			c = argCompat(ctx->funcs[ctx->g_curFunc].retType, ctx->g_stack[ctx->g_top]->type1);
 			if ( ctx->g_stack[ctx->g_top]->type0 == T_ARRAY || c == 0 )
 			{
-				printf("Linea %d Colonna %d: Errore stmt. Il valore di 'return' non e' compatibile con il tipo di ritorno di '%s'.\n",
+				printf("Line %d Column %d: Statement error. Return value is incompatible with return type of '%s'.\n",
 				       line, column, ctx->funcs[ctx->g_curFunc].name);
 				ctx->g_numErrors++;
 				freeNode(ctx, ctx->g_stack[ctx->g_top--]);
@@ -1731,7 +1731,7 @@ int stmt(CompilerContext *ctx)
 			}
 			if ( c == 2 )
 			{
-				printf("Linea %d Colonna %d: Warning stmt. 'return': conversione real -> int, potrebbe verificarsi una perdita di dati.\n", line, column);
+				printf("Line %d Column %d: Statement warning. 'return': real -> int conversion, data loss may occur.\n", line, column);
 				ctx->g_numWarnings++;
 			}
 			if ( !expectStmtSemicolon(ctx) )
@@ -1768,7 +1768,7 @@ int stmt(CompilerContext *ctx)
 		ctx->g_isREAD = 0;
 		if ( ctx->g_top < 0 || ctx->g_stack[ctx->g_top]->type != typeId )
 		{
-			printf("Linea %d Colonna %d: Errore stmt. 'read' richiede un identificatore o elemento di array.\n",
+			printf("Line %d Column %d: Statement error. 'read' requires an identifier or array element.\n",
 					ctx->g_Token.line, ctx->g_Token.column);
 			ctx->g_numErrors++;
 			if ( ctx->g_top >= 0 )
@@ -1788,7 +1788,7 @@ int stmt(CompilerContext *ctx)
 		GetNextToken(ctx, &ctx->g_Token);
 		if ( !match(ctx, T_OPAREN) )
 		{
-			printf("Linea %d Colonna %d: Errore stmt. Attesa parentesi '('.\n",
+			printf("Line %d Column %d: Statement error. Expected '('.\n",
 					ctx->g_Token.line, ctx->g_Token.column);
 			ctx->g_numErrors++;
 			return 0;
@@ -1802,8 +1802,8 @@ int stmt(CompilerContext *ctx)
 		}
 		if ( ctx->g_top < 0 || ctx->g_stack[ctx->g_top]->type1 == T_STRING )
 		{
-			printf("Linea %d Colonna %d: Errore stmt. L' espressione tra "
-					"parentesi tonde deve restituire un valore booleano.\n",
+			printf("Line %d Column %d: Statement error. The expression inside "
+					"parentheses must evaluate to a boolean value.\n",
 					ctx->g_Token.line, ctx->g_Token.column);
 			ctx->g_numErrors++;
 			if ( ctx->g_top >= 0 )
@@ -1826,7 +1826,7 @@ int stmt(CompilerContext *ctx)
 			return 0;
 		if ( !match(ctx, T_KW_WHILE) )
 		{
-			printf("Linea %d Colonna %d: Errore stmt. Attesa keyword 'while'.\n",
+			printf("Line %d Column %d: Statement error. Expected keyword 'while'.\n",
 					ctx->g_Token.line, ctx->g_Token.column);
 			ctx->g_numErrors++;
 			freeNode(ctx, ctx->g_stack[ctx->g_top--]);
@@ -1834,7 +1834,7 @@ int stmt(CompilerContext *ctx)
 		}
 		if ( !match(ctx, T_OPAREN) )
 		{
-			printf("Linea %d Colonna %d: Errore stmt. Attesa parentesi '('.\n",
+			printf("Line %d Column %d: Statement error. Expected '('.\n",
 					ctx->g_Token.line, ctx->g_Token.column);
 			ctx->g_numErrors++;
 			freeNode(ctx, ctx->g_stack[ctx->g_top--]);
@@ -1854,8 +1854,8 @@ int stmt(CompilerContext *ctx)
 		//if ( g_top < 1 || g_stack[g_top]->type1 == T_STRING )
 		if ( ctx->g_top < 0 || ctx->g_stack[ctx->g_top]->type1 == T_STRING )
 		{
-			printf("Linea %d Colonna %d: Errore stmt. L' espressione tra "
-					"parentesi tonde deve restituire un valore booleano.\n",
+			printf("Line %d Column %d: Statement error. The expression inside "
+					"parentheses must evaluate to a boolean value.\n",
 					ctx->g_Token.line, ctx->g_Token.column);
 			ctx->g_numErrors++;
 			if ( ctx->g_top >= 0 ) freeNode(ctx, ctx->g_stack[ctx->g_top--]);
@@ -1871,7 +1871,7 @@ int stmt(CompilerContext *ctx)
 		GetNextToken(ctx, &ctx->g_Token);
 		if ( !match(ctx, T_OPAREN) )
 		{
-			printf("Linea %d Colonna %d: Errore stmt. Attesa parentesi '('.\n",
+			printf("Line %d Column %d: Statement error. Expected '('.\n",
 					ctx->g_Token.line, ctx->g_Token.column);
 			ctx->g_numErrors++;
 			return 0;
@@ -1885,8 +1885,8 @@ int stmt(CompilerContext *ctx)
 		}
 		if ( ctx->g_top < 0 || ctx->g_stack[ctx->g_top]->type1 == T_STRING )
 		{
-			printf("Linea %d Colonna %d: Errore stmt. L' espressione tra "
-					"parentesi tonde deve restituire un valore booleano.\n",
+			printf("Line %d Column %d: Statement error. The expression inside "
+					"parentheses must evaluate to a boolean value.\n",
 					ctx->g_Token.line, ctx->g_Token.column);
 			ctx->g_numErrors++;
 			if ( ctx->g_top >= 0 )
@@ -1937,7 +1937,7 @@ int stmt(CompilerContext *ctx)
 
 		if ( !match(ctx, T_KW_END) )
 		{
-			printf("Linea %d Colonna %d: Errore stmt. Attesa keyword 'end'.\n",
+			printf("Line %d Column %d: Statement error. Expected keyword 'end'.\n",
 					ctx->g_Token.line, ctx->g_Token.column);
 			ctx->g_numErrors++;
 			if ( ctx->g_top >= 0 )
@@ -1967,14 +1967,14 @@ int stmt(CompilerContext *ctx)
 		}
 		if ( !scopeFind(ctx, &ctx->g_Scope, ctx->g_Token.Value.vString, &hashTable) )
 		{
-			printf("Linea %d Colonna %d: Errore stmt. Identificatore '%s' non dichiarato.\n",
+			printf("Line %d Column %d: Statement error. Identifier '%s' not declared.\n",
 					ctx->g_Token.line, ctx->g_Token.column, ctx->g_Token.Value.vString);
 			ctx->g_numErrors++;
 			return 0;
 		}
 		if ( strlen(ctx->g_Token.Value.vString) >= sizeof(szIdName) )
 		{
-			printf("Linea %d Colonna %d: Errore stmt. Identificatore troppo lungo.\n",
+			printf("Line %d Column %d: Statement error. Identifier too long.\n",
 					ctx->g_Token.line, ctx->g_Token.column);
 			ctx->g_numErrors++;
 			return 0;
@@ -1987,14 +1987,14 @@ int stmt(CompilerContext *ctx)
 
 		if ( hashTable.Tipo0 == T_SIMPLE && ctx->g_Token.Type == T_QOPAREN )
 		{
-			printf("Linea %d Colonna %d: Errore stmt. L'identificatore '%s' non e' un array. Parentesi quadra non valida.\n",
+			printf("Line %d Column %d: Statement error. Identifier '%s' is not an array. Invalid bracket.\n",
 					line, column, szIdName);
 			ctx->g_numErrors++;
 			return 0;
 		}
 		else if ( hashTable.Tipo0 == T_ARRAY && ctx->g_Token.Type != T_QOPAREN )
 		{
-			printf("Linea %d Colonna %d: Errore stmt. L'identificatore '%s' e' un array. Attesa parentesi quadra.\n",
+			printf("Line %d Column %d: Statement error. Identifier '%s' is an array. Expected bracket.\n",
 					line, column, szIdName);
 			ctx->g_numErrors++;
 			return 0;
@@ -2015,8 +2015,8 @@ int stmt(CompilerContext *ctx)
 		{
 			if ( currArrayIndex >= hashTable.Value.pArrayDef->countIndexes )
 			{
-				printf("Linea %d Colonna %d: Errore stmt. "
-						"Numero di indici non corrispondente.\n",
+				printf("Line %d Column %d: Statement error. "
+						"Mismatched number of indices.\n",
 						ctx->g_Token.line, ctx->g_Token.column);
 				ctx->g_numErrors++;
 				popArrayIndexNodes(ctx, currArrayIndex);
@@ -2034,8 +2034,8 @@ int stmt(CompilerContext *ctx)
 
 			if ( ctx->g_top < 0 || ctx->g_stack[ctx->g_top]->type1 != T_INTEGER )
 			{
-				printf("Linea %d Colonna %d: Errore stmt. "
-						"Gli array vanno indicizzati con espressioni di tipo int.\n",
+				printf("Line %d Column %d: Statement error. "
+						"Arrays must be indexed with expressions of type int.\n",
 						ctx->g_Token.line, ctx->g_Token.column);
 				ctx->g_numErrors++;
 				popArrayIndexNodes(ctx, currArrayIndex + 1);
@@ -2044,7 +2044,7 @@ int stmt(CompilerContext *ctx)
 			}
 			if ( !match(ctx, T_QCPAREN) )
 			{
-				printf("Linea %d Colonna %d: Errore stmt. Attesa parentesi ']'.\n",
+				printf("Line %d Column %d: Statement error. Expected ']'.\n",
 						ctx->g_Token.line, ctx->g_Token.column);
 				ctx->g_numErrors++;
 				popArrayIndexNodes(ctx, currArrayIndex + 1);
@@ -2058,8 +2058,8 @@ int stmt(CompilerContext *ctx)
 		{
 			if ( currArrayIndex < hashTable.Value.pArrayDef->countIndexes )
 			{
-				printf("Linea %d Colonna %d: Errore stmt. "
-						"Numero di indici non corrispondente.\n",
+				printf("Line %d Column %d: Statement error. "
+						"Mismatched number of indices.\n",
 						ctx->g_Token.line, ctx->g_Token.column);
 				ctx->g_numErrors++;
 				popArrayIndexNodes(ctx, currArrayIndex);
@@ -2075,7 +2075,7 @@ int stmt(CompilerContext *ctx)
 
 		if ( !match(ctx, T_OP_ASSIGN) )
 		{
-			printf("Linea %d Colonna %d: Errore stmt. Atteso operatore '='.\n",
+			printf("Line %d Column %d: Statement error. Expected '=' operator.\n",
 					ctx->g_Token.line, ctx->g_Token.column);
 			ctx->g_numErrors++;
 			if ( hashTable.Tipo0 == T_ARRAY )
@@ -2104,9 +2104,9 @@ int stmt(CompilerContext *ctx)
 		{
 			if ( left->type1 == T_INTEGER && right->type1 == T_REAL )
 			{
-				printf("Linea %d Colonna %d: Warning stmt. "
-						"Si sta assegnando un valore di tipo real alla variabile '%s' di tipo int. "
-						"Potrebbe verificarsi una perdita di dati.\n",
+				printf("Line %d Column %d: Statement warning. "
+						"Assigning a value of type real to variable '%s' of type int. "
+						"Data loss may occur.\n",
 						line, column, szIdName);
 				ctx->g_numWarnings++;
 			}
@@ -2121,28 +2121,28 @@ int stmt(CompilerContext *ctx)
 			else
 			{
 				if ( left->type1 == T_INTEGER && right->type1 == T_BOOLEAN )
-					printf("Linea %d Colonna %d: Errore stmt. "
-							"Non si puo' assegnare una valore booleano ad una variabile di tipo int.\n",
+					printf("Line %d Column %d: Statement error. "
+							"Cannot assign a boolean value to a variable of type int.\n",
 							line, column);
 				else if ( left->type1 == T_INTEGER && right->type1 == T_STRING )
-					printf("Linea %d Colonna %d: Errore stmt. "
-							"Non si puo' assegnare una valore di tipo string ad una variabile di tipo int.\n",
+					printf("Line %d Column %d: Statement error. "
+							"Cannot assign a string value to a variable of type int.\n",
 							line, column);
 				else if ( left->type1 == T_REAL && right->type1 == T_BOOLEAN )
-					printf("Linea %d Colonna %d: Errore stmt. "
-							"Non si puo' assegnare una valore booleano ad una variabile di tipo real.\n",
+					printf("Line %d Column %d: Statement error. "
+							"Cannot assign a boolean value to a variable of type real.\n",
 							line, column);
 				else if ( left->type1 == T_REAL && right->type1 == T_STRING )
-					printf("Linea %d Colonna %d: Errore stmt. "
-							"Non si puo' assegnare una valore di tipo string ad una variabile di tipo real.\n",
+					printf("Line %d Column %d: Statement error. "
+							"Cannot assign a string value to a variable of type real.\n",
 							line, column);
 				else if ( left->type1 == T_BOOLEAN && right->type1 == T_STRING )
-					printf("Linea %d Colonna %d: Errore stmt. "
-							"Non si puo' assegnare una valore di tipo string ad una variabile di tipo bool.\n",
+					printf("Line %d Column %d: Statement error. "
+							"Cannot assign a string value to a variable of type bool.\n",
 							line, column);
 				else
-					printf("Linea %d Colonna %d: Errore stmt. "
-							"Alle variabili di tipo string e' possibile assegnare soltanto valori di tipo string.\n",
+					printf("Line %d Column %d: Statement error. "
+							"Variables of type string can only be assigned values of type string.\n",
 							line, column);
 
 				ctx->g_numErrors++;
@@ -2159,7 +2159,7 @@ int stmt(CompilerContext *ctx)
 		break;
 
 	default:
-		printf("Linea %d Colonna %d: Errore stmt. Attesa 'print'."
+		printf("Line %d Column %d: Statement error. Expected 'print'"
 				" o 'read' o 'while' o 'do' o 'if' o 'begin' o identificatore.\n",
 				ctx->g_Token.line, ctx->g_Token.column);
 		ctx->g_numErrors++;
@@ -2199,8 +2199,8 @@ int expr(CompilerContext *ctx)
 		left  = ctx->g_stack[ctx->g_top--];
 		if ( left->type1 == T_STRING || right->type1 == T_STRING )
 		{
-			printf("Linea %d Colonna %d: Errore expr. Gli operatori booleani "
-					"non accettano operandi di tipo stringa.\n",
+			printf("Line %d Column %d: Expression error. Boolean operators "
+					"do not accept string operands.\n",
 					line, column);
 			ctx->g_numErrors++;
 			freeNode(ctx, left);
@@ -2249,8 +2249,8 @@ int expr1(CompilerContext *ctx)
 		left  = ctx->g_stack[ctx->g_top--];
 		if ( left->type1 == T_STRING || right->type1 == T_STRING )
 		{
-			printf("Linea %d Colonna %d: Errore expr1. Gli operatori di confronto "
-					"non accettano espressioni di tipo stringa.\n",
+			printf("Line %d Column %d: Expression error. Comparison operators "
+					"do not accept string expressions.\n",
 					line, column);
 			ctx->g_numErrors++;
 			freeNode(ctx, left);
@@ -2303,8 +2303,8 @@ int expr2(CompilerContext *ctx)
 			if ( left->type1 == T_STRING || right->type1 == T_STRING ||
 				left->type1 == T_BOOLEAN || right->type1 == T_BOOLEAN )
 			{
-				printf("Linea %d Colonna %d: Errore expr2. L'operatore di sottrazione "
-						"accetta solo operandi di tipo integer o real.\n",
+				printf("Line %d Column %d: Expression error. Subtraction operator "
+						"accepts only integer or real operands.\n",
 						line, column);
 				ctx->g_numErrors++;
 				freeNode(ctx, left);
@@ -2317,8 +2317,8 @@ int expr2(CompilerContext *ctx)
 			if ( (left->type1 == T_STRING && right->type1 != T_STRING) ||
 				 (left->type1 != T_STRING && right->type1 == T_STRING) )
 			{
-				printf("Linea %d Colonna %d: Errore expr2. Gli operandi dell'operatore di addizione "
-						"devono essere o entrambi di tipo numerico o entrambi di tipo stringa.\n",
+				printf("Line %d Column %d: Expression error. Operands of addition operator "
+						"must be either both numeric or both string.\n",
 						line, column);
 				ctx->g_numErrors++;
 				freeNode(ctx, left);
@@ -2327,8 +2327,8 @@ int expr2(CompilerContext *ctx)
 			}
 			else if ( left->type1 == T_BOOLEAN || right->type1 == T_BOOLEAN )
 			{
-				printf("Linea %d Colonna %d: Errore expr2. L'operatore di addizione "
-						"non accetta operandi di tipo boolean.\n",
+				printf("Line %d Column %d: Expression error. Addition operator "
+						"does not accept boolean operands.\n",
 						line, column);
 				ctx->g_numErrors++;
 				freeNode(ctx, left);
@@ -2379,8 +2379,8 @@ int expr3(CompilerContext *ctx)
 		if ( left->type1 == T_STRING || right->type1 == T_STRING ||
 			left->type1 == T_BOOLEAN || right->type1 == T_BOOLEAN )
 		{
-			printf("Linea %d Colonna %d: Errore expr3. Gli operatori di moltiplicazione/divisione "
-					"accettano solo operandi di tipo integer o real.\n",
+			printf("Line %d Column %d: Expression error. Multiplication/division operators "
+					"accept only integer or real operands.\n",
 					line, column);
 			ctx->g_numErrors++;
 			freeNode(ctx, left);
@@ -2483,7 +2483,7 @@ int expr4(CompilerContext *ctx)
 			value.strVal = strdup(ctx->g_Token.Value.vString);
 			if ( !value.strVal )
 			{
-				printf("Errore: memoria non sufficiente.\n");
+				printf("Error: out of memory.\n");
 				return 0;
 			}
 			ctx->g_stack[++ctx->g_top] = con(ctx, T_STRING, NULL, value);
@@ -2495,7 +2495,7 @@ int expr4(CompilerContext *ctx)
 			ctx->g_currConstValue.strVal = strdup(ctx->g_Token.Value.vString);
 			if ( !ctx->g_currConstValue.strVal )
 			{
-				printf("Errore: memoria non sufficiente.\n");
+				printf("Error: out of memory.\n");
 				return 0;
 			}
 		}
@@ -2534,7 +2534,7 @@ int expr4(CompilerContext *ctx)
 			return 0;
 		if ( !match(ctx, T_CPAREN) )
 		{
-			printf("Linea %d Colonna %d: Errore expr4. Attesa parentesi ')'.\n",
+			printf("Line %d Column %d: Expression error. Expected ')'.\n",
 					ctx->g_Token.line,
 					ctx->g_Token.column);
 			return 0;
@@ -2559,8 +2559,8 @@ int expr4(CompilerContext *ctx)
 		}
 		if ( ctx->g_stack[ctx->g_top]->type1 != T_INTEGER && ctx->g_stack[ctx->g_top]->type1 != T_REAL )
 		{
-			printf("Linea %d Colonna %d: Errore expr4. L'operatore meno unario "
-					"accetta solo operandi di tipo integer o real.\n",
+			printf("Line %d Column %d: Expression error. Unary minus operator "
+					"accepts only integer or real operands.\n",
 					ctx->g_Token.line,
 					ctx->g_Token.column);
 			return 0;
@@ -2577,8 +2577,8 @@ int expr4(CompilerContext *ctx)
 			return 0;
 		if ( ctx->g_stack[ctx->g_top]->type1 == T_STRING )
 		{
-			printf("Linea %d Colonna %d: Errore expr4. L'operatore not "
-					"accetta solo espressioni di tipo boolean.\n",
+			printf("Line %d Column %d: Expression error. Operator 'not' "
+					"accepts only boolean expressions.\n",
 					ctx->g_Token.line,
 					ctx->g_Token.column);
 			return 0;
@@ -2596,7 +2596,7 @@ int expr4(CompilerContext *ctx)
 			int fIdx = funcFind(ctx, ctx->g_Token.Value.vString);
 			if ( ctx->funcs[fIdx].isVoid )
 			{
-				printf("Linea %d Colonna %d: Errore expr4. La funzione void '%s' non restituisce un valore.\n",
+				printf("Line %d Column %d: Expression error. Void function '%s' does not return a value.\n",
 						ctx->g_Token.line, ctx->g_Token.column, ctx->g_Token.Value.vString);
 				ctx->g_numErrors++;
 				return 0;
@@ -2605,7 +2605,7 @@ int expr4(CompilerContext *ctx)
 		}
 		if ( !scopeFind(ctx, &ctx->g_Scope, ctx->g_Token.Value.vString, &hashTable) )
 		{
-			printf("Linea %d Colonna %d: Errore expr4. Identificatore '%s' non dichiarato.\n",
+			printf("Line %d Column %d: Expression error. Identifier '%s' not declared.\n",
 					ctx->g_Token.line,
 					ctx->g_Token.column,
 					ctx->g_Token.Value.vString);
@@ -2615,7 +2615,7 @@ int expr4(CompilerContext *ctx)
 		{
 			if ( !ctx->g_isREAD )
 			{
-				printf("Linea %d Colonna %d: Errore expr4. Identificatore '%s' non inizializzato.\n",
+				printf("Line %d Column %d: Expression error. Identifier '%s' not initialized.\n",
 						ctx->g_Token.line,
 						ctx->g_Token.column,
 						ctx->g_Token.Value.vString);
@@ -2633,7 +2633,7 @@ int expr4(CompilerContext *ctx)
 			value.pArrayDef = (ArrayDef*)malloc(sizeof(ArrayDef));
 			if ( !value.pArrayDef )
 			{
-				printf("Errore pArrayDef: memoria insufficiente.\n");
+				printf("Error pArrayDef: out of memory.\n");
 				return 0;
 			}
 			value.pArrayDef->countIndexes = hashTable.Value.pArrayDef->countIndexes;
@@ -2642,7 +2642,7 @@ int expr4(CompilerContext *ctx)
 			value.pArrayDef->indexes = (nodeType**)malloc(sizeof(nodeType*)*(size_t)hashTable.Value.pArrayDef->countIndexes);
 			if ( !value.pArrayDef->indexes )
 			{
-				printf("Errore pArrayDef->indexes: memoria insufficiente.\n");
+				printf("Error pArrayDef->indexes: out of memory.\n");
 				free(value.pArrayDef);
 				value.pArrayDef = NULL;
 				return 0;
@@ -2668,8 +2668,8 @@ int expr4(CompilerContext *ctx)
 		{
 			if ( currArrayIndex >= hashTable.Value.pArrayDef->countIndexes )
 			{
-				printf("Linea %d Colonna %d: Errore stmt. "
-						"Numero di indici non corrispondente.\n",
+				printf("Line %d Column %d: Statement error. "
+						"Mismatched number of indices.\n",
 						ctx->g_Token.line,
 						ctx->g_Token.column);
 				cleanupArrayExprError(ctx, currArrayIndex, &value, pNode);
@@ -2685,8 +2685,8 @@ int expr4(CompilerContext *ctx)
 
 			if ( ctx->g_stack[ctx->g_top]->type1 != T_INTEGER )
 			{
-				printf("Linea %d Colonna %d: Errore stmt. "
-						"Gli array vanno indicizzati con espressioni di tipo int.\n",
+				printf("Line %d Column %d: Statement error. "
+						"Arrays must be indexed with expressions of type int.\n",
 						ctx->g_Token.line,
 						ctx->g_Token.column);
 				cleanupArrayExprError(ctx, currArrayIndex + 1, &value, pNode);
@@ -2695,7 +2695,7 @@ int expr4(CompilerContext *ctx)
 
 			if ( !match(ctx, T_QCPAREN) )
 			{
-				printf("Linea %d Colonna %d: Errore expr4. Attesa parentesi ']'.\n",
+				printf("Line %d Column %d: Expression error. Expected ']'.\n",
 						ctx->g_Token.line,
 						ctx->g_Token.column);
 				cleanupArrayExprError(ctx, currArrayIndex + 1, &value, pNode);
@@ -2708,8 +2708,8 @@ int expr4(CompilerContext *ctx)
 		{
 			if ( currArrayIndex < hashTable.Value.pArrayDef->countIndexes )
 			{
-				printf("Linea %d Colonna %d: Errore stmt. "
-						"Numero di indici non corrispondente.\n",
+				printf("Line %d Column %d: Statement error. "
+						"Mismatched number of indices.\n",
 						ctx->g_Token.line,
 						ctx->g_Token.column);
 				cleanupArrayExprError(ctx, currArrayIndex, &value, pNode);
@@ -2725,8 +2725,8 @@ int expr4(CompilerContext *ctx)
 
 		break;
 	default:
-		printf("Linea %d Colonna %d: Errore stmt. Atteso 'int literal' o 'real literal'"
-				" o 'string literal' o 'true' o 'false' o '(' o '-' o '!' o identificatore.\n",
+		printf("Line %d Column %d: Statement error. Expected 'int literal' or 'real literal'"
+				", 'string literal', 'true', 'false', '(', '-', '!', or identifier.\n",
 				ctx->g_Token.line,
 				ctx->g_Token.column);
 		return 0;

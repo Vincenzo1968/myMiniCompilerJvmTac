@@ -163,7 +163,7 @@ void htInsert(CompilerContext *ctx, HashTable **pHashTable, char *Key, enumTipo0
 		if ( strcmp(t->Key, Key) == 0 )
 		{
 			//pHashTable[index]->pLista = ListAppend(pHashTable[index]->pLista, pos);
-			printf("\nErrore: La chiave %s e' gia' presente nella hashtable\n", Key);
+			printf("\nError: Key %s is already present in the hashtable\n", Key);
 			return;
 		}
 		if ( t->next == NULL )
@@ -253,7 +253,7 @@ void htPrint(CompilerContext *ctx, HashTable **pHashTable)
 		{
 			if ( t->Tipo0 == T_SIMPLE && t->bInizializzato )
 			{
-				printf("%5d: '%s' -> Valore : ", index, t->Key);
+				printf("%5d: '%s' -> Value : ", index, t->Key);
 				switch ( t->Tipo1 )
 				{
 				case T_INTEGER:
@@ -275,7 +275,7 @@ void htPrint(CompilerContext *ctx, HashTable **pHashTable)
 			}
 			else if ( t->Tipo0 == T_SIMPLE )
 			{
-				printf("%5d: '%s' -> Valore : non inizializzato ", index, t->Key);
+				printf("%5d: '%s' -> Value : uninitialized ", index, t->Key);
 			}
 			else // T_ARRAY
 			{
@@ -366,7 +366,7 @@ void scopeInit(CompilerContext *ctx, Scope *pScope)
 	}
 	else
 	{
-		printf("Memoria non sufficiente.\n");
+		printf("Out of memory.\n");
 		return;
 	}
 
@@ -385,7 +385,7 @@ void scopePush(CompilerContext *ctx, Scope *pScope)
 	pScope->top++;
 	if ( pScope->top > SCOPE_SIZE - 1 )
 	{
-		printf("Stack scope pieno!\n");
+		printf("Scope stack full!\n");
 		pScope->top = SCOPE_SIZE - 1;
 		return;
 	}
@@ -400,7 +400,7 @@ void scopePush(CompilerContext *ctx, Scope *pScope)
 	}
 	else
 	{
-		printf("Memoria non sufficiente.\n");
+		printf("Out of memory.\n");
 		return;
 	}
 
@@ -458,7 +458,7 @@ int scopeInsert(CompilerContext *ctx, Scope *pScope, char *Key, enumTipo0 t0, en
 
 	if ( htFind(ctx, pHT, Key, &Dati) >= 0 )
 	{
-		printf("Errore: la variabile '%s' e' gia' stata dichiarata nello scope %d\n", Key, pScope->top);
+		printf("Error: variable '%s' has already been declared in scope %d\n", Key, pScope->top);
 		return 0;
 	}
 
@@ -504,7 +504,7 @@ int scopeUpdateValue(CompilerContext *ctx, Scope *pScope, char *Key, enumTipo0 t
 		}
 	}
 
-	printf("Errore: variabile '%s' non dichiarata\n", Key);
+	printf("Error: variable '%s' not declared\n", Key);
 	return 0;
 }
 

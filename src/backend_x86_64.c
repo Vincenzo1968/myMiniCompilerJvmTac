@@ -803,7 +803,7 @@ void x86_64Generate(CompilerContext *ctx, TACList *tac, Scope *pScope, const cha
 {
     FILE *fp = fopen(outputFileName, "w");
     if (!fp) {
-        printf("Errore: impossibile aprire il file %s per la scrittura.\n", outputFileName);
+        printf("Error: unable to open file %s for writing.\n", outputFileName);
         return;
     }
 
@@ -821,7 +821,7 @@ void x86_64Generate(CompilerContext *ctx, TACList *tac, Scope *pScope, const cha
     size_t textLen = 0;
     FILE *out = open_memstream(&textBuf, &textLen);
     if (!out) {
-        printf("Errore: memoria insufficiente.\n");
+        printf("Error: out of memory.\n");
         fclose(fp);
         return;
     }

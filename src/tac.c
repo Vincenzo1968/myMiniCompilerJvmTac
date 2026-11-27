@@ -86,7 +86,7 @@ void tacEmit(CompilerContext *ctx, TACList *list, TACOp op, const char *arg1, co
         int newCap = (list->capacity == 0) ? 64 : list->capacity * 2;
         TACInstr *newItems = (TACInstr *)realloc(list->items, (size_t)newCap * sizeof(TACInstr));
         if (!newItems) {
-            printf("Errore TAC: memoria insufficiente.\n");
+            printf("TAC Error: out of memory.\n");
             return;
         }
         list->items = newItems;
@@ -333,7 +333,7 @@ static char *emitTAC(CompilerContext *ctx, TACList *tac, Scope *pScope, nodeType
     case typeId: {
         HashTable Dati = {0};
         if (!scopeFind(ctx, pScope, p->id.uniqueName, &Dati)) {
-            printf("Errore TAC: identificatore '%s' non dichiarato\n", p->id.uniqueName);
+            printf("TAC Error: identifier '%s' not declared\n", p->id.uniqueName);
             return tacStrdup(ctx, "0");
         }
         if (Dati.Tipo0 == T_ARRAY) {
@@ -365,7 +365,7 @@ static char *emitTAC(CompilerContext *ctx, TACList *tac, Scope *pScope, nodeType
             char nbuf[16];
             const FuncDef *fd;
             if (fi < 0) {
-                printf("Errore TAC: funzione '%s' non dichiarata\n", fname);
+                printf("TAC Error: function '%s' not declared\n", fname);
                 return NULL;
             }
             fd = &ctx->funcs[fi];
@@ -651,8 +651,9 @@ static int isBoolLit(CompilerContext *ctx, const char *s, int *outBool)
     return 0;
 }
 
-/* Una variabile globale e' visibile alle altre funzioni: in un programma con funzioni le sue
-   scritture non si possono eliminare come "mai lette" e il suo valore non e' noto all'ingresso. */
+// A global variable is visible to other functions: in a program that includes functions,
+// writes to such a variable cannot be eliminated on the grounds that they are
+// "never read," and its value is not known upon entry.
 static int tacIsEscaping(CompilerContext *ctx, const char *name)
 {
     HashTable d;
