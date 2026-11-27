@@ -30,6 +30,7 @@ Architettura :
     con calcolo corretto dello stack massimo, gestione dei temporanei/label,
     supporto a ldc/ldc_w, confronti su interi/reali e array linearizzati.
 */
+#define _POSIX_C_SOURCE 200809L
 
 #ifdef HAVE_CONFIG_H
 #  include "config.h"

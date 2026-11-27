@@ -19,6 +19,8 @@ You should have received a copy of the GNU General Public License
 along with mypdfsearch. If not, see <http://www.gnu.org/licenses/>.
 */
 
+#define _POSIX_C_SOURCE 200809L
+
 #ifdef HAVE_CONFIG_H
 #  include "config.h"
 #endif
