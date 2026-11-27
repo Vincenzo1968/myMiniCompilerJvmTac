@@ -702,7 +702,7 @@ void MakeOutputFileName(CompilerContext *ctx, char *szInputFileName, char *szOut
 	strcat(szOutputFileName, ".class");
 }
 
-/* ---------------- Helper per emissione bytecode ---------------- */
+/* ---------------- Bytecode emission helpers ---------------- */
 
 static void jvmPushInt(CompilerContext *ctx, int val, jvmHashTable **pHT)
 {
@@ -837,7 +837,7 @@ void jvmTypeCheck(CompilerContext *ctx, int t1, int t2)
 }
 
 /* Alloca ogni array come array 1D linearizzato di (sizes[0] * ... * sizes[n-1]) elementi,
- * coerente con l'offset linearizzato prodotto da tac.c */
+ * consistent with the linearized offset produced by tac.c */
 void MakeBytecodeDeclArrayMain(CompilerContext *ctx, jvmHashTable **pHT, HashTable *pDati)
 {
 	int k;
@@ -885,7 +885,7 @@ void MakeBytecodeDeclInitMain(CompilerContext *ctx, jvmHashTable **pHT, Scope *p
 		while (t != NULL) {
 			scopeFind(ctx, pScope, t->Key, &Dati);
 
-			/* Gli inizializzatori scalari ("int x = 8;") non si emettono piu' qui:
+			/* Scalar initializers ("int x = 8;") are no longer emitted here:
 			   sono assegnazioni nell'AST e quindi arrivano dal TAC, al punto di
 			   dichiarazione. Qui restano solo le allocazioni degli array. */
 			if (t->Tipo0 == T_ARRAY) {
@@ -904,9 +904,9 @@ void MakeBytecodeDeclInitMain(CompilerContext *ctx, jvmHashTable **pHT, Scope *p
 enum { VK_LOCAL = 0, VK_STATIC, VK_REF };
 
 typedef struct {
-	int kind;            /* VK_LOCAL: slot locale; VK_STATIC: campo statico; VK_REF: array di 1 elemento nello slot */
+	int kind;            /* VK_LOCAL: local slot; VK_STATIC: static field; VK_REF: single-element array in slot */
 	int slot;
-	enumTipo1 type1;     /* tipo scalare o tipo degli elementi se isArray */
+	enumTipo1 type1;     /* scalar type or element type if isArray */
 	int isArray;
 	const char *name;
 } VarRef;
@@ -934,7 +934,7 @@ typedef struct {
 	int nFields, capFields;
 	MethodRec *methods;
 	int nMethods, capMethods;
-	int funcMode;        /* il programma contiene funzioni: globali = campi statici */
+	int funcMode;        /* program contains functions: globals = static fields */
 } JvmUnit;
 
 typedef struct {
@@ -1037,7 +1037,7 @@ static int tempTableEnsure(CompilerContext *ctx, TempTable *tt, const char *name
 	return idx;
 }
 
-/* ---- costanti dinamiche del pool per campi e metodi ---- */
+/* ---- dynamic constant pool entries for fields and methods ---- */
 
 static U2 jvmCpUtf8(CompilerContext *ctx, const char *s)
 {
@@ -1115,7 +1115,7 @@ static U2 jvmFieldrefIdx(CompilerContext *ctx, jvmHashTable **pHT, JvmUnit *unit
 	return idx;
 }
 
-/* Methodref di un metodo statico della classe corrente; restituisce anche gli indici
+/* Methodref of a static method in the current class; also returns the indices
    delle Utf8 di nome e descrittore (servono per la method_info). */
 static U2 jvmMethodrefIdx(CompilerContext *ctx, jvmHashTable **pHT, const char *name, const char *desc,
                           U2 *pNameIdx, U2 *pDescIdx)
@@ -1147,7 +1147,7 @@ static U2 jvmMethodrefIdx(CompilerContext *ctx, jvmHashTable **pHT, const char *
 	return idx;
 }
 
-/* ---- tabella delle variabili di un segmento (main o funzione) ---- */
+/* ---- variable table of a segment (main or function) ---- */
 
 static SegVar *segFind(const JvmSeg *seg, const char *name)
 {
@@ -1234,7 +1234,7 @@ static void jvmEmitXastore(CompilerContext *ctx, enumTipo1 t)
 	else                     jvmEmitU1(ctx, jvm_aastore, -3);
 }
 
-/* Carica il valore di una variabile scalare (locale, statica o parametro ref) */
+/* Loads the value of a scalar variable (local, static, or ref parameter) */
 static void jvmEmitLoadVar(CompilerContext *ctx, const VarRef *vr, const TempTable *tt)
 {
 	if (vr->kind == VK_STATIC) {
@@ -1253,7 +1253,7 @@ static void jvmEmitLoadVar(CompilerContext *ctx, const VarRef *vr, const TempTab
 	}
 }
 
-/* Memorizza il valore in cima allo stack (gia' del tipo della variabile) */
+/* Stores the value on top of the stack (already matching the variable's type) */
 static void jvmEmitStoreVar(CompilerContext *ctx, const VarRef *vr, const TempTable *tt)
 {
 	if (vr->kind == VK_STATIC) {
@@ -1282,7 +1282,7 @@ static void jvmEmitStoreVar(CompilerContext *ctx, const VarRef *vr, const TempTa
 	}
 }
 
-/* Carica il riferimento a un array (locale, parametro o statico) */
+/* Loads the reference to an array (local, parameter, or static) */
 static void jvmEmitLoadArrayVar(CompilerContext *ctx, const VarRef *vr, const TempTable *tt)
 {
 	if (vr->kind == VK_STATIC) {
@@ -1297,7 +1297,7 @@ static void jvmEmitLoadArrayVar(CompilerContext *ctx, const VarRef *vr, const Te
 	}
 }
 
-/* Con il numero di elementi gia' sullo stack, alloca un array del tipo dato */
+/* With the element count already on the stack, allocates an array of the given type */
 static void jvmEmitNewArrayOfType(CompilerContext *ctx, jvmHashTable **pHT, enumTipo1 t1)
 {
 	if (t1 == T_STRING) {
@@ -1318,7 +1318,7 @@ static void jvmEmitNewArrayOfType(CompilerContext *ctx, jvmHashTable **pHT, enum
 	}
 }
 
-/* Alloca un array 1D linearizzato e ne lascia il riferimento sullo stack */
+/* Allocates a linearized 1D array and leaves its reference on the stack */
 static void jvmEmitNewArrayOnStack(CompilerContext *ctx, jvmHashTable **pHT, const HashTable *t)
 {
 	int k, totalSize = 1;
@@ -1328,7 +1328,7 @@ static void jvmEmitNewArrayOnStack(CompilerContext *ctx, jvmHashTable **pHT, con
 	jvmEmitNewArrayOfType(ctx, pHT, t->Tipo1);
 }
 
-/* Valore iniziale di una variabile locale o globale (stringa vuota, 0, array allocato) */
+/* Initial value of a local or global variable (empty string, 0, allocated array) */
 static void jvmEmitInitVar(CompilerContext *ctx, jvmHashTable **pHT, const TempTable *tt,
                            const HashTable *Dati, const VarRef *vr)
 {
@@ -1423,11 +1423,11 @@ static enumTipo1 jvmInferOperandType(CompilerContext *ctx, const char *opStr, Sc
 	return fallback;
 }
 
-/* Pre-assegna tipo e slot locale a tutti i temporanei presenti nella TACList */
+/* Pre-assigns type and local slot to all temporaries present in the TACList */
 static void jvmPrepareTemps(CompilerContext *ctx, const TACList *tac, int from, int to, Scope *pScope, TempTable *tt)
 {
 	int i;
-	/* Assicuriamoci che g_max_locals copra tutte le variabili utente */
+	/* Ensure g_max_locals covers all user variables */
 	if (!(tt->seg && tt->seg->funcMode) && pScope->top >= 0 && pScope->stack[0]) {
 		for (i = 0; i < HT_SIZE; i++) {
 			HashTable *t = pScope->stack[0][i];
@@ -1840,7 +1840,7 @@ static void MakeBytecodeFromTAC(CompilerContext *ctx, const TACList *tac, int fr
 			int argSlots = 1;
 
 			/* Se in->type1 specifica T_BOOLEAN ma l'operando era int (es. constant folding),
-			 * rispetta in->type1 per stampare true/false */
+			 * respects in->type1 to print true/false */
 			if (in->type1 == T_BOOLEAN && pType == T_INTEGER)
 				pType = T_BOOLEAN;
 
@@ -1919,10 +1919,10 @@ static void MakeBytecodeFromTAC(CompilerContext *ctx, const TACList *tac, int fr
 				if (in->op == TAC_PARAM_ARR) {
 					jvmEmitLoadArrayVar(ctx, &vrP, &tt);
 				} else if (vrP.kind == VK_REF) {
-					/* parametro ref inoltrato: si passa lo stesso array di un elemento */
+					/* forwarded ref parameter: pass the same single-element array */
 					jvmEmitLoadArrayRef(ctx, vrP.slot);
 				} else {
-					/* copia in/out: scatola di un elemento, riletta dopo la chiamata */
+					/* copy-in/copy-out: single-element box, read back after the call */
 					int slot = (int)ctx->g_max_locals;
 					ctx->g_max_locals = (U2)(ctx->g_max_locals + 1);
 					jvmPushInt(ctx, 1, pHT);
@@ -1995,7 +1995,7 @@ static void MakeBytecodeFromTAC(CompilerContext *ctx, const TACList *tac, int fr
 		}
 	}
 
-	/* Risoluzione dei salti (patch degli offset relativi a 16 bit) */
+	/* Jump resolution (patching 16-bit relative offsets) */
 	for (i = 0; i < numFixups; i++) {
 		int j;
 		int targetOffset = -1;
@@ -2025,7 +2025,7 @@ static void MakeBytecodeFromTAC(CompilerContext *ctx, const TACList *tac, int fr
 	tempTableFree(ctx, &tt);
 }
 
-/* Memorizza il bytecode appena generato come metodo della classe */
+/* Stores the newly generated bytecode as a method of the class */
 static void jvmAddMethodRec(CompilerContext *ctx, JvmUnit *unit, U2 nameIdx, U2 descIdx)
 {
 	MethodRec *m;
@@ -2060,7 +2060,7 @@ static void segConsider(CompilerContext *ctx, Scope *pScope, JvmSeg *seg, const 
 	seg->nextSlot += (!isArr && D.Tipo1 == T_REAL) ? 2 : 1;
 }
 
-/* Genera il metodo di un segmento TAC: il blocco principale (fd == NULL) o una funzione. */
+/* Generates the method for a TAC segment: the main block (fd == NULL) or a function. */
 static void jvmGenSegment(CompilerContext *ctx, JvmUnit *unit, jvmHashTable **pHT, const TACList *tac,
                           int from, int to, Scope *pScope, const FuncDef *fd, U2 nameIdx, U2 descIdx)
 {
@@ -2090,7 +2090,7 @@ static void jvmGenSegment(CompilerContext *ctx, JvmUnit *unit, jvmHashTable **pH
 
 	{
 		TempTable tt0;
-		int slot = fd ? 0 : 1; /* nel main lo slot 0 e' args */
+		int slot = fd ? 0 : 1; /* in main, slot 0 is args */
 
 		if (fd) {
 			for (i = 0; i < fd->nparams; i++) {
@@ -2110,7 +2110,7 @@ static void jvmGenSegment(CompilerContext *ctx, JvmUnit *unit, jvmHashTable **pH
 		}
 		seg.nextSlot = slot;
 
-		/* variabili locali citate nel segmento */
+		/* local variables referenced in the segment */
 		for (i = from; i < to; i++) {
 			const TACInstr *in = &tac->items[i];
 			if (in->dead) continue;
@@ -2133,7 +2133,7 @@ static void jvmGenSegment(CompilerContext *ctx, JvmUnit *unit, jvmHashTable **pH
 		tempTableInit(ctx, &tt0);
 		tt0.seg = &seg;
 
-		/* main: inizializza le globali (campi statici) che non hanno il valore predefinito giusto */
+		/* main: initialize globals (static fields) that do not have the right default value */
 		if (!fd && pScope->top >= 0 && pScope->stack[0]) {
 			int b;
 			for (b = 0; b < HT_SIZE; b++) {
@@ -2156,7 +2156,7 @@ static void jvmGenSegment(CompilerContext *ctx, JvmUnit *unit, jvmHashTable **pH
 			}
 		}
 
-		/* locali: valore iniziale (le variabili non assegnate valgono 0 / "" / array allocato) */
+		/* locals: initial value (unassigned variables default to 0 / "" / allocated array) */
 		for (i = 0; i < seg.n; i++) {
 			HashTable D = {0};
 			VarRef vr;
@@ -2174,7 +2174,7 @@ static void jvmGenSegment(CompilerContext *ctx, JvmUnit *unit, jvmHashTable **pH
 
 	MakeBytecodeFromTAC(ctx, tac, from, to, pHT, pScope, &seg);
 
-	/* uscita di sicurezza se il corpo arriva alla fine senza 'return' */
+	/* safety exit if the body reaches the end without a 'return' */
 	if (!fd || fd->isVoid) {
 		jvmEmitU1(ctx, jvm_return, 0);
 	} else if (fd->retType == T_REAL) {
@@ -2307,10 +2307,10 @@ void jvmStart(CompilerContext *ctx, char *szInputFileName, nodeType **ppTree, Sc
 		return;
 	}
 
-	/* 1) Costruisce e ottimizza il TAC (-O0 .. -O3) */
+	/* 1) Build and optimize TAC (-O0 .. -O3) */
 	tacBuild(ctx, ppTree, pScope, optLevel, &tac);
 
-	/* 2) Inizializza stato del generatore JVM */
+	/* 2) Initialize JVM generator state */
 	ctx->g_ConstantPoolCount = 68;
 	ctx->g_IndexBytecodeArray = 0;
 	ctx->g_code_length = 0;
@@ -2320,7 +2320,7 @@ void jvmStart(CompilerContext *ctx, char *szInputFileName, nodeType **ppTree, Sc
 	jvmWriteHeader(ctx, fp);
 	ctx->g_IndexConstantPool = jvmMakeConstantPool(ctx, szSourceFile, szClassName);
 
-	/* 3) Un metodo per il blocco principale e uno per ogni funzione */
+	/* 3) One method for the main block and one for each function */
 	unit.funcMode = (ctx->funcCount > 0);
 	{
 		int mainEnd = tac.count, k, j;

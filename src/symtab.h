@@ -90,7 +90,7 @@ typedef struct tagHashTable
 	   usato da TAC, JVM e ASM, cosi' variabili omonime di scope diversi non
 	   collidono. Per le variabili dello scope globale coincide con Key. */
 	char *uniqueName;
-	/* 1 se la variabile e' dichiarata a livello globale (prima del blocco principale):
+	/* 1 if the variable is declared at global level (before the main block):
 	   i backend la tengono in memoria statica, visibile a tutte le funzioni. */
 	char isGlobal;
 	struct tagHashTable *next;
@@ -112,16 +112,16 @@ void htPrintTAC(CompilerContext *ctx, HashTable **pHashTable);
 void scopeInit(CompilerContext *ctx, Scope *pScope);
 void scopePush(CompilerContext *ctx, Scope *pScope);
 int  scopePop(CompilerContext *ctx, Scope *pScope);
-/* Come scopePop, ma NON distrugge le variabili dello scope: le sposta nello scope
+/* Like scopePop, but does NOT destroy scope variables: moves them to the scope
    radice (stack[0]) con chiave = uniqueName, cosi' TAC/JVM/ASM possono ancora
    risolverle dopo il parsing. Usata solo dal parser su g_Scope. */
 int  scopePopKeep(CompilerContext *ctx, Scope *pScope);
-/* Copia profonda (sizes + storage azzerato) della definizione di un array: l'interprete
+/* Deep copy (sizes + zeroed storage) of an array definition: the interpreter
    ne crea una nuova per ogni ingresso nel blocco che lo dichiara. Gli elementi stringa
    partono NULL, quindi non serve copiarne il contenuto. */
 ArrayDef *arrayDefClone(const ArrayDef *src, enumTipo1 t1);
 void arrayDefFreeEmpty(ArrayDef *a);
-/* Assegna alla variabile appena dichiarata nello scope corrente un nome univoco. */
+/* Assigns a unique name to the newly declared variable in the current scope. */
 void scopeAssignUniqueName(CompilerContext *ctx, Scope *pScope, const char *Key);
 void scopeFree(CompilerContext *ctx, Scope *pScope);
 int  scopeFind(CompilerContext *ctx, Scope* pScope, char *Key, HashTable *pDati);

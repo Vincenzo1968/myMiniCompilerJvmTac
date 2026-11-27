@@ -158,8 +158,8 @@ void freeNode(CompilerContext *ctx, nodeType *p)
 
 	if ( p->type == typeId )
 	{
-		// name e uniqueName sono malloc'ate in id() (ast.c):
-		// appartengono al nodo AST, quindi le libera freeNode. 
+		// name and uniqueName are malloc'd in id() (ast.c):
+		// they belong to the AST node, so freeNode frees them. 
 		free(p->id.name);
 		free(p->id.uniqueName);
 
@@ -181,7 +181,7 @@ void freeNode(CompilerContext *ctx, nodeType *p)
 
 	if ( p->type == typeConst && p->type1 == T_STRING )
 	{
-		// strVal della costante stringa e' malloc'ata in expr4():
+		// strVal of the string constant is malloc'd in expr4():
 		// appartiene all'AST. free(NULL) e' comunque sicuro.
 		free(p->con.value.strVal);
 	}

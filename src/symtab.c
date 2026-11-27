@@ -525,7 +525,7 @@ static int htIndexOf(const char *Key)
 	return index;
 }
 
-/* Vero se 'cand' e' gia' usato come nome univoco da una variabile qualsiasi,
+/* True if 'cand' is already used as a unique name by any variable,
    sia negli scope ancora aperti sia in quelli gia' chiusi (spostati in stack[0]). */
 static int uniqueNameInUse(Scope *pScope, const char *cand)
 {
@@ -568,11 +568,11 @@ void scopeAssignUniqueName(CompilerContext *ctx, Scope *pScope, const char *Key)
 
 	t->isGlobal = (pScope->top == 0);
 
-	/* Lo scope radice mantiene i nomi originali (i nomi dei sorgenti non
+	/* Root scope keeps original names (source names do not
 	   contengono mai '.', quindi "x.1" non puo' collidere con una variabile utente). */
 	if ( pScope->top > 0 )
 	{
-		/* Il nodo appena inserito ha gia' uniqueName == Key: lo escludiamo
+		/* Newly inserted node already has uniqueName == Key: exclude it
 		   dal controllo temporaneamente. */
 		char *saved = t->uniqueName;
 		t->uniqueName = NULL;
@@ -619,7 +619,7 @@ int scopePopKeep(CompilerContext *ctx, Scope *pScope)
 			HashTable *next = n->next;
 			int idx = htIndexOf(n->uniqueName);
 
-			/* la chiave diventa il nome univoco */
+			/* key becomes the unique name */
 			free(n->Key);
 			n->Key = (char*)malloc(strlen(n->uniqueName) + 1);
 			strcpy(n->Key, n->uniqueName);

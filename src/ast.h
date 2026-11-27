@@ -32,7 +32,7 @@ typedef enum { typeConst, typeId, typeOperator } nodeEnum;
 /* costanti */
 typedef struct
 {
-	char lexeme[128]; // usato solo per le costanti numeriche.
+	char lexeme[128]; // used only for numeric constants.
 	Valore value;
 } constNodeType;
 
@@ -73,7 +73,7 @@ typedef struct nodeTypeTag
 
 /* prototypes */
 nodeType *opr(CompilerContext *ctx, int oper, int nops, ...);
-/* Come opr, ma con gli operandi in un array (numero variabile, es. gli argomenti di una chiamata). */
+/* Like opr, but with operands in an array (variable count, e.g., call arguments). */
 nodeType *oprN(CompilerContext *ctx, int oper, int nops, nodeType **ops);
 nodeType *id(CompilerContext *ctx, char *name, char *uniqueName, enumTipo0 t0, enumTipo1 t1, enumTipo2 t2, Valore value, char bInizializzato);
 nodeType *con(CompilerContext *ctx, enumTipo1 t1, char *lexeme, Valore value);

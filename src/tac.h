@@ -52,13 +52,13 @@ typedef enum {
     TAC_IF_TRUE,   // if arg1 goto res
     TAC_PRINT,     // print arg1
     TAC_READ,      // read res
-    /* funzioni (aggiunte in coda per non spostare i valori esistenti) */
-    TAC_FUNC,      // func res(arg1) : inizio funzione; arg1 = parametri, arg2 = tipo di ritorno
-    TAC_ENDFUNC,   // endfunc res : fine funzione (res = nome; "main" chiude il blocco principale)
-    TAC_PARAM,     // param arg1 : argomento per valore
-    TAC_PARAM_REF, // param ref arg1 : variabile scalare passata per riferimento
-    TAC_PARAM_ARR, // param array arg1 : array passato per riferimento
-    TAC_CALL,      // [res =] call arg1, arg2 : arg1 = funzione, arg2 = numero di argomenti
+    /* functions (appended at the end to preserve existing enum values) */
+    TAC_FUNC,      // func res(arg1) : function start; arg1 = parameters, arg2 = return type
+    TAC_ENDFUNC,   // endfunc res : function end (res = name; "main" closes the main block)
+    TAC_PARAM,     // param arg1 : pass-by-value argument
+    TAC_PARAM_REF, // param ref arg1 : scalar variable passed by reference
+    TAC_PARAM_ARR, // param array arg1 : array passed by reference
+    TAC_CALL,      // [res =] call arg1, arg2 : arg1 = function, arg2 = argument count
     TAC_RETURN     // return [arg1]
 } TACOp;
 
@@ -80,7 +80,7 @@ typedef struct {
 /* API principale chiamata da main.c */
 void tacGenerate(CompilerContext *ctx, nodeType *pTree, Scope *pScope, int optLevel);
 
-/* Funzioni di utilita' per la IR (usate anche nei livelli -O2/-O3) */
+/* Utility functions for IR (also used in -O2/-O3 levels) */
 void tacInit(CompilerContext *ctx, TACList *list);
 void tacFree(CompilerContext *ctx, TACList *list);
 void tacEmit(CompilerContext *ctx, TACList *list, TACOp op, const char *arg1, const char *arg2, const char *res, enumTipo1 t1);

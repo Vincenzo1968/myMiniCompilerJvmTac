@@ -21,22 +21,22 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 /*
  * Supporto alle struct: "lowering" a livello di testo sorgente.
  *
- * Prima dell'analisi lessicale il sorgente viene riscritto in modo che ogni struct sparisca:
+ * Before lexical analysis, the source is rewritten so that every struct disappears:
  *
- *   struct P { int x; real y; };        (la definizione del tipo viene rimossa)
+ *   struct P { int x; real y; };        (the type definition is removed)
  *   P p;                                ->  int p$x; real p$y;
  *   array v[10] of P;                   ->  array v$x[10] of int; array v$y[10] of real;
  *   p.x = 3;                            ->  p$x = 3;
  *   v[i].y = 2.5;                       ->  v$y[i] = 2.5;
  *   p = q;                              ->  begin p$x = q$x; p$y = q$y; end
- *   f(p, 3)    con  void f(P a, int n)  ->  f(p$x, p$y, 3)  con  void f(int a$x, real a$y, int n)
+ *   f(p, 3)    with void f(P a, int n)  ->  f(p$x, p$y, 3)  with void f(int a$x, real a$y, int n)
  *   P g(int n) ...  return r;           ->  void g(int n, ref int zz_ret$x, ref real zz_ret$y)
  *   p = g(4);                           ->  g(4, p$x, p$y);
  *
- * Una struct diventa quindi un insieme di variabili scalari (o di array paralleli per gli array di
- * struct), e tutti i backend (interprete, TAC, JVM, asm) e le ottimizzazioni funzionano senza modifiche.
- * Le righe del sorgente sono conservate (le colonne possono spostarsi); i nomi mangled contengono '$',
- * che un identificatore scritto dall'utente non puo' avere.
+ * A struct thus becomes a set of scalar variables (or parallel arrays for arrays of
+ * structs), and all backends (interpreter, TAC, JVM, asm) and optimizations work unchanged.
+ * Source line numbers are preserved (columns may shift); mangled names contain '$',
+ * which a user-written identifier cannot contain.
  */
 
 #include <stdio.h>
@@ -86,7 +86,7 @@ enum { K_ID = 1, K_NUM, K_STR, K_PUNCT, K_EOF };
 
 typedef struct {
 	int kind;
-	int start, end;   /* offset nel sorgente */
+	int start, end;   /* offset in source */
 	int line;
 	char *text;
 } Tok;
@@ -114,7 +114,7 @@ typedef struct {
 
 typedef struct {
 	char name[64];
-	int sid;            /* -1: variabile "normale" (serve solo a gestire lo shadowing) */
+	int sid;            /* -1: "regular" variable (only used to handle shadowing) */
 	int ndims;
 } VarEnt;
 
@@ -141,10 +141,10 @@ typedef struct {
 	int nfuncs;
 	VarEnt pending[64];
 	int npending;
-	int curRetSid;        /* struct restituita dalla funzione che si sta riscrivendo, o -1 */
+	int curRetSid;        /* struct returned by the function currently being rewritten, or -1 */
 	int err;
 	Buf out;
-	int pos;              /* posizione di copia nel sorgente (modo non flat) */
+	int pos;              /* copy position in source (non-flat mode) */
 } SL;
 
 typedef struct {
@@ -153,9 +153,9 @@ typedef struct {
 	char name[256];       /* nome mangled (prefisso o foglia) */
 	int nidx;
 	char *idx[SL_MAXDIMS * 2];
-	int total;            /* indici richiesti per accedere a un singolo elemento */
-	int leafNdims;        /* dimensioni proprie della foglia array (isLeaf) */
-	int next;             /* primo token dopo il percorso */
+	int total;            /* indices required to access a single element */
+	int leafNdims;        /* own dimensions of the array leaf (isLeaf) */
+	int next;             /* first token after the path */
 	int line;
 } Path;
 
@@ -322,7 +322,7 @@ static int slScopePush(SL *sl)
 	return 1;
 }
 
-/* foglie di una struct: nome del percorso, tipo e dimensioni */
+/* struct leaves: path name, type, and dimensions */
 static int collectLeaves(SL *sl, int sid, const char *prefix, char dims[][16], int nd, Leaf *out, int *nout)
 {
 	const StructDef *sd = &sl->structs[sid];
@@ -351,9 +351,9 @@ static int collectLeaves(SL *sl, int sid, const char *prefix, char dims[][16], i
 	return 1;
 }
 
-/* ---------------------------------------------------------------- definizione dei tipi struct */
+/* ---------------------------------------------------------------- struct type definitions */
 
-/* struct Nome { campi } ;   restituisce l'indice del token dopo ';' */
+/* struct Name { fields } ;   returns the index of the token after ';' */
 static int parseStructDef(SL *sl, int i)
 {
 	StructDef *sd;
@@ -387,7 +387,7 @@ static int parseStructDef(SL *sl, int i)
 			return -1;
 		}
 		if (isTok(sl, i, "array")) {
-			/* array nome[N]... of tipo|Struct ; */
+			/* array name[N]... of type|Struct ; */
 			if (!isKind(sl, i + 1, K_ID)) { slError(sl, sl->toks[i].line, "Expected array field name.", NULL); return -1; }
 			snprintf(tmpl.name, sizeof(tmpl.name), "%s", sl->toks[i + 1].text);
 			i += 2;
@@ -414,7 +414,7 @@ static int parseStructDef(SL *sl, int i)
 			if (!isTok(sl, i, ";")) { slError(sl, sl->toks[i].line, "Expected ';' after field.", NULL); return -1; }
 			i++;
 		} else if (isKind(sl, i, K_ID) && (isTypeKw(sl->toks[i].text) || structFind(sl, sl->toks[i].text) >= 0)) {
-			/* tipo nome {, nome} ; */
+			/* type name {, name} ; */
 			char tyname[64];
 			snprintf(tyname, sizeof(tyname), "%s", sl->toks[i].text);
 			if (isTypeKw(tyname)) snprintf(tmpl.typ, sizeof(tmpl.typ), "%.15s", tyname);
@@ -425,7 +425,7 @@ static int parseStructDef(SL *sl, int i)
 				snprintf(tmpl.name, sizeof(tmpl.name), "%s", sl->toks[i].text);
 				i++;
 				if (isTok(sl, i, ",")) {
-					/* piu' campi dello stesso tipo: registra questo e continua */
+					/* multiple fields of the same type: register this one and continue */
 					int k;
 					for (k = 0; k < sd->nfields; k++)
 						if (strcmp(sd->fields[k].name, tmpl.name) == 0) { slError(sl, sl->toks[i].line, "Duplicate field", tmpl.name); return -1; }
@@ -478,7 +478,7 @@ static void funcAdd(SL *sl, const char *name, int retSid)
 	sl->nfuncs++;
 }
 
-/* Prima passata: individua e rimuove le definizioni di struct, e registra le funzioni di primo livello */
+/* First pass: detects and removes struct definitions, and registers top-level functions */
 static int prescan(SL *sl, int *removeFlags)
 {
 	int i = 0, depth = 0;
@@ -514,7 +514,7 @@ static int prescan(SL *sl, int *removeFlags)
 
 /* ---------------------------------------------------------------- utilita' sui token */
 
-/* indice del token ')' o ']' che chiude quello in i (che e' '(' o '['); -1 se non trovato */
+/* index of the ')' or ']' token closing the one at i (which is '(' or '['); -1 if not found */
 static int matchClose(const SL *sl, int i)
 {
 	int depth = 0, k;
@@ -543,7 +543,7 @@ static int newlinesBetween(const SL *sl, int a, int b)
 
 static void rewriteRange(SL *sl, int i0, int i1, Buf *out, int flat);
 
-/* riscrive il contenuto [a,b) in una stringa allocata (modo flat) */
+/* rewrites range [a,b) into an allocated string (flat mode) */
 static char *rewriteToString(SL *sl, int a, int b)
 {
 	Buf tmp;
@@ -563,7 +563,7 @@ static void pathFree(Path *p)
 	p->nidx = 0;
 }
 
-/* Analizza un percorso a partire da un identificatore che e' una variabile struct.
+/* Parses a path starting from an identifier that is a struct variable.
    Restituisce 0 in caso di errore (gia' segnalato). */
 static int parsePath(SL *sl, int i, int iend, Path *p)
 {
@@ -648,7 +648,7 @@ static int parsePath(SL *sl, int i, int iend, Path *p)
 	return 1;
 }
 
-/* testo di una foglia (o scalare/elemento) con gli indici del percorso */
+/* text of a leaf (or scalar/element) with the path indices */
 static void pathLeafText(const Path *p, Buf *out)
 {
 	int k;
@@ -660,7 +660,7 @@ static void pathLeafText(const Path *p, Buf *out)
 	}
 }
 
-/* espande una struct intera nell'elenco dei nomi delle foglie; ritorna il numero di foglie, -1 se errore */
+/* expands a whole struct into the list of leaf names; returns leaf count, -1 on error */
 static int expandWhole(SL *sl, const Path *p, char **names, int maxn, int forAssign)
 {
 	Leaf leaves[SL_MAXLEAVES];
@@ -700,13 +700,13 @@ static int expandWhole(SL *sl, const Path *p, char **names, int maxn, int forAss
 
 /* ---------------------------------------------------------------- chiamate */
 
-/* Riscrive gli argomenti di una chiamata: tok[open] = '(' ... tok[close] = ')'.
+/* Rewrites call arguments: tok[open] = '(' ... tok[close] = ')'.
    Le struct intere diventano l'elenco dei loro campi. */
 static int rewriteArgs(SL *sl, int open, int close, Buf *out, const char *extraLeading)
 {
 	int a = open + 1, first = 1;
 
-	if (extraLeading) { /* non usato */ }
+	if (extraLeading) { /* unused */ }
 	while (a < close) {
 		int b = a, depth = 0;
 		while (b < close) {
@@ -767,7 +767,7 @@ static void emitLeafDecl(Buf *out, const char *name, const Leaf *lf, char dims[]
 	bufStr(out, "; ");
 }
 
-/* dichiara una variabile struct (eventualmente array di struct) */
+/* declares a struct variable (optionally an array of structs) */
 static int emitStructVar(SL *sl, int line, const char *name, int sid, char dims[][16], int nd, Buf *out)
 {
 	Leaf leaves[SL_MAXLEAVES];
@@ -792,9 +792,7 @@ static int emitStructVar(SL *sl, int line, const char *name, int sid, char dims[
 	return 1;
 }
 
-/* ---------------------------------------------------------------- intestazioni di funzione */
-
-/* Riscrive "tipo nome(parametri)"; i = token del tipo di ritorno. Ritorna l'indice del token dopo ')'. */
+/* Rewrites "type name(parameters)"; i = return type token. Returns the index of the token after ')'. */
 static int rewriteFuncHeader(SL *sl, int i, Buf *out)
 {
 	int line = sl->toks[i].line;
@@ -848,7 +846,7 @@ static int rewriteFuncHeader(SL *sl, int i, Buf *out)
 		first = 0;
 
 		if (isTok(sl, j, "array")) {
-			/* array nome[]...[] of tipo */
+			/* array name[]...[] of type */
 			int sidP = -1;
 			isArr = 1;
 			if (!isKind(sl, j + 1, K_ID)) { slError(sl, line, "Expected array parameter name.", NULL); return -1; }
@@ -856,7 +854,7 @@ static int rewriteFuncHeader(SL *sl, int i, Buf *out)
 			j += 2;
 			while (isTok(sl, j, "[") && isTok(sl, j + 1, "]")) { ndimsP++; j += 2; }
 			if (!isTok(sl, j, "of") || !isKind(sl, j + 1, K_ID)) {
-				/* forma non riconosciuta: copia cosi' com'e', lascia l'errore al parser */
+				/* unrecognized form: copy verbatim, leave error reporting to the parser */
 				for (k = a; k < b; k++) { if (k > a) bufCh(out, ' '); bufStr(out, sl->toks[k].text); }
 				a = b + 1;
 				continue;
@@ -904,7 +902,7 @@ static int rewriteFuncHeader(SL *sl, int i, Buf *out)
 				if (k) bufStr(out, ", ");
 				if (lv[k].ndims > 0) {
 					int d;
-					/* campo array: sempre per riferimento, e la struct non puo' essere passata per valore */
+					/* array field: always by reference, and the struct cannot be passed by value */
 					if (!isRef) { slError(sl, line, "A struct with array fields can only be passed with 'ref', field", lv[k].suffix); return -1; }
 					bufStr(out, "array ");
 					bufStr(out, pname);
@@ -929,7 +927,7 @@ static int rewriteFuncHeader(SL *sl, int i, Buf *out)
 				sl->npending++;
 			}
 		} else {
-			/* parametro normale: copia verbatim; il nome e' l'ultimo identificatore */
+			/* regular parameter: copy verbatim; the name is the last identifier */
 			for (k = a; k < b; k++) { if (k > a) bufCh(out, ' '); bufStr(out, sl->toks[k].text); }
 			if (b - 1 >= a && sl->toks[b - 1].kind == K_ID && sl->npending < 64) {
 				snprintf(sl->pending[sl->npending].name, 64, "%s", sl->toks[b - 1].text);
@@ -977,7 +975,7 @@ static void emitTok(SL *sl, int i, Buf *out, int flat, int *first)
 	}
 }
 
-/* sostituisce i token [i, j) con il testo dato, conservando il numero di righe */
+/* replaces tokens [i, j) with the given text, preserving line count */
 static void emitReplacement(SL *sl, int i, int j, const char *text, Buf *out, int flat, int *first)
 {
 	if (flat) {
@@ -1023,7 +1021,7 @@ static void rewriteRange(SL *sl, int i0, int i1, Buf *out, int flat)
 			continue;
 		}
 
-		/* ---- intestazioni di funzione (livello piu' esterno) ---- */
+		/* ---- function headers (outermost level) ---- */
 		if (!flat && sl->nscopes == 1 && isKind(sl, i + 1, K_ID) && isTok(sl, i + 2, "(") &&
 		    (strcmp(t->text, "void") == 0 || isTypeKw(t->text) || structFind(sl, t->text) >= 0) &&
 		    !isReserved(sl->toks[i + 1].text)) {
@@ -1064,7 +1062,7 @@ static void rewriteRange(SL *sl, int i0, int i1, Buf *out, int flat)
 			continue;
 		}
 
-		/* ---- array di struct:  array v[N]... of Nome;  (e array normali: registra solo il nome) ---- */
+		/* ---- array of structs:  array v[N]... of Name;  (and regular arrays: register name only) ---- */
 		if (!flat && strcmp(t->text, "array") == 0 && isKind(sl, i + 1, K_ID)) {
 			int j = i + 2, nd = 0;
 			char dims[SL_MAXDIMS][16];
@@ -1091,7 +1089,7 @@ static void rewriteRange(SL *sl, int i0, int i1, Buf *out, int flat)
 			continue;
 		}
 
-		/* ---- dichiarazioni normali: registra i nomi (possono nascondere una struct) ---- */
+		/* ---- regular declarations: register names (may shadow a struct) ---- */
 		if (!flat && isTypeKw(t->text) && isKind(sl, i + 1, K_ID) && !isTok(sl, i + 2, "(")) {
 			int j = i + 1;
 			for (;;) {
@@ -1113,7 +1111,7 @@ static void rewriteRange(SL *sl, int i0, int i1, Buf *out, int flat)
 			continue;
 		}
 
-		/* ---- return di una struct ---- */
+		/* ---- struct return ---- */
 		if (!flat && strcmp(t->text, "return") == 0 && sl->curRetSid >= 0) {
 			Path p;
 			if (!isKind(sl, i + 1, K_ID) || !varLookup(sl, sl->toks[i + 1].text) ||
@@ -1155,7 +1153,7 @@ static void rewriteRange(SL *sl, int i0, int i1, Buf *out, int flat)
 			continue;
 		}
 
-		/* ---- percorso su una variabile struct ---- */
+		/* ---- path on a struct variable ---- */
 		{
 			VarEnt *v = varLookup(sl, t->text);
 			if (v && v->sid >= 0 && !(i > i0 && isTok(sl, i - 1, "."))) {
@@ -1171,7 +1169,7 @@ static void rewriteRange(SL *sl, int i0, int i1, Buf *out, int flat)
 					pathFree(&p);
 					continue;
 				}
-				/* struct intera: ammessa solo come  A = B;  o  A = f(...); */
+				/* whole struct: allowed only as  A = B;  or  A = f(...); */
 				if (!flat && isTok(sl, p.next, "=")) {
 					char *lhs[SL_MAXLEAVES];
 					int nlhs;
@@ -1219,7 +1217,7 @@ static void rewriteRange(SL *sl, int i0, int i1, Buf *out, int flat)
 							}
 							for (k = 0; k < nlhs; k++) {
 								if (k < nlv && lv[k].ndims > 0) {
-									/* campo array: copia elemento per elemento con cicli */
+									/* array field: copy element by element using loops */
 									for (d = 0; d < lv[k].ndims; d++) {
 										char nm[200];
 										snprintf(nm, sizeof(nm), "zz_k%d = 0; while (zz_k%d < %s) begin ", d, d, lv[k].dims[d]);
@@ -1302,7 +1300,7 @@ static void rewriteRange(SL *sl, int i0, int i1, Buf *out, int flat)
 			}
 		}
 
-		/* ---- chiamate di funzione ---- */
+		/* ---- function calls ---- */
 		if (isTok(sl, i + 1, "(") && !isReserved(t->text) && !varLookup(sl, t->text) && funcFindSl(sl, t->text) >= 0) {
 			int open = i + 1, close = matchClose(sl, open);
 			Buf call;
@@ -1370,7 +1368,7 @@ int structsLower(CompilerContext *ctx)
 	if (!removeFlags) { ok = 0; goto done; }
 	if (!prescan(sl, removeFlags)) { ok = 0; goto done; }
 
-	/* costruisce l'output saltando le definizioni di struct (conservando le righe) */
+	/* builds output skipping struct definitions (preserving line numbers) */
 	{
 		int k = 0;
 		sl->pos = 0;

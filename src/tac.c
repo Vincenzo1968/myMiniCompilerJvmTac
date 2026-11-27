@@ -123,7 +123,7 @@ static int isOneConst(CompilerContext *ctx, nodeType *n)
     return 0;
 }
 
-/* Vero se il sottoalbero contiene una chiamata di funzione (ha effetti collaterali). */
+/* True if the subtree contains a function call (has side effects). */
 static int astHasCall(const nodeType *n)
 {
     int i;
@@ -369,7 +369,7 @@ static char *emitTAC(CompilerContext *ctx, TACList *tac, Scope *pScope, nodeType
                 return NULL;
             }
             fd = &ctx->funcs[fi];
-            /* prima si valutano tutti gli argomenti per valore, poi si emettono i param
+            /* first evaluate all arguments by value, then emit param instructions
                consecutivi: una chiamata annidata non si infila tra due 'param' */
             for (i = 0; i < n && i < 32; i++) {
                 if (fd->params[i].t0 == T_ARRAY || fd->params[i].isRef)
@@ -605,7 +605,7 @@ static const char *envLookup(CompilerContext *ctx, const CopyEnv *env, const cha
 static void envSet(CompilerContext *ctx, CopyEnv *env, const char *var, const char *val)
 {
     int i;
-    /* Invalida vecchie mappature che definivano o usavano `var` */
+    /* Invalidate old mappings that defined or used `var` */
     for (i = 0; i < env->count; ) {
         if (strcmp(env->items[i].var, var) == 0 || strcmp(env->items[i].val, var) == 0) {
             free(env->items[i].var);
@@ -721,7 +721,7 @@ void tacOptimizeO1(CompilerContext *ctx, TACList *tac)
                         in->arg1 = tacStrdup(ctx, rep);
                         changed = 1;
                     }
-                    /* Semplifica salti con condizione costante */
+                    /* Simplify jumps with constant condition */
                     if (isBoolLit(ctx, in->arg1, &b1) ||
                         (isNumericLit(ctx, in->arg1, &d1, &i1) && ((b1 = (d1 != 0.0)), 1))) {
                         int takeJump = (in->op == TAC_IF_TRUE) ? b1 : !b1;
@@ -736,14 +736,14 @@ void tacOptimizeO1(CompilerContext *ctx, TACList *tac)
                 continue;
             }
 
-            /* una chiamata puo' leggere e scrivere globali e variabili passate per
+            /* a call may read and write globals and variables passed by
                riferimento: nessuna informazione sui valori sopravvive */
             if (in->op == TAC_CALL) {
                 envClear(ctx, &env);
                 if (in->res) envSet(ctx, &env, in->res, NULL);
                 continue;
             }
-            /* arg1 di param ref / param array e' il nome della variabile, non un valore */
+            /* arg1 of param ref / param array is the variable name, not a value */
             if (in->op == TAC_PARAM_REF || in->op == TAC_PARAM_ARR) {
                 envClear(ctx, &env);
                 continue;
@@ -808,7 +808,7 @@ void tacOptimizeO1(CompilerContext *ctx, TACList *tac)
                 }
             }
 
-            /* Semplificazioni algebriche sul TAC (es. x * 1 -> x, x + 0 -> x, x * 0 -> 0) */
+            /* Algebraic simplifications on TAC (e.g., x * 1 -> x, x + 0 -> x, x * 0 -> 0) */
             if (in->op == TAC_ADD || in->op == TAC_SUB) {
                 if (isNumericLit(ctx, in->arg2, &d2, &i2) && d2 == 0.0) {
                     free(in->arg2); in->arg2 = NULL;
@@ -928,7 +928,7 @@ void tacOptimizeO1(CompilerContext *ctx, TACList *tac)
     envFree(ctx, &env);
 }
 
-/* Stampa un operando; le stringhe letterali mostrano gli a capo, i tab ecc. come
+/* Prints an operand; string literals display newlines, tabs, etc. as
    sequenze di escape (\n, \t...) invece di spezzare la riga. Solo per la stampa:
    gli operandi memorizzati nel TAC restano invariati e i backend li leggono come prima. */
 static void tacPrintOperand(const char *s)
@@ -1013,7 +1013,7 @@ static int tacHasCall(const TACList *t)
     return 0;
 }
 
-/* Ottimizza un segmento (main o corpo di funzione) con il livello massimo sicuro:
+/* Optimizes a segment (main or function body) at the highest safe level:
    - parametri 'ref': due parametri possono riferirsi alla stessa variabile -> nessuna ottimizzazione;
    - parametri array o chiamate: alias / effetti collaterali invisibili ai passi globali -> al piu' -O1. */
 static void tacOptimizeSegment(CompilerContext *ctx, TACList *seg, int optLevel, int hasRef, int hasArr)
@@ -1036,7 +1036,7 @@ static void tacAppendMove(CompilerContext *ctx, TACList *dst, TACList *src)
     tacFree(ctx, src);
 }
 
-/* Dopo il blocco principale: ogni funzione definita, tra 'func' e 'endfunc'. */
+/* After the main block: each defined function, between 'func' and 'endfunc'. */
 static void tacEmitFunctions(CompilerContext *ctx, TACList *tac, Scope *pScope, int optLevel)
 {
     int i, j;
@@ -1223,7 +1223,7 @@ static void cfgBuild(CompilerContext *ctx, const TACList *tac, CFG *cfg)
             if (b + 1 < cfg->numBlocks) cfgAddEdge(ctx, cfg, b, b + 1);
             if (target >= 0) cfgAddEdge(ctx, cfg, b, target);
         } else if (last->op == TAC_RETURN) {
-            /* uscita dalla funzione: nessun successore */
+            /* function exit: no successors */
         } else {
             if (b + 1 < cfg->numBlocks) cfgAddEdge(ctx, cfg, b, b + 1);
         }
@@ -1347,7 +1347,7 @@ static void cseSimulateBlock(CompilerContext *ctx, const TACList *tac, const CFG
             }
         }
 
-        /* Se `in->res` viene scritto (non da STORE_IDX), uccide espressioni che lo usano */
+        /* If `in->res` is written (not via STORE_IDX), kill expressions using it */
         if (in->res && isScalarWriteOp(ctx, in->op)) {
             for (e = 0; e < numExprs; e++) {
                 if (!outSet[e]) continue;
@@ -1359,7 +1359,7 @@ static void cseSimulateBlock(CompilerContext *ctx, const TACList *tac, const CFG
             }
         }
 
-        /* Genera l'espressione solo se non e' gia' stata sostituita e `res` non coincide con gli argomenti */
+        /* Generate expression only if not already replaced and `res` does not alias arguments */
         if (!matched && isPureExprOp(ctx, in->op) && in->res && in->arg1) {
             if (strcmp(in->res, in->arg1) != 0 && (!in->arg2 || strcmp(in->res, in->arg2) != 0)) {
                 const char *c1, *c2;
@@ -1435,7 +1435,7 @@ static int cfgGlobalCSE(CompilerContext *ctx, TACList *tac, const CFG *cfg)
         return 0;
     }
 
-    /* Inizializzazione per intersezione: blocco 0 = vuoto, altri = TOP (tutti 1) */
+    /* Intersection initialization: block 0 = empty, others = TOP (all 1s) */
     memset(outSets, 0, (size_t)numExprs);
     if (cfg->numBlocks > 1) {
         memset(outSets + numExprs, 1, (size_t)(cfg->numBlocks - 1) * (size_t)numExprs);
@@ -1470,7 +1470,7 @@ static int cfgGlobalCSE(CompilerContext *ctx, TACList *tac, const CFG *cfg)
         }
     } while (dfChanged);
 
-    /* Riscrittura delle sottoespressioni comuni */
+    /* Common subexpression rewriting */
     for (b = 0; b < cfg->numBlocks; b++) {
         memcpy(curSet, inSets + (size_t)b * (size_t)numExprs, (size_t)numExprs);
         for (i = cfg->blocks[b].start; i <= cfg->blocks[b].end; i++) {
@@ -1645,7 +1645,7 @@ static void cfgComputeLiveness(CompilerContext *ctx, const TACList *tac, const C
 
             memset(outB, 0, (size_t)numVars);
             if (cfg->blocks[b].numSuccs == 0) {
-                /* blocco d'uscita: le globali sono osservabili da chi ha chiamato */
+                /* exit block: globals are observable by the caller */
                 for (v = 0; v < numVars; v++)
                     outB[v] = (unsigned char)tacIsEscaping(ctx, vars[v]);
             }
@@ -1734,7 +1734,7 @@ static int cfgGlobalLivenessDCE(CompilerContext *ctx, TACList *tac, const CFG *c
     return changed;
 }
 
-/* --- Global Constant Propagation (Dataflow su CFG per -O2) --- */
+/* --- Global Constant Propagation (CFG dataflow for -O2) --- */
 
 typedef enum {
     LAT_UNDEF = 0,
@@ -2311,7 +2311,7 @@ static int cfgLICM(CompilerContext *ctx, TACList *tac, const CFG *cfg)
         }
         if (!hasBackEdge) continue;
 
-        /* Raccogli tutti i blocchi del ciclo naturale camminando all'indietro */
+        /* Collect all blocks of the natural loop by walking backwards */
         while (top > 0) {
             int cur = stack[--top];
             int p;
@@ -2373,7 +2373,7 @@ static int cfgLICM(CompilerContext *ctx, TACList *tac, const CFG *cfg)
                 resId = findOrAddVar(ctx, &vars, &numVars, &numVars, in->res, 0);
                 if (resId < 0 || defInLoop[resId] != 1) continue;
 
-                /* Verifica che res non sia letto prima di `i` in `b` */
+                /* Check that res is not read before `i` in `b` */
                 safe = 1;
                 for (k = cfg->blocks[b].start; k < i; k++) {
                     const TACInstr *prev = &tac->items[k];
@@ -2387,7 +2387,7 @@ static int cfgLICM(CompilerContext *ctx, TACList *tac, const CFG *cfg)
                 }
                 if (!safe) continue;
 
-                /* `b` deve dominare tutti gli altri blocchi del ciclo che usano `res` */
+                /* `b` must dominate all other loop blocks that use `res` */
                 for (u = 0; u < n && safe; u++) {
                     if (!inLoop[u] || u == b) continue;
                     for (k = cfg->blocks[u].start; k <= cfg->blocks[u].end; k++) {
@@ -2405,7 +2405,7 @@ static int cfgLICM(CompilerContext *ctx, TACList *tac, const CFG *cfg)
                 }
                 if (!safe) continue;
 
-                /* Se `res` e' vivo all'uscita del ciclo, `b` deve dominare tutte le uscite */
+                /* If `res` is live at loop exit, `b` must dominate all exits */
                 if (liveAtExit[resId]) {
                     for (u = 0; u < n && safe; u++) {
                         int s, isExit = 0;
@@ -2440,7 +2440,7 @@ static int cfgLICM(CompilerContext *ctx, TACList *tac, const CFG *cfg)
             TACInstr *preIns = (TACInstr *)calloc((size_t)(1 + hoistCount), sizeof(TACInstr));
 
             if (preIns && hdrLabel && preLabel) {
-                /* Reindirizza i salti esterni diretti al ciclo verso `preLabel` */
+                /* Redirect external jumps targeting the loop to `preLabel` */
                 for (b = 0; b < n; b++) {
                     if (inLoop[b]) continue;
                     for (i = cfg->blocks[b].start; i <= cfg->blocks[b].end; i++) {
@@ -2495,7 +2495,7 @@ static int cfgLICM(CompilerContext *ctx, TACList *tac, const CFG *cfg)
     return 0;
 }
 
-/* --- Bounded Loop Unrolling (cicli piccoli con bound costante) --- */
+/* --- Bounded Loop Unrolling (small loops with constant bound) --- */
 
 static void tacCloneList(CompilerContext *ctx, const TACList *src, TACList *dst)
 {
@@ -2611,7 +2611,7 @@ static int tacTryUnrollFirstLoop(CompilerContext *ctx, TACList *tac)
         dom = cfgComputeDominators(ctx, &cfg);
         if (!dom) { cfgFree(ctx, &cfg); tacFree(ctx, &scratch); ctx->g_label = savedLabel; return 0; }
 
-        /* Cerca un ciclo `while` semplice e piccolo */
+        /* Search for a simple, small `while` loop */
         for (bH = 1; bH < n; bH++) {
             int backPred = -1, extPred = -1, valid = 1;
             int loopStartIdx, loopEndIdx;
@@ -2642,7 +2642,7 @@ static int tacTryUnrollFirstLoop(CompilerContext *ctx, TACList *tac)
             if (lastT->op != TAC_GOTO || !lastT->res ||
                 strcmp(lastT->res, scratch.items[loopStartIdx].res) != 0) continue;
             
-            /* Evita unrolling su cicli con I/O (read / print) */
+            /* Avoid unrolling loops containing I/O (read / print) */
             for (k = loopStartIdx; k <= loopEndIdx && valid; k++) {
                 TACOp op = scratch.items[k].op;
                 if (op == TAC_READ || op == TAC_PRINT) {
@@ -2651,7 +2651,7 @@ static int tacTryUnrollFirstLoop(CompilerContext *ctx, TACList *tac)
                 }
             }
             if (!valid) continue;
-             /* Nessun blocco esterno deve saltare dentro [bH+1 .. bT] */
+             /* No external block may jump into [bH+1 .. bT] */
             for (k = bH + 1; k <= bT && valid; k++) {
                 int p;
                 for (p = 0; p < cfg.blocks[k].numPreds; p++) {
@@ -2670,7 +2670,7 @@ static int tacTryUnrollFirstLoop(CompilerContext *ctx, TACList *tac)
             free(dom);
             cfgFree(ctx, &cfg);
             if (peel > 0) {
-                /* Il ciclo e' stato completamente eliminato! */
+                /* The loop has been completely eliminated! */
                 tacSwapLists(ctx, tac, &scratch);
                 tacFree(ctx, &scratch);
                 return 1;
@@ -2682,7 +2682,7 @@ static int tacTryUnrollFirstLoop(CompilerContext *ctx, TACList *tac)
             return 0;
         }
 
-        /* Valuta costanti lungo `bPrev` poi lungo `bH` fino al salto */
+        /* Evaluate constants along `bPrev` then along `bH` up to the branch */
         env.items = NULL; env.count = 0; env.capacity = 0;
         for (i = cfg.blocks[bPrev].start; i <= cfg.blocks[bPrev].end; i++) {
             const TACInstr *in = &scratch.items[i];
@@ -2707,7 +2707,7 @@ static int tacTryUnrollFirstLoop(CompilerContext *ctx, TACList *tac)
                     envSet(ctx, &env, in->res, NULL);
                 }
             } else {
-                condConst = -1; /* Istruzione con side effect in bH */
+                condConst = -1; /* Instruction with side effect in bH */
                 break;
             }
         }
@@ -2739,7 +2739,7 @@ static int tacTryUnrollFirstLoop(CompilerContext *ctx, TACList *tac)
         hdrLabel = scratch.items[cfg.blocks[bH].start].res;
 
         if (!condTrue) {
-            /* Condizione falsa all'ingresso del ciclo: salta all'uscita */
+            /* Condition false at loop entry: jump to exit */
             int hdrStart = cfg.blocks[bH].start;
             int hdrBodyCount = cfg.blocks[bH].end - hdrStart; /* esclude label e br */
             TACInstr *exitIns = (TACInstr *)calloc((size_t)hdrBodyCount + 1, sizeof(TACInstr));
@@ -2761,7 +2761,7 @@ static int tacTryUnrollFirstLoop(CompilerContext *ctx, TACList *tac)
             tacFree(ctx, &scratch);
             return 1;
         } else {
-            /* Condizione vera: srotola una iterazione prima di `bH` */
+            /* Condition true: unroll one iteration before `bH` */
             int hdrStart = cfg.blocks[bH].start;
             int bodyStart = hdrStart + 1;
             int bodyEnd = cfg.blocks[bT].end - 1; /* esclude goto hdrLabel finale */
@@ -2781,7 +2781,7 @@ static int tacTryUnrollFirstLoop(CompilerContext *ctx, TACList *tac)
 
             if (peeled) {
                 for (i = bodyStart; i <= bodyEnd; i++) {
-                    if (i == cfg.blocks[bH].end) continue; /* salta il check noto vero */
+                    if (i == cfg.blocks[bH].end) continue; /* skip check known to be true */
                     peeled[w] = scratch.items[i];
                     if (peeled[w].op == TAC_LABEL || peeled[w].op == TAC_GOTO ||
                         peeled[w].op == TAC_IF_FALSE || peeled[w].op == TAC_IF_TRUE) {
@@ -2814,7 +2814,7 @@ static int tacLinearIVSR(CompilerContext *ctx, TACList *tac)
     for (i = 0; i < tac->count; i++) {
         if (tac->items[i].dead || tac->items[i].op != TAC_LABEL) continue;
 
-        /* 1. Trova la fine del loop (il goto che punta alla label) */
+        /* 1. Find the end of the loop (the goto jumping to the label) */
         int end = -1;
         for (j = i + 1; j < tac->count; j++) {
             if (tac->items[j].dead) continue;
@@ -2825,7 +2825,7 @@ static int tacLinearIVSR(CompilerContext *ctx, TACList *tac)
         }
         if (end == -1) continue;
 
-        /* Solo cicli innermost "semplici": nessuna label o salto incondizionato nel corpo
+        /* Only "simple" innermost loops: no labels or unconditional jumps in the body
            (altrimenti si scambierebbe l'induzione di un ciclo interno per quella di questo) */
         {
             int simple = 1;
@@ -2838,7 +2838,7 @@ static int tacLinearIVSR(CompilerContext *ctx, TACList *tac)
             if (!simple) continue;
         }
 
-        /* 2. Trova la variabile di induzione (BIV), es: t7 = i + 1; i = t7 */
+        /* 2. Find the basic induction variable (BIV), e.g.: t7 = i + 1; i = t7 */
         char *biv = NULL;
         int step = 0;
         int biv_update_idx = -1;
@@ -2871,7 +2871,7 @@ static int tacLinearIVSR(CompilerContext *ctx, TACList *tac)
         }
 
         if (biv) {
-            /* 3. Trova un uso del tipo t = i * c o t = i + i */
+            /* 3. Find a use of the form t = i * c or t = i + i */
             for (k = i + 1; k < end; k++) {
                 TACInstr *in = &tac->items[k];
                 if (in->dead) continue;
@@ -2884,7 +2884,7 @@ static int tacLinearIVSR(CompilerContext *ctx, TACList *tac)
                     else if (strcmp(in->arg2, biv) == 0 && isNumericLit(ctx, in->arg1, &d, &isInt)) { match = 1; c = d; }
                 } else if (in->op == TAC_ADD && in->arg1 && in->arg2) {
                     if (strcmp(in->arg1, biv) == 0 && strcmp(in->arg2, biv) == 0) {
-                        match = 1; c = 2; /* i + i equivale a i * 2 */
+                        match = 1; c = 2; /* i + i is equivalent to i * 2 */
                     }
                 }
 
@@ -2893,7 +2893,7 @@ static int tacLinearIVSR(CompilerContext *ctx, TACList *tac)
                     char buf[64];
                     TACInstr init, update;
 
-                    /* A. Inizializza acc prima del loop: acc = biv * c */
+                    /* A. Initialize acc before the loop: acc = biv * c */
                     init.op = TAC_MUL;
                     init.arg1 = biv;
                     sprintf(buf, "%g", c);
@@ -2902,17 +2902,17 @@ static int tacLinearIVSR(CompilerContext *ctx, TACList *tac)
                     init.type1 = T_INTEGER;
                     tacInsertInstructions(ctx, tac, i, &init, 1);
 
-                    /* Aggiorna gli indici per l'inserimento */
+                    /* Update indices for insertion */
                     i++; end++; k++; biv_update_idx++;
 
-                    /* B. Sostituisci t = biv * c con t = acc */
+                    /* B. Replace t = biv * c with t = acc */
                     in = &tac->items[k]; /* BUGFIX: RIFETCH FONDAMENTALE DOPO REALLOC! */
                     free(in->arg1); free(in->arg2);
                     in->op = TAC_ASSIGN;
                     in->arg1 = tacStrdup(ctx, acc);
                     in->arg2 = NULL;
 
-                    /* C. Aggiorna acc dopo l'incremento del BIV: acc = acc + step * c */
+                    /* C. Update acc after BIV increment: acc = acc + step * c */
                     update.op = (step >= 0) ? TAC_ADD : TAC_SUB;
                     update.arg1 = acc;
 

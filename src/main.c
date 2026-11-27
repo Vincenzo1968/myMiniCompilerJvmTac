@@ -314,7 +314,7 @@ static void interpExitBlock(CompilerContext *ctx, nodeType *blockNode)
 	scopePop(ctx, &ctx->interpScope);
 }
 
-/* Una concatenazione di stringhe o la chiamata di una funzione che restituisce una stringa
+/* A string concatenation or a call to a function returning a string
    producono un buffer nuovo, di cui deve farsi carico chi consuma il risultato (print, un'altra
    concatenazione, un'assegnazione). Costanti e variabili restituiscono invece un puntatore
    preso in prestito. */
@@ -326,7 +326,7 @@ static int isFreshString(const nodeType *n)
 
 Valore interpret(CompilerContext *ctx, nodeType *p);
 
-/* Esegue un'istruzione scartandone il valore (libera una stringa restituita da una chiamata). */
+/* Executes a statement discarding its value (frees a string returned by a call). */
 static void interpDiscard(CompilerContext *ctx, nodeType *p)
 {
 	Valore r = interpret(ctx, p);
@@ -338,7 +338,7 @@ static void interpDiscard(CompilerContext *ctx, nodeType *p)
    (livello 1, dove interpInitGlobalScope inserisce le variabili globali). */
 #define INTERP_GLOBAL_LEVEL 1
 
-/* Chiamata di funzione: argomenti valutati nello scope del chiamante, poi un frame nuovo che
+/* Function call: arguments evaluated in the caller's scope, then a new frame that
    vede solo lo scope globale e i propri parametri. I parametri 'ref' scalari sono passati
    per copia-ritorno (valore finale riscritto nella variabile del chiamante); gli array
    condividono il vettore del chiamante. */
@@ -367,7 +367,7 @@ static Valore interpCall(CompilerContext *ctx, nodeType *p)
 	fd = &ctx->funcs[fi];
 	np = fd->nparams;
 
-	/* 1. argomenti, nello scope del chiamante */
+	/* 1. arguments, in the caller's scope */
 	for (i = 0; i < np; i++)
 	{
 		FuncParam *fp = &fd->params[i];
@@ -403,7 +403,7 @@ static Valore interpCall(CompilerContext *ctx, nodeType *p)
 		}
 	}
 
-	/* 2. il chiamante resta in 'saved'; il frame vede solo gli scope globali (livelli 0 e 1) */
+	/* 2. caller stays in 'saved'; the frame sees only global scopes (levels 0 and 1) */
 	callerTop = ctx->interpScope.top;
 	nSaved = callerTop - INTERP_GLOBAL_LEVEL;
 	if (nSaved > 0)
@@ -434,7 +434,7 @@ static Valore interpCall(CompilerContext *ctx, nodeType *p)
 	ctx->interpReturning = 0;
 	interpret(ctx, fd->body);
 
-	/* 4. risultati: valori finali dei 'ref', staccamento degli array condivisi */
+	/* 4. results: final values of 'ref' params, detaching shared arrays */
 	for (i = 0; i < np; i++)
 	{
 		FuncParam *fp = &fd->params[i];
@@ -458,7 +458,7 @@ static Valore interpCall(CompilerContext *ctx, nodeType *p)
 	}
 	ctx->interpScope.top = callerTop;
 
-	/* 5. riscrittura dei 'ref' nelle variabili del chiamante */
+	/* 5. write-back of 'ref' params into caller's variables */
 	for (i = 0; i < np; i++)
 	{
 		FuncParam *fp = &fd->params[i];
@@ -466,7 +466,7 @@ static Valore interpCall(CompilerContext *ctx, nodeType *p)
 			scopeUpdateValue(ctx, &ctx->interpScope, p->opr.op[i + 1]->id.name, T_SIMPLE, fp->t1, T_VAR, args[i], 1, 0);
 	}
 
-	/* 6. valore di ritorno, convertito al tipo della funzione */
+	/* 6. return value, converted to the function's return type */
 	if (fd->isVoid)
 	{
 		ctx->interpReturning = 0;
@@ -600,7 +600,7 @@ Valore interpret(CompilerContext *ctx, nodeType *p)
 				{
 					retVal = interpret(ctx, p->opr.op[0]);
 					ctx->interpRetType = ctx->g_t1;
-					/* il buffer di una stringa deve sopravvivere allo scope della funzione */
+					/* a string buffer must outlive the function scope */
 					if (p->opr.op[0]->type1 == T_STRING && !isFreshString(p->opr.op[0]))
 						retVal.strVal = strdup(retVal.strVal ? retVal.strVal : "");
 				}
@@ -805,7 +805,7 @@ Valore interpret(CompilerContext *ctx, nodeType *p)
 				{
 					retVal = leftVal;
 
-					/* Stringa proveniente da una costante o da una variabile: lo scope deve possederne
+					/* String coming from a constant or variable: the scope must own
 					   una copia, altrimenti lo stesso buffer verrebbe liberato sia da freeNode (AST o
 					   altra variabile) sia da htFree. Il risultato di un'espressione (es. concatenazione)
 					   e' gia' un buffer nuovo: lo prende lo scope. */
@@ -819,7 +819,7 @@ Valore interpret(CompilerContext *ctx, nodeType *p)
 						}
 					}
 				}
-				/* per gli array l'elemento e' gia' stato scritto sul posto: lo scope tiene il suo storage */
+				/* for arrays the element is already written in place: the scope keeps its storage */
 					if (p->opr.op[0]->type0 != T_ARRAY)
 					scopeUpdateValue(ctx, &ctx->interpScope,
 								p->opr.op[0]->id.name,
@@ -848,7 +848,7 @@ Valore interpret(CompilerContext *ctx, nodeType *p)
 				leftVal = interpret(ctx, p->opr.op[0]);
 				rightVal = interpret(ctx, p->opr.op[1]);
 				retVal = BinopValue(ctx, T_OP_PLUS, p->opr.op[0]->type1, leftVal, p->opr.op[1]->type1, rightVal);
-				/* i temporanei della concatenazione sono stati copiati in retVal: vanno liberati */
+				/* concatenation temporaries have been copied into retVal: they must be freed */
 				if (isFreshString(p->opr.op[0]))
 					free(leftVal.strVal);
 				if (isFreshString(p->opr.op[1]))
@@ -1398,27 +1398,27 @@ int main(int argc, char **argv)
 		}
 		else if ( gen_x86_64 ) 
 		{
-			// 1. Gestione locale della TACList (esattamente come fa jvm.c)
+			// 1. Local management of TACList (just like jvm.c does)
 			TACList tac;
 			tacInit(&ctx, &tac);
 			tacBuild(&ctx, &pTree, &ctx.g_Scope, optLevel, &tac);
 			
-			// 2. Estrazione del nome base dal file di input (es. "test.prg" -> "test")
+			// 2. Extract base name from input file (e.g., "test.prg" -> "test")
 			char base_name[256];
-			strncpy(base_name, argv[1], sizeof(base_name) - 5); // Lascia spazio per ".asm" e '\0'
+			strncpy(base_name, argv[1], sizeof(base_name) - 5); // Leave room for ".asm" and '\0'
 			base_name[sizeof(base_name) - 5] = '\0';
 			char *dot = strrchr(base_name, '.');
 			if (dot) *dot = '\0'; // Rimuove l'estensione
 
-			// 3. Generazione del file .asm (dimensione 260 per evitare warning di troncamento)
+			// 3. Generate .asm file (size 260 to avoid truncation warnings)
 			char out_file[260]; 
 			snprintf(out_file, sizeof(out_file), "%s.asm", base_name);
 			
-			// 4. Chiamata al backend
+			// 4. Call backend
 			x86_64Generate(&ctx, &tac, &ctx.g_Scope, out_file);
 			printf("Assembly code successfully generated in: %s\n", out_file);
 			
-			// 5. Pulizia della memoria
+			// 5. Clean up memory
 			tacFree(&ctx, &tac);
 		}
 		else

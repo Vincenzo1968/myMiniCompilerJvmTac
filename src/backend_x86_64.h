@@ -6,14 +6,14 @@
 #include "symtab.h"
 
 /* =========================================================================
- * Strutture per la mappatura delle variabili
+ * Structures for variable mapping
  * ========================================================================= */
 
-/* Dove vive una variabile:
- *   SLOT_FRAME    nello stack frame della funzione (offset da rbp; positivo per gli argomenti)
- *   SLOT_GLOBAL   in memoria statica (.bss), etichetta g_<nome>
- *   SLOT_REFPARAM parametro 'ref': lo slot contiene l'indirizzo della variabile del chiamante
- *   SLOT_ARRPARAM parametro array: lo slot contiene l'indirizzo base dell'array del chiamante */
+/* Where a variable lives:
+ *   SLOT_FRAME    in the function stack frame (offset from rbp; positive for arguments)
+ *   SLOT_GLOBAL   in static memory (.bss), label g_<name>
+ *   SLOT_REFPARAM 'ref' parameter: the slot holds the address of the caller's variable
+ *   SLOT_ARRPARAM array parameter: the slot holds the base address of the caller's array */
 enum { SLOT_FRAME = 0, SLOT_GLOBAL, SLOT_REFPARAM, SLOT_ARRPARAM };
 
 typedef struct {
@@ -23,7 +23,7 @@ typedef struct {
     int kind;          // SLOT_*
 } VarSlot;
 
-/* Variabili globali: condivise da tutte le funzioni. */
+/* Global variables: shared across all functions. */
 typedef struct {
     char *name;
     enumTipo1 type1;
@@ -34,7 +34,7 @@ typedef struct {
     GlobalVar *items;
     int count;
     int capacity;
-    int lbl;           // contatore per le label locali (.Lnn), unico in tutto il file
+    int lbl;           // counter for local labels (.Lnn), unique across the file
 } GlobalTable;
 
 typedef struct {
@@ -46,7 +46,7 @@ typedef struct {
 } VarTable;
 
 /* 
- * Genera il codice assembly x86_64 (sintassi NASM) a partire dal TAC.
+ * Generates x86_64 assembly code (NASM syntax) from TAC.
  * Il file di output potrà essere assemblato e linkato con:
  *   nasm -f elf64 output.asm -o output.o
  *   gcc -no-pie -o executable output.o

@@ -485,7 +485,7 @@ char *I_Set[256] =
 typedef struct tag_jvmHashTable
 {
 	char *Key;
-	unsigned short c; // indice constant pool table
+	unsigned short c; // constant pool table index
 	struct tag_jvmHashTable *next;
 } jvmHashTable;
 

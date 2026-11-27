@@ -21,7 +21,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 #include "context.h"
 
-/* Riscrive il sorgente in ctx->g_szInput eliminando le struct (vedi structs.c).
+/* Rewrites the source in ctx->g_szInput eliminating structs (see structs.c).
    Restituisce 1 se tutto e' andato bene (anche se il programma non usa struct), 0 in caso di errore. */
 int structsLower(CompilerContext *ctx);
 

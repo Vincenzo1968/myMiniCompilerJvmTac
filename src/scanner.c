@@ -104,8 +104,8 @@ void FreeInputbuffer(CompilerContext *ctx)
 	}
 }
 
-// True se il token possiede una Value.vString allocata con malloc.
-// Nota: anche le keyword (T_KW_*) passano dallo stato S1 e allocano vString.
+// True if the token owns a malloc-allocated Value.vString.
+// Note: keywords (T_KW_*) also pass through state S1 and allocate vString.
 static int tokenOwnsString(CompilerContext *ctx, TokenTypeEnum t)
 {
 	(void)ctx;
@@ -126,7 +126,7 @@ static int tokenOwnsString(CompilerContext *ctx, TokenTypeEnum t)
 
 int PeekIsFunctionDecl(CompilerContext *ctx)
 {
-	/* salva lo stato dello scanner, legge due token e lo ripristina */
+	/* saves scanner state, reads two tokens, and restores it */
 	int savedPos = ctx->g_pos, savedLine = ctx->g_line, savedCol = ctx->g_column, savedDepth = ctx->g_depth;
 	Token t;
 	int res = 0;
@@ -165,7 +165,7 @@ void GetNextToken(CompilerContext *ctx, Token *pToken)
 
 	if ( tokenOwnsString(ctx, pToken->Type) && pToken->Value.vString != NULL )
 		free(pToken->Value.vString);
-	pToken->Value.vString = NULL;   // azzera sempre la union prima di riempirla 
+	pToken->Value.vString = NULL;   // always zero out the union before filling it 
 
 	c = *(ctx->g_szInput + ctx->g_pos);
 
@@ -355,7 +355,7 @@ void GetNextToken(CompilerContext *ctx, Token *pToken)
 			{
 				lexeme[k++] = c;
 			}
-			else if ( c == '_' || c == '$' ) /* '$' compare solo nei nomi generati per i campi delle struct */
+			else if ( c == '_' || c == '$' ) /* '$' appears only in generated names for struct fields */
 			{
 				lexeme[k++] = c;
 			}
@@ -745,7 +745,7 @@ void GetNextToken(CompilerContext *ctx, Token *pToken)
 			}
 			break;
 		case S18:
-			if ( c == '/' ) // Commento fino a fine riga
+			if ( c == '/' ) // Comment to end of line
 			{
 				state = S19;
 			}

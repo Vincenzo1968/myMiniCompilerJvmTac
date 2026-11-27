@@ -295,22 +295,21 @@ gcc -no-pie -o prg_test/test_gcp_exec prg_test/test_gcp.o
 ```text
 10
 ```
-
 ### 4. Syntax & Semantic Error Reporting
 
 The parser handles diagnostics by line and column and recovers from errors without generating cascading false positives.
 
 ```bash
-src/myCompiler prg_test/test_error_recovery.prg
+src/myCompiler prg_test/test_error_recovery_01.prg
 ```
 
 ```text
-Linea 6 Colonna 2: Errore stmt. Atteso semicolon ';'.
-Linea 8 Colonna 26: Errore expr4. Identificatore 'variabile_sconosciuta' non dichiarato.
-Linea 11 Colonna 2: Errore stmt. Non si puo' assegnare una valore di tipo string ad una variabile di tipo int.
-Linea 14 Colonna 3: Errore stmt. Attesa parentesi ')'.
-Linea 17 Colonna 6: Errore. Token inattesi dopo la fine del programma.
-Errori: 4
+Line 6 Column 2: Statement error. Expected semicolon ';'.
+Line 8 Column 26: Expression error. Identifier 'variabile_sconosciuta' not declared.
+Line 11 Column 2: Statement error. Cannot assign a string value to a variable of type int.
+Line 14 Column 3: Statement error. Expected ')'.
+Line 17 Column 6: Error. Unexpected tokens after end of program.
+Errors: 4
 Warnings: 0
 ```
 

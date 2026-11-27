@@ -78,7 +78,7 @@ expr4 : T_INT_LITERAL
 
 
 
-/* Helper per creare una copia wrapper di ArrayDef per un nodo AST */
+/* Helper to create a wrapper copy of ArrayDef for an AST node */
 static int allocArrayDefWrapper(CompilerContext *ctx, const HashTable *pHT, Valore *pOutVal)
 {
     ArrayDef *pArr = (ArrayDef*)malloc(sizeof(ArrayDef));
@@ -110,7 +110,7 @@ static int allocArrayDefWrapper(CompilerContext *ctx, const HashTable *pHT, Valo
     return 1;
 }
 
-/* Libera un wrapper ArrayDef (inclusi eventuali indici gia' assegnati) */
+/* Frees an ArrayDef wrapper (including any already-assigned indices) */
 static void freeArrayDefWrapper(CompilerContext *ctx, Valore *pVal)
 {
     int i;
@@ -135,7 +135,7 @@ static void freeArrayDefWrapper(CompilerContext *ctx, Valore *pVal)
     pVal->pArrayDef = NULL;
 }
 
-/* Rimuove dallo stack i nodi creati durante l'analisi degli indici array */
+/* Removes nodes created during array index parsing from the stack */
 static void popArrayIndexNodes(CompilerContext *ctx, int count)
 {
     while ( count > 0 && ctx->g_top >= 0 )
@@ -145,7 +145,7 @@ static void popArrayIndexNodes(CompilerContext *ctx, int count)
     }
 }
 
-// Token che possono iniziare una istruzione (FIRST(stmt)). 
+// Tokens that can start a statement (FIRST(stmt)). 
 static int isStmtStart(CompilerContext *ctx, int t)
 {
 	(void)ctx;
@@ -154,7 +154,7 @@ static int isStmtStart(CompilerContext *ctx, int t)
            t == T_KW_RETURN || t == T_ID;
 }
 
-/* Gestisce il ';' finale di uno statement: se manca ma il token corrente
+/* Handles the trailing ';' of a statement: if missing, checks current token
    e' gia' l'inizio di una nuova istruzione o la fine di un blocco,
    recupera senza mangiare il token successivo. */
 static int expectStmtSemicolon(CompilerContext *ctx)
@@ -222,7 +222,7 @@ int Parse(CompilerContext *ctx, char *szFileName, nodeType **pTree, int genTAC, 
     if ( !LeggiFile(ctx, szFileName) )
         return 0;
 
-    /* le struct vengono eliminate riscrivendo il sorgente (vedi structs.c) */
+    /* structs are eliminated by rewriting the source (see structs.c) */
     if ( !structsLower(ctx) )
     {
         FreeInputbuffer(ctx);
@@ -233,10 +233,10 @@ int Parse(CompilerContext *ctx, char *szFileName, nodeType **pTree, int genTAC, 
 
     GetNextToken(ctx, &ctx->g_Token);
 
-    /* Un programma = dichiarazioni + un solo blocco begin...end. */
+    /* A program = declarations + a single begin...end block. */
     ret = program(ctx);
 
-    /* Parsing riuscito ma token residui: codice fuori dal programma. */
+    /* Parsing succeeded with leftover tokens: code outside the program. */
     if ( ret && ctx->g_Token.Type != T_EOF )
     {
         printf("Line %d Column %d: Error. Unexpected tokens after end of program.\n",
@@ -245,14 +245,14 @@ int Parse(CompilerContext *ctx, char *szFileName, nodeType **pTree, int genTAC, 
         ret = 0;
     }
 
-    /* Svuota il buffer fino a EOF (mai oltre: dopo EOF lo scanner
+    /* Flushes the buffer up to EOF (never past it: after EOF the scanner
        restituirebbe T_ERROR all'infinito). */
     while ( ctx->g_Token.Type != T_EOF )
         GetNextToken(ctx, &ctx->g_Token);
 
     FreeInputbuffer(ctx);
 
-    /* Se program() ha fallito, garantisce almeno un errore conteggiato:
+    /* If program() failed, ensures at least one counted error:
        evita ret=1 con stack vuoto (lettura di g_stack[-1]). */
     if ( !ret && ctx->g_numErrors == 0 )
         ctx->g_numErrors++;
@@ -268,7 +268,7 @@ int Parse(CompilerContext *ctx, char *szFileName, nodeType **pTree, int genTAC, 
         while ( ctx->g_top >= 0 )
         {
             freeNode(ctx, ctx->g_stack[ctx->g_top]);   // freeNode(NULL) e' sicuro 
-            ctx->g_top--;                    // decremento SEMPRE, anche se NULL 
+            ctx->g_top--;                    // ALWAYS decrement, even if NULL 
         }
     }
     else
@@ -292,7 +292,7 @@ int match(CompilerContext *ctx, TokenTypeEnum ExpectedToken)
 	//	exit(1);
 	//}
 
-	//printf("Linea %d Colonna %d: Errore di sintassi\n", g_Token.line, g_Token.column);
+	//printf("Line %d Column %d: Syntax error\n", g_Token.line, g_Token.column);
 
 	return 0;
 }
@@ -458,7 +458,7 @@ int TypeCheck(CompilerContext *ctx, Valore *value, const Token *pToken)
 
 static int argCompat(enumTipo1 param, enumTipo1 arg)
 {
-	/* 0 = errore, 1 = ok, 2 = ok con warning (perdita di dati) */
+	/* 0 = error, 1 = ok, 2 = ok with warning (data loss) */
 	if ( param == arg )
 		return 1;
 	if ( param == T_REAL && arg == T_INTEGER )
@@ -635,7 +635,7 @@ fail:
 	return 0;
 }
 
-/* prototipo : header ';'   (ammesso solo prima del blocco principale) */
+/* prototype : header ';'   (allowed only before the main block) */
 static int parseFuncPrototype(CompilerContext *ctx)
 {
 	char name[256];
@@ -683,7 +683,7 @@ static int parseFuncPrototype(CompilerContext *ctx)
 	return 1;
 }
 
-/* definizione : header code_block   (dopo il blocco principale) */
+/* definition : header code_block   (after the main block) */
 static int parseFuncDefinition(CompilerContext *ctx)
 {
 	char name[256];
@@ -717,7 +717,7 @@ static int parseFuncDefinition(CompilerContext *ctx)
 			ctx->g_numErrors++;
 			return 0;
 		}
-		/* i parametri vengono presi dal prototipo (stessa firma) */
+		/* parameters are taken from the prototype (same signature) */
 	}
 	else
 	{
@@ -736,7 +736,7 @@ static int parseFuncDefinition(CompilerContext *ctx)
 		}
 	}
 
-	/* scope dei parametri; il corpo (code_block) apre il proprio scope per le variabili locali */
+	/* parameter scope; the body (code_block) opens its own scope for local variables */
 	ctx->g_curFunc = idx;
 	scopePush(ctx, &ctx->g_Scope);
 	for ( i = 0; i < ctx->funcs[idx].nparams; i++ )
@@ -777,7 +777,7 @@ static int parseFuncDefinition(CompilerContext *ctx)
 	return 1;
 }
 
-/* Chiamata: T_ID '(' [arg {',' arg}] ')'. Lascia il nodo T_FUNC_CALL in cima a g_stack.
+/* Call: T_ID '(' [arg {',' arg}] ')'. Leaves the T_FUNC_CALL node on top of g_stack.
    op[0] = id con il nome (type1 = tipo di ritorno), op[1..] = argomenti.
    Per un parametro 'ref' l'argomento e' un id scalare; per un array e' un id array senza indici. */
 static int parseCall(CompilerContext *ctx)
@@ -864,7 +864,7 @@ static int parseCall(CompilerContext *ctx)
 					ctx->g_numErrors++;
 					goto fail;
 				}
-				/* un parametro 'ref' puo' essere anche solo scritto: la variabile risulta inizializzata */
+				/* a 'ref' parameter may also be write-only: the variable is marked as initialized */
 				scopeUpdateValue(ctx, &ctx->g_Scope, ht.Key, ht.Tipo0, ht.Tipo1, ht.Tipo2, ht.Value, 1, -1);
 				ops[nops++] = id(ctx, ctx->g_Token.Value.vString, ht.uniqueName, T_SIMPLE, ht.Tipo1, ht.Tipo2, ht.Value, 1);
 			}
@@ -962,7 +962,7 @@ static void interpRecordDecl(CompilerContext *ctx, const char *name, enumTipo0 t
 
 int decl_list(CompilerContext *ctx)
 {
-	/* i prototipi sono ammessi solo nel livello piu' esterno, prima del blocco principale */
+	/* prototypes are allowed only at the outermost level, before the main block */
 	while ( ctx->g_Token.Type == T_KW_ARRAY ||
 		ctx->g_Token.Type == T_KW_INT ||
 		ctx->g_Token.Type == T_KW_REAL ||
@@ -1247,7 +1247,7 @@ int decl(CompilerContext *ctx)
 		scopeInsert(ctx, &ctx->g_Scope, token.Value.vString, T_ARRAY, ctx->g_currType, T_VAR, value, 0, ctx->g_NextFrameIndex);
 		scopeAssignUniqueName(ctx, &ctx->g_Scope, token.Value.vString);
 		{
-			/* l'interprete ha il suo scope: gli registro una copia dell'array */
+			/* the interpreter has its own scope: register a copy of the array for it */
 			Valore rv = value;
 			rv.pArrayDef = arrayDefClone(value.pArrayDef, (enumTipo1)ctx->g_currType);
 			interpRecordDecl(ctx, token.Value.vString, T_ARRAY, (enumTipo1)ctx->g_currType, T_VAR, rv, 0);
@@ -1343,7 +1343,7 @@ static void interpRecordDecl(CompilerContext *ctx,
 	}
 }
 
-/* Un inizializzatore di dichiarazione ("int x = 8;") diventa un normale nodo
+/* A declaration initializer ("int x = 8;") becomes a normal AST node
    di assegnazione nell'AST: cosi' finisce nel TAC al punto giusto (anche dentro
    un ciclo) ed e' soggetto agli stessi passi di ottimizzazione, invece di essere
    stampato a parse-time o letto dalla symtab dai singoli backend. */
@@ -1413,7 +1413,7 @@ static void addDeclInitNode(CompilerContext *ctx, const char *name, enumTipo1 t1
 	ctx->g_initNodes[ctx->g_initCount++] = assign;
 }
 
-/* Antepone allo stmt_list appena parsato (in cima a g_stack) le assegnazioni degli
+/* Prepends assignments from declaration initializers to the newly parsed stmt_list (top of g_stack)
    inizializzatori dichiarati da startIdx in poi. */
 static void attachDeclInits(CompilerContext *ctx, int startIdx)
 {
@@ -1570,13 +1570,13 @@ int code_block(CompilerContext *ctx)
     prevBlock = ctx->interpDecls.currentBlockId;
     myBlockId = interpBeginBlockRecord(ctx);
 
-    /* blocco piu' esterno (prevBlock == -1): include anche gli inizializzatori
+    /* outermost block (prevBlock == -1): also includes initializers
        delle dichiarazioni globali, parsate prima di entrare qui. */
     initStart = (prevBlock == -1) ? 0 : ctx->g_initCount;
 
     scopePush(ctx, &ctx->g_Scope);
     decl_list(ctx);
-    stmt_list(ctx);   // gestisce i propri errori e ritorna sempre 1
+    stmt_list(ctx);   // handles its own errors and always returns 1
     attachDeclInits(ctx, initStart);
     scopePopKeep(ctx, &ctx->g_Scope);
 
@@ -1629,7 +1629,7 @@ int stmt_list(CompilerContext *ctx)
                  ctx->g_Token.Type == T_EOF )
                 break;
 
-            /* Se stmt() non ha consumato nulla (es. identificatore non dichiarato
+            /* If stmt() consumed nothing (e.g., undeclared identifier
                o atteso '='), consumiamo il token errato se non e' gia' un nuovo
                stmtStart diverso da quello iniziale. */
             if ( ctx->g_Token.line == startLine && ctx->g_Token.column == startColumn )
@@ -1955,7 +1955,7 @@ int stmt(CompilerContext *ctx)
 		if ( !scopeFind(ctx, &ctx->g_Scope, ctx->g_Token.Value.vString, &hashTable) &&
 		     funcFind(ctx, ctx->g_Token.Value.vString) >= 0 )
 		{
-			/* chiamata di funzione usata come istruzione */
+			/* function call used as a statement */
 			if ( !parseCall(ctx) )
 				return 0;
 			if ( !expectStmtSemicolon(ctx) )
