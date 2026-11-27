@@ -898,6 +898,64 @@ void MakeBytecodeDeclInitMain(CompilerContext *ctx, jvmHashTable **pHT, Scope *p
 
 /* ---------------- Traduzione TAC -> Bytecode JVM ---------------- */
 
+/* ---------------- Funzioni, globali e segmenti (fase 3) ---------------- */
+
+enum { VK_LOCAL = 0, VK_STATIC, VK_REF };
+
+typedef struct {
+	int kind;            /* VK_LOCAL: slot locale; VK_STATIC: campo statico; VK_REF: array di 1 elemento nello slot */
+	int slot;
+	enumTipo1 type1;     /* tipo scalare o tipo degli elementi se isArray */
+	int isArray;
+	const char *name;
+} VarRef;
+
+typedef struct {
+	char *name;
+	char *desc;
+	U2 nameIdx;
+	U2 descIdx;
+} FieldRec;
+
+typedef struct {
+	char *name;
+	char *desc;
+	U2 nameIdx;
+	U2 descIdx;
+	U1 *code;
+	int codeLen;
+	U2 maxStack;
+	U2 maxLocals;
+} MethodRec;
+
+typedef struct {
+	FieldRec *fields;
+	int nFields, capFields;
+	MethodRec *methods;
+	int nMethods, capMethods;
+	int funcMode;        /* il programma contiene funzioni: globali = campi statici */
+} JvmUnit;
+
+typedef struct {
+	char *name;
+	int kind;
+	int slot;
+	enumTipo1 type1;
+	int isArray;
+	int isParam;
+} SegVar;
+
+typedef struct JvmSeg {
+	SegVar *vars;
+	int n, cap;
+	int nextSlot;
+	int funcMode;
+	int isVoid;
+	enumTipo1 retType;
+	JvmUnit *unit;
+	jvmHashTable **pHT;
+} JvmSeg;
+
 typedef struct {
 	char *name;
 	enumTipo1 type1;
@@ -908,6 +966,7 @@ typedef struct {
 	TempSlot *items;
 	int count;
 	int capacity;
+	JvmSeg *seg;
 } TempTable;
 
 typedef struct {
@@ -927,6 +986,7 @@ static void tempTableInit(CompilerContext *ctx, TempTable *tt)
 	tt->items = NULL;
 	tt->count = 0;
 	tt->capacity = 0;
+	tt->seg = NULL;
 }
 
 static void tempTableFree(CompilerContext *ctx, TempTable *tt)
@@ -974,6 +1034,321 @@ static int tempTableEnsure(CompilerContext *ctx, TempTable *tt, const char *name
 	tt->items[idx].slot = (int)ctx->g_max_locals;
 	ctx->g_max_locals += (type1 == T_REAL) ? 2 : 1;
 	return idx;
+}
+
+/* ---- costanti dinamiche del pool per campi e metodi ---- */
+
+static U2 jvmCpUtf8(CompilerContext *ctx, const char *s)
+{
+	ctx->g_IndexConstantPool = jvmWriteCpUtf8(ctx, ctx->g_IndexConstantPool, s);
+	return (U2)(++ctx->g_ConstantPoolCount);
+}
+
+static U2 jvmCpTwoU2(CompilerContext *ctx, U1 tag, U2 v1, U2 v2)
+{
+	ctx->g_IndexConstantPool = jvmWriteCpTwoU2(ctx, ctx->g_IndexConstantPool, tag, v1, v2);
+	return (U2)(++ctx->g_ConstantPoolCount);
+}
+
+static const char *jvmElemDesc(enumTipo1 t)
+{
+	switch (t) {
+		case T_INTEGER: return "I";
+		case T_REAL:    return "D";
+		case T_BOOLEAN: return "Z";
+		case T_STRING:  return "Ljava/lang/String;";
+	}
+	return "I";
+}
+
+static void jvmDescOf(enumTipo1 t, int isArray, char *out)
+{
+	out[0] = '\0';
+	if (isArray) strcpy(out, "[");
+	strcat(out, jvmElemDesc(t));
+}
+
+static void jvmMethodDesc(const FuncDef *f, char *out)
+{
+	int i;
+	strcpy(out, "(");
+	for (i = 0; i < f->nparams; i++) {
+		char d[64];
+		jvmDescOf(f->params[i].t1, (f->params[i].t0 == T_ARRAY || f->params[i].isRef), d);
+		strcat(out, d);
+	}
+	strcat(out, ")");
+	strcat(out, f->isVoid ? "V" : jvmElemDesc(f->retType));
+}
+
+static U2 jvmFieldrefIdx(CompilerContext *ctx, jvmHashTable **pHT, JvmUnit *unit,
+                         const char *name, const char *desc)
+{
+	char key[600];
+	unsigned short idx = 0;
+	U2 nameIdx, descIdx, natIdx;
+	FieldRec *fr;
+
+	snprintf(key, sizeof(key), "F:%s", name);
+	if (jvmhtFind(ctx, pHT, key, &idx))
+		return idx;
+
+	nameIdx = jvmCpUtf8(ctx, name);
+	descIdx = jvmCpUtf8(ctx, desc);
+	natIdx = jvmCpTwoU2(ctx, CONSTANT_NameAndType, nameIdx, descIdx);
+	idx = jvmCpTwoU2(ctx, CONSTANT_Fieldref, 1, natIdx);
+	jvmhtInsert(ctx, pHT, key, idx);
+
+	if (unit->nFields >= unit->capFields) {
+		int nc = unit->capFields ? unit->capFields * 2 : 16;
+		FieldRec *nf = (FieldRec *)realloc(unit->fields, (size_t)nc * sizeof(FieldRec));
+		if (!nf) return idx;
+		unit->fields = nf;
+		unit->capFields = nc;
+	}
+	fr = &unit->fields[unit->nFields++];
+	fr->name = strdup(name);
+	fr->desc = strdup(desc);
+	fr->nameIdx = nameIdx;
+	fr->descIdx = descIdx;
+	return idx;
+}
+
+/* Methodref di un metodo statico della classe corrente; restituisce anche gli indici
+   delle Utf8 di nome e descrittore (servono per la method_info). */
+static U2 jvmMethodrefIdx(CompilerContext *ctx, jvmHashTable **pHT, const char *name, const char *desc,
+                          U2 *pNameIdx, U2 *pDescIdx)
+{
+	char key[600];
+	unsigned short idx = 0, ni = 0, di = 0;
+	U2 natIdx;
+
+	snprintf(key, sizeof(key), "M:%s", name);
+	if (jvmhtFind(ctx, pHT, key, &idx)) {
+		snprintf(key, sizeof(key), "MN:%s", name);
+		jvmhtFind(ctx, pHT, key, &ni);
+		snprintf(key, sizeof(key), "MD:%s", name);
+		jvmhtFind(ctx, pHT, key, &di);
+	} else {
+		ni = jvmCpUtf8(ctx, name);
+		di = jvmCpUtf8(ctx, desc);
+		natIdx = jvmCpTwoU2(ctx, CONSTANT_NameAndType, ni, di);
+		idx = jvmCpTwoU2(ctx, CONSTANT_Methodref, 1, natIdx);
+		snprintf(key, sizeof(key), "M:%s", name);
+		jvmhtInsert(ctx, pHT, key, idx);
+		snprintf(key, sizeof(key), "MN:%s", name);
+		jvmhtInsert(ctx, pHT, key, ni);
+		snprintf(key, sizeof(key), "MD:%s", name);
+		jvmhtInsert(ctx, pHT, key, di);
+	}
+	if (pNameIdx) *pNameIdx = ni;
+	if (pDescIdx) *pDescIdx = di;
+	return idx;
+}
+
+/* ---- tabella delle variabili di un segmento (main o funzione) ---- */
+
+static SegVar *segFind(const JvmSeg *seg, const char *name)
+{
+	int i;
+	if (!seg || !name) return NULL;
+	for (i = 0; i < seg->n; i++)
+		if (strcmp(seg->vars[i].name, name) == 0)
+			return &seg->vars[i];
+	return NULL;
+}
+
+static SegVar *segAdd(JvmSeg *seg, const char *name, int kind, int slot, enumTipo1 t, int isArray, int isParam)
+{
+	SegVar *v;
+	if (seg->n >= seg->cap) {
+		int nc = seg->cap ? seg->cap * 2 : 16;
+		SegVar *nv = (SegVar *)realloc(seg->vars, (size_t)nc * sizeof(SegVar));
+		if (!nv) return NULL;
+		seg->vars = nv;
+		seg->cap = nc;
+	}
+	v = &seg->vars[seg->n++];
+	v->name = strdup(name);
+	v->kind = kind;
+	v->slot = slot;
+	v->type1 = t;
+	v->isArray = isArray;
+	v->isParam = isParam;
+	return v;
+}
+
+static void segFree(JvmSeg *seg)
+{
+	int i;
+	for (i = 0; i < seg->n; i++) free(seg->vars[i].name);
+	free(seg->vars);
+	seg->vars = NULL;
+	seg->n = seg->cap = 0;
+}
+
+static int jvmVarLookup(CompilerContext *ctx, Scope *pScope, const TempTable *tt, const char *name, VarRef *vr)
+{
+	HashTable Dati = {0};
+	const JvmSeg *seg = tt ? tt->seg : NULL;
+	SegVar *sv;
+
+	if (!name) return 0;
+	if (seg && seg->funcMode && (sv = segFind(seg, name)) != NULL) {
+		vr->kind = sv->kind;
+		vr->slot = sv->slot;
+		vr->type1 = sv->type1;
+		vr->isArray = sv->isArray;
+		vr->name = sv->name;
+		return 1;
+	}
+	if (!scopeFind(ctx, pScope, (char *)name, &Dati))
+		return 0;
+	vr->type1 = Dati.Tipo1;
+	vr->isArray = (Dati.Tipo0 == T_ARRAY);
+	vr->name = name;
+	if (seg && seg->funcMode && Dati.isGlobal) {
+		vr->kind = VK_STATIC;
+		vr->slot = -1;
+	} else {
+		vr->kind = VK_LOCAL;
+		vr->slot = Dati.frameIndex;
+	}
+	return 1;
+}
+
+static void jvmEmitXaload(CompilerContext *ctx, enumTipo1 t)
+{
+	if (t == T_INTEGER)      jvmEmitU1(ctx, jvm_iaload, -1);
+	else if (t == T_REAL)    jvmEmitU1(ctx, jvm_daload, 0);
+	else if (t == T_BOOLEAN) jvmEmitU1(ctx, jvm_baload, -1);
+	else                     jvmEmitU1(ctx, jvm_aaload, -1);
+}
+
+static void jvmEmitXastore(CompilerContext *ctx, enumTipo1 t)
+{
+	if (t == T_INTEGER)      jvmEmitU1(ctx, jvm_iastore, -3);
+	else if (t == T_REAL)    jvmEmitU1(ctx, jvm_dastore, -4);
+	else if (t == T_BOOLEAN) jvmEmitU1(ctx, jvm_bastore, -3);
+	else                     jvmEmitU1(ctx, jvm_aastore, -3);
+}
+
+/* Carica il valore di una variabile scalare (locale, statica o parametro ref) */
+static void jvmEmitLoadVar(CompilerContext *ctx, const VarRef *vr, const TempTable *tt)
+{
+	if (vr->kind == VK_STATIC) {
+		char d[64];
+		U2 idx;
+		jvmDescOf(vr->type1, 0, d);
+		idx = jvmFieldrefIdx(ctx, tt->seg->pHT, tt->seg->unit, vr->name, d);
+		jvmEmitU1(ctx, jvm_getstatic, (vr->type1 == T_REAL) ? +2 : +1);
+		jvmEmitU2(ctx, idx);
+	} else if (vr->kind == VK_REF) {
+		jvmEmitLoadArrayRef(ctx, vr->slot);
+		jvmEmitU1(ctx, jvm_iconst_0, +1);
+		jvmEmitXaload(ctx, vr->type1);
+	} else {
+		jvmEmitLoadLocal(ctx, vr->slot, vr->type1);
+	}
+}
+
+/* Memorizza il valore in cima allo stack (gia' del tipo della variabile) */
+static void jvmEmitStoreVar(CompilerContext *ctx, const VarRef *vr, const TempTable *tt)
+{
+	if (vr->kind == VK_STATIC) {
+		char d[64];
+		U2 idx;
+		jvmDescOf(vr->type1, 0, d);
+		idx = jvmFieldrefIdx(ctx, tt->seg->pHT, tt->seg->unit, vr->name, d);
+		jvmEmitU1(ctx, jvm_putstatic, (vr->type1 == T_REAL) ? -2 : -1);
+		jvmEmitU2(ctx, idx);
+	} else if (vr->kind == VK_REF) {
+		jvmEmitLoadArrayRef(ctx, vr->slot);
+		if (vr->type1 == T_REAL) {
+			jvmEmitU1(ctx, jvm_dup_x2, +1);
+			jvmEmitU1(ctx, jvm_pop, -1);
+			jvmEmitU1(ctx, jvm_iconst_0, +1);
+			jvmEmitU1(ctx, jvm_dup_x2, +1);
+			jvmEmitU1(ctx, jvm_pop, -1);
+		} else {
+			jvmEmitU1(ctx, jvm_swap, 0);
+			jvmEmitU1(ctx, jvm_iconst_0, +1);
+			jvmEmitU1(ctx, jvm_swap, 0);
+		}
+		jvmEmitXastore(ctx, vr->type1);
+	} else {
+		jvmEmitStoreLocal(ctx, vr->slot, vr->type1);
+	}
+}
+
+/* Carica il riferimento a un array (locale, parametro o statico) */
+static void jvmEmitLoadArrayVar(CompilerContext *ctx, const VarRef *vr, const TempTable *tt)
+{
+	if (vr->kind == VK_STATIC) {
+		char d[64];
+		U2 idx;
+		jvmDescOf(vr->type1, 1, d);
+		idx = jvmFieldrefIdx(ctx, tt->seg->pHT, tt->seg->unit, vr->name, d);
+		jvmEmitU1(ctx, jvm_getstatic, +1);
+		jvmEmitU2(ctx, idx);
+	} else {
+		jvmEmitLoadArrayRef(ctx, vr->slot);
+	}
+}
+
+/* Con il numero di elementi gia' sullo stack, alloca un array del tipo dato */
+static void jvmEmitNewArrayOfType(CompilerContext *ctx, jvmHashTable **pHT, enumTipo1 t1)
+{
+	if (t1 == T_STRING) {
+		unsigned short strClassIdx = 0;
+		if (!jvmhtFind(ctx, pHT, "C:java/lang/String", &strClassIdx)) {
+			strClassIdx = (unsigned short)(ctx->g_ConstantPoolCount + 1);
+			jvmhtInsert(ctx, pHT, "C:java/lang/String", strClassIdx);
+			ctx->g_IndexConstantPool = jvmAddClassConstant(ctx, "java/lang/String", ctx->g_IndexConstantPool);
+		}
+		jvmEmitU1(ctx, jvm_anewarray, 0);
+		jvmEmitU2(ctx, (U2)strClassIdx);
+	} else {
+		U1 atype = 10;
+		if (t1 == T_REAL) atype = 7;
+		else if (t1 == T_BOOLEAN) atype = 4;
+		jvmEmitU1(ctx, jvm_newarray, 0);
+		jvmEmitU1(ctx, atype, 0);
+	}
+}
+
+/* Alloca un array 1D linearizzato e ne lascia il riferimento sullo stack */
+static void jvmEmitNewArrayOnStack(CompilerContext *ctx, jvmHashTable **pHT, const HashTable *t)
+{
+	int k, totalSize = 1;
+	for (k = 0; k < t->Value.pArrayDef->countIndexes; k++)
+		totalSize *= t->Value.pArrayDef->sizes[k];
+	jvmPushInt(ctx, totalSize, pHT);
+	jvmEmitNewArrayOfType(ctx, pHT, t->Tipo1);
+}
+
+/* Valore iniziale di una variabile locale o globale (stringa vuota, 0, array allocato) */
+static void jvmEmitInitVar(CompilerContext *ctx, jvmHashTable **pHT, const TempTable *tt,
+                           const HashTable *Dati, const VarRef *vr)
+{
+	if (vr->isArray) {
+		jvmEmitNewArrayOnStack(ctx, pHT, Dati);
+		if (vr->kind == VK_STATIC) {
+			char d[64];
+			U2 idx;
+			jvmDescOf(vr->type1, 1, d);
+			idx = jvmFieldrefIdx(ctx, pHT, tt->seg->unit, vr->name, d);
+			jvmEmitU1(ctx, jvm_putstatic, -1);
+			jvmEmitU2(ctx, idx);
+		} else {
+			jvmEmitStoreArrayRef(ctx, vr->slot);
+		}
+		return;
+	}
+	if (vr->type1 == T_STRING)      jvmPushString(ctx, "", pHT);
+	else if (vr->type1 == T_REAL)   jvmPushDouble(ctx, 0.0, pHT);
+	else                            jvmPushInt(ctx, 0, pHT);
+	jvmEmitStoreVar(ctx, vr, tt);
 }
 
 static int isTacNumericLit(CompilerContext *ctx, const char *s, double *outDbl, long *outInt, int *isInt)
@@ -1026,7 +1401,7 @@ static int tacElemByteSize(CompilerContext *ctx, enumTipo1 t1)
 
 static enumTipo1 jvmInferOperandType(CompilerContext *ctx, const char *opStr, Scope *pScope, const TempTable *tt, enumTipo1 fallback)
 {
-	HashTable Dati = {0};
+	VarRef vr;
 	double d;
 	long iv;
 	int isInt, b;
@@ -1037,8 +1412,8 @@ static enumTipo1 jvmInferOperandType(CompilerContext *ctx, const char *opStr, Sc
 	if (isTacBoolLit(ctx, opStr, &b)) return T_BOOLEAN;
 	if (isTacNumericLit(ctx, opStr, &d, &iv, &isInt)) return isInt ? T_INTEGER : T_REAL;
 
-	if (scopeFind(ctx, pScope, (char *)opStr, &Dati))
-		return Dati.Tipo1;
+	if (jvmVarLookup(ctx, pScope, tt, opStr, &vr))
+		return vr.type1;
 
 	tidx = tempTableFind(ctx, tt, opStr);
 	if (tidx >= 0)
@@ -1048,11 +1423,11 @@ static enumTipo1 jvmInferOperandType(CompilerContext *ctx, const char *opStr, Sc
 }
 
 /* Pre-assegna tipo e slot locale a tutti i temporanei presenti nella TACList */
-static void jvmPrepareTemps(CompilerContext *ctx, const TACList *tac, Scope *pScope, TempTable *tt)
+static void jvmPrepareTemps(CompilerContext *ctx, const TACList *tac, int from, int to, Scope *pScope, TempTable *tt)
 {
 	int i;
 	/* Assicuriamoci che g_max_locals copra tutte le variabili utente */
-	if (pScope->top >= 0 && pScope->stack[0]) {
+	if (!(tt->seg && tt->seg->funcMode) && pScope->top >= 0 && pScope->stack[0]) {
 		for (i = 0; i < HT_SIZE; i++) {
 			HashTable *t = pScope->stack[0][i];
 			while (t) {
@@ -1064,9 +1439,9 @@ static void jvmPrepareTemps(CompilerContext *ctx, const TACList *tac, Scope *pSc
 		}
 	}
 
-	for (i = 0; i < tac->count; i++) {
+	for (i = from; i < to; i++) {
 		const TACInstr *in = &tac->items[i];
-		HashTable Dati = {0};
+		VarRef vrTmp;
 		enumTipo1 tRes;
 
 		if (in->dead || !in->res) continue;
@@ -1075,7 +1450,7 @@ static void jvmPrepareTemps(CompilerContext *ctx, const TACList *tac, Scope *pSc
 		    in->op == TAC_STORE_IDX)
 			continue;
 
-		if (scopeFind(ctx, pScope, in->res, &Dati))
+		if (jvmVarLookup(ctx, pScope, tt, in->res, &vrTmp))
 			continue;
 
 		if (in->op >= TAC_LT && in->op <= TAC_OR) {
@@ -1097,7 +1472,7 @@ static void jvmPrepareTemps(CompilerContext *ctx, const TACList *tac, Scope *pSc
 static void jvmLoadOperand(CompilerContext *ctx, const char *opStr, enumTipo1 targetType,
                            jvmHashTable **pHT, Scope *pScope, const TempTable *tt)
 {
-	HashTable Dati = {0};
+	VarRef vr;
 	double d;
 	long iv;
 	int isInt, b;
@@ -1134,9 +1509,9 @@ static void jvmLoadOperand(CompilerContext *ctx, const char *opStr, enumTipo1 ta
 		return;
 	}
 
-	if (scopeFind(ctx, pScope, (char *)opStr, &Dati)) {
-		jvmEmitLoadLocal(ctx, Dati.frameIndex, Dati.Tipo1);
-		jvmTypeCheck(ctx, targetType, Dati.Tipo1);
+	if (jvmVarLookup(ctx, pScope, tt, opStr, &vr)) {
+		jvmEmitLoadVar(ctx, &vr, tt);
+		jvmTypeCheck(ctx, targetType, vr.type1);
 		return;
 	}
 
@@ -1172,12 +1547,12 @@ static void jvmLoadAsBool(CompilerContext *ctx, const char *opStr, jvmHashTable 
 
 static void jvmStoreDest(CompilerContext *ctx, const char *dstName, enumTipo1 valueType, Scope *pScope, TempTable *tt)
 {
-	HashTable Dati = {0};
+	VarRef vr;
 	int tidx;
 
-	if (scopeFind(ctx, pScope, (char *)dstName, &Dati)) {
-		jvmTypeCheck(ctx, Dati.Tipo1, valueType);
-		jvmEmitStoreLocal(ctx, Dati.frameIndex, Dati.Tipo1);
+	if (jvmVarLookup(ctx, pScope, tt, dstName, &vr)) {
+		jvmTypeCheck(ctx, vr.type1, valueType);
+		jvmEmitStoreVar(ctx, &vr, tt);
 		return;
 	}
 
@@ -1219,9 +1594,12 @@ static void jvmEmitArrayIndexFromByteOffset(CompilerContext *ctx, const char *of
 	}
 }
 
-static void MakeBytecodeFromTAC(CompilerContext *ctx, const TACList *tac, jvmHashTable **pHT, Scope *pScope)
+static void MakeBytecodeFromTAC(CompilerContext *ctx, const TACList *tac, int from, int to,
+								jvmHashTable **pHT, Scope *pScope, JvmSeg *seg)
 {
 	TempTable tt;
+	int curCall = -1, paramPos = 0, nBoxes = 0;
+	struct { int slot; const char *name; enumTipo1 type1; } boxes[40];
 	LabelPos *labels = NULL;
 	int numLabels = 0, capLabels = 0;
 	JumpFixup *fixups = NULL;
@@ -1229,9 +1607,10 @@ static void MakeBytecodeFromTAC(CompilerContext *ctx, const TACList *tac, jvmHas
 	int i;
 
 	tempTableInit(ctx, &tt);
-	jvmPrepareTemps(ctx, tac, pScope, &tt);
+	tt.seg = seg;
+	jvmPrepareTemps(ctx, tac, from, to, pScope, &tt);
 
-	for (i = 0; i < tac->count; i++) {
+	for (i = from; i < to; i++) {
 		const TACInstr *in = &tac->items[i];
 		if (in->dead) continue;
 
@@ -1300,11 +1679,11 @@ static void MakeBytecodeFromTAC(CompilerContext *ctx, const TACList *tac, jvmHas
 		}
 
 		case TAC_ASSIGN: {
-			HashTable Dati = {0};
+			VarRef vrA;
 			enumTipo1 dstType = in->type1;
 			int tidx;
-			if (scopeFind(ctx, pScope, in->res, &Dati))
-				dstType = Dati.Tipo1;
+			if (jvmVarLookup(ctx, pScope, &tt, in->res, &vrA))
+				dstType = vrA.type1;
 			else if ((tidx = tempTableFind(ctx, &tt, in->res)) >= 0)
 				dstType = tt.items[tidx].type1;
 			jvmLoadOperand(ctx, in->arg1, dstType, pHT, pScope, &tt);
@@ -1429,46 +1808,28 @@ static void MakeBytecodeFromTAC(CompilerContext *ctx, const TACList *tac, jvmHas
 		}
 
 		case TAC_LOAD_IDX: {
-			HashTable Dati = {0};
-			if (!scopeFind(ctx, pScope, in->arg1, &Dati)) {
+			VarRef vrL;
+			if (!jvmVarLookup(ctx, pScope, &tt, in->arg1, &vrL)) {
 				printf("Errore JVM: array '%s' non dichiarato.\n", in->arg1);
 				break;
 			}
-			jvmEmitLoadArrayRef(ctx, Dati.frameIndex);
-			jvmEmitArrayIndexFromByteOffset(ctx, in->arg2, Dati.Tipo1, pHT, pScope, &tt);
-
-			if (Dati.Tipo1 == T_INTEGER) {
-				jvmEmitU1(ctx, jvm_iaload, -1);
-			} else if (Dati.Tipo1 == T_REAL) {
-				jvmEmitU1(ctx, jvm_daload, 0); /* pop 2, push 2 */
-			} else if (Dati.Tipo1 == T_BOOLEAN) {
-				jvmEmitU1(ctx, jvm_baload, -1);
-			} else if (Dati.Tipo1 == T_STRING) {
-				jvmEmitU1(ctx, jvm_aaload, -1);
-			}
-			jvmStoreDest(ctx, in->res, Dati.Tipo1, pScope, &tt);
+			jvmEmitLoadArrayVar(ctx, &vrL, &tt);
+			jvmEmitArrayIndexFromByteOffset(ctx, in->arg2, vrL.type1, pHT, pScope, &tt);
+			jvmEmitXaload(ctx, vrL.type1);
+			jvmStoreDest(ctx, in->res, vrL.type1, pScope, &tt);
 			break;
 		}
 
 		case TAC_STORE_IDX: {
-			HashTable Dati = {0};
-			if (!scopeFind(ctx, pScope, in->res, &Dati)) {
+			VarRef vrS;
+			if (!jvmVarLookup(ctx, pScope, &tt, in->res, &vrS)) {
 				printf("Errore JVM: array '%s' non dichiarato.\n", in->res);
 				break;
 			}
-			jvmEmitLoadArrayRef(ctx, Dati.frameIndex);
-			jvmEmitArrayIndexFromByteOffset(ctx, in->arg1, Dati.Tipo1, pHT, pScope, &tt);
-			jvmLoadOperand(ctx, in->arg2, Dati.Tipo1, pHT, pScope, &tt);
-
-			if (Dati.Tipo1 == T_INTEGER) {
-				jvmEmitU1(ctx, jvm_iastore, -3);
-			} else if (Dati.Tipo1 == T_REAL) {
-				jvmEmitU1(ctx, jvm_dastore, -4);
-			} else if (Dati.Tipo1 == T_BOOLEAN) {
-				jvmEmitU1(ctx, jvm_bastore, -3);
-			} else if (Dati.Tipo1 == T_STRING) {
-				jvmEmitU1(ctx, jvm_aastore, -3);
-			}
+			jvmEmitLoadArrayVar(ctx, &vrS, &tt);
+			jvmEmitArrayIndexFromByteOffset(ctx, in->arg1, vrS.type1, pHT, pScope, &tt);
+			jvmLoadOperand(ctx, in->arg2, vrS.type1, pHT, pScope, &tt);
+			jvmEmitXastore(ctx, vrS.type1);
 			break;
 		}
 
@@ -1498,10 +1859,10 @@ static void MakeBytecodeFromTAC(CompilerContext *ctx, const TACList *tac, jvmHas
 		}
 
 		case TAC_READ: {
-			HashTable Dati = {0};
+			VarRef vrR;
 			enumTipo1 rType = in->type1;
-			if (scopeFind(ctx, pScope, in->res, &Dati))
-				rType = Dati.Tipo1;
+			if (jvmVarLookup(ctx, pScope, &tt, in->res, &vrR))
+				rType = vrR.type1;
 
 			jvmEmitU1(ctx, jvm_invokestatic, +1);
 			jvmEmitU2(ctx, 15); /* System.console() */
@@ -1528,8 +1889,107 @@ static void MakeBytecodeFromTAC(CompilerContext *ctx, const TACList *tac, jvmHas
 			jvmStoreDest(ctx, in->res, rType, pScope, &tt);
 			break;
 		}
+		case TAC_PARAM:
+		case TAC_PARAM_REF:
+		case TAC_PARAM_ARR: {
+			int fi, j;
+			const FuncParam *fp;
+			if (curCall < 0) {
+				for (j = i + 1; j < to; j++)
+					if (!tac->items[j].dead && tac->items[j].op == TAC_CALL) break;
+				curCall = j;
+				paramPos = 0;
+				nBoxes = 0;
+			}
+			fi = (curCall < to) ? funcFind(ctx, tac->items[curCall].arg1) : -1;
+			if (fi < 0 || paramPos >= ctx->funcs[fi].nparams || paramPos >= 32) {
+				printf("Errore JVM: chiamata di funzione non valida.\n");
+				break;
+			}
+			fp = &ctx->funcs[fi].params[paramPos++];
+			if (in->op == TAC_PARAM) {
+				jvmLoadOperand(ctx, in->arg1, fp->t1, pHT, pScope, &tt);
+			} else {
+				VarRef vrP;
+				if (!jvmVarLookup(ctx, pScope, &tt, in->arg1, &vrP)) {
+					printf("Errore JVM: variabile '%s' non dichiarata.\n", in->arg1);
+					break;
+				}
+				if (in->op == TAC_PARAM_ARR) {
+					jvmEmitLoadArrayVar(ctx, &vrP, &tt);
+				} else if (vrP.kind == VK_REF) {
+					/* parametro ref inoltrato: si passa lo stesso array di un elemento */
+					jvmEmitLoadArrayRef(ctx, vrP.slot);
+				} else {
+					/* copia in/out: scatola di un elemento, riletta dopo la chiamata */
+					int slot = (int)ctx->g_max_locals;
+					ctx->g_max_locals = (U2)(ctx->g_max_locals + 1);
+					jvmPushInt(ctx, 1, pHT);
+					jvmEmitNewArrayOfType(ctx, pHT, vrP.type1);
+					jvmEmitU1(ctx, jvm_dup, +1);
+					jvmEmitU1(ctx, jvm_iconst_0, +1);
+					jvmEmitLoadVar(ctx, &vrP, &tt);
+					jvmEmitXastore(ctx, vrP.type1);
+					jvmEmitU1(ctx, jvm_dup, +1);
+					jvmEmitStoreArrayRef(ctx, slot);
+					if (nBoxes < 40) {
+						boxes[nBoxes].slot = slot;
+						boxes[nBoxes].name = in->arg1;
+						boxes[nBoxes].type1 = vrP.type1;
+						nBoxes++;
+					}
+				}
+			}
+			break;
+		}
+
+		case TAC_CALL: {
+			int fi = funcFind(ctx, in->arg1), k, argSlots = 0, retSlots;
+			const FuncDef *fd;
+			char desc[512];
+			U2 mi;
+			if (fi < 0) {
+				printf("Errore JVM: funzione '%s' non dichiarata.\n", in->arg1);
+				break;
+			}
+			fd = &ctx->funcs[fi];
+			jvmMethodDesc(fd, desc);
+			mi = jvmMethodrefIdx(ctx, pHT, fd->name, desc, NULL, NULL);
+			for (k = 0; k < fd->nparams; k++)
+				argSlots += (fd->params[k].t0 != T_ARRAY && !fd->params[k].isRef && fd->params[k].t1 == T_REAL) ? 2 : 1;
+			retSlots = fd->isVoid ? 0 : (fd->retType == T_REAL ? 2 : 1);
+			jvmEmitU1(ctx, jvm_invokestatic, retSlots - argSlots);
+			jvmEmitU2(ctx, mi);
+			if (in->res)
+				jvmStoreDest(ctx, in->res, fd->retType, pScope, &tt);
+			else if (!fd->isVoid)
+				jvmEmitU1(ctx, (retSlots == 2) ? jvm_pop2 : jvm_pop, -retSlots);
+			for (k = 0; k < nBoxes; k++) {
+				VarRef vrB;
+				if (!jvmVarLookup(ctx, pScope, &tt, boxes[k].name, &vrB)) continue;
+				jvmEmitLoadArrayRef(ctx, boxes[k].slot);
+				jvmEmitU1(ctx, jvm_iconst_0, +1);
+				jvmEmitXaload(ctx, boxes[k].type1);
+				jvmEmitStoreVar(ctx, &vrB, &tt);
+			}
+			curCall = -1;
+			nBoxes = 0;
+			break;
+		}
+
+		case TAC_RETURN: {
+			if (seg->isVoid || !in->arg1) {
+				jvmEmitU1(ctx, jvm_return, 0);
+			} else {
+				jvmLoadOperand(ctx, in->arg1, seg->retType, pHT, pScope, &tt);
+				if (seg->retType == T_REAL)        jvmEmitU1(ctx, jvm_dreturn, -2);
+				else if (seg->retType == T_STRING) jvmEmitU1(ctx, jvm_areturn, -1);
+				else                               jvmEmitU1(ctx, jvm_ireturn, -1);
+			}
+			break;
+		}
+
 		default:
-			/* istruzioni di funzione: non ancora supportate dal backend JVM (fase 3) */
 			break;
 		}
 	}
@@ -1564,6 +2024,238 @@ static void MakeBytecodeFromTAC(CompilerContext *ctx, const TACList *tac, jvmHas
 	tempTableFree(ctx, &tt);
 }
 
+/* Memorizza il bytecode appena generato come metodo della classe */
+static void jvmAddMethodRec(CompilerContext *ctx, JvmUnit *unit, U2 nameIdx, U2 descIdx)
+{
+	MethodRec *m;
+	if (unit->nMethods >= unit->capMethods) {
+		int nc = unit->capMethods ? unit->capMethods * 2 : 8;
+		MethodRec *nm = (MethodRec *)realloc(unit->methods, (size_t)nc * sizeof(MethodRec));
+		if (!nm) return;
+		unit->methods = nm;
+		unit->capMethods = nc;
+	}
+	m = &unit->methods[unit->nMethods++];
+	m->name = NULL;
+	m->desc = NULL;
+	m->nameIdx = nameIdx;
+	m->descIdx = descIdx;
+	m->codeLen = ctx->g_IndexBytecodeArray;
+	m->code = (U1 *)malloc((size_t)(m->codeLen > 0 ? m->codeLen : 1));
+	if (m->code) memcpy(m->code, ctx->g_ArrayCode, (size_t)m->codeLen);
+	m->maxStack = ctx->g_max_stack;
+	m->maxLocals = ctx->g_max_locals;
+}
+
+static void segConsider(CompilerContext *ctx, Scope *pScope, JvmSeg *seg, const char *name)
+{
+	HashTable D = {0};
+	int isArr;
+	if (!name || !*name || segFind(seg, name)) return;
+	if (!scopeFind(ctx, pScope, (char *)name, &D)) return;
+	if (D.isGlobal) return;
+	isArr = (D.Tipo0 == T_ARRAY);
+	segAdd(seg, name, VK_LOCAL, seg->nextSlot, D.Tipo1, isArr, 0);
+	seg->nextSlot += (!isArr && D.Tipo1 == T_REAL) ? 2 : 1;
+}
+
+/* Genera il metodo di un segmento TAC: il blocco principale (fd == NULL) o una funzione. */
+static void jvmGenSegment(CompilerContext *ctx, JvmUnit *unit, jvmHashTable **pHT, const TACList *tac,
+                          int from, int to, Scope *pScope, const FuncDef *fd, U2 nameIdx, U2 descIdx)
+{
+	JvmSeg seg;
+	int i;
+
+	memset(&seg, 0, sizeof(seg));
+	seg.funcMode = unit->funcMode;
+	seg.unit = unit;
+	seg.pHT = pHT;
+	seg.isVoid = fd ? fd->isVoid : 1;
+	seg.retType = fd ? fd->retType : T_INTEGER;
+
+	ctx->g_IndexBytecodeArray = 0;
+	ctx->g_code_length = 0;
+	ctx->g_max_stack = 1;
+	ctx->g_cur_stack = 0;
+
+	if (!unit->funcMode) {
+		/* programma senza funzioni: comportamento storico */
+		MakeBytecodeDeclInitMain(ctx, pHT, pScope);
+		MakeBytecodeFromTAC(ctx, tac, from, to, pHT, pScope, &seg);
+		jvmEmitU1(ctx, jvm_return, 0);
+		jvmAddMethodRec(ctx, unit, nameIdx, descIdx);
+		return;
+	}
+
+	{
+		TempTable tt0;
+		int slot = fd ? 0 : 1; /* nel main lo slot 0 e' args */
+
+		if (fd) {
+			for (i = 0; i < fd->nparams; i++) {
+				const FuncParam *fp = &fd->params[i];
+				const char *pn = fp->uniqueName ? fp->uniqueName : fp->name;
+				if (fp->t0 == T_ARRAY) {
+					segAdd(&seg, pn, VK_LOCAL, slot, fp->t1, 1, 1);
+					slot++;
+				} else if (fp->isRef) {
+					segAdd(&seg, pn, VK_REF, slot, fp->t1, 0, 1);
+					slot++;
+				} else {
+					segAdd(&seg, pn, VK_LOCAL, slot, fp->t1, 0, 1);
+					slot += (fp->t1 == T_REAL) ? 2 : 1;
+				}
+			}
+		}
+		seg.nextSlot = slot;
+
+		/* variabili locali citate nel segmento */
+		for (i = from; i < to; i++) {
+			const TACInstr *in = &tac->items[i];
+			if (in->dead) continue;
+			switch (in->op) {
+			case TAC_LABEL: case TAC_GOTO: case TAC_CALL:
+			case TAC_FUNC: case TAC_ENDFUNC:
+				break;
+			case TAC_IF_FALSE: case TAC_IF_TRUE:
+				segConsider(ctx, pScope, &seg, in->arg1);
+				break;
+			default:
+				segConsider(ctx, pScope, &seg, in->arg1);
+				segConsider(ctx, pScope, &seg, in->arg2);
+				segConsider(ctx, pScope, &seg, in->res);
+				break;
+			}
+		}
+		ctx->g_max_locals = (U2)seg.nextSlot;
+
+		tempTableInit(ctx, &tt0);
+		tt0.seg = &seg;
+
+		/* main: inizializza le globali (campi statici) che non hanno il valore predefinito giusto */
+		if (!fd && pScope->top >= 0 && pScope->stack[0]) {
+			int b;
+			for (b = 0; b < HT_SIZE; b++) {
+				HashTable *t = pScope->stack[0][b];
+				while (t) {
+					if (t->isGlobal && (t->Tipo0 == T_ARRAY || t->Tipo1 == T_STRING)) {
+						HashTable D = {0};
+						if (scopeFind(ctx, pScope, t->Key, &D)) {
+							VarRef vr;
+							vr.kind = VK_STATIC;
+							vr.slot = -1;
+							vr.type1 = D.Tipo1;
+							vr.isArray = (D.Tipo0 == T_ARRAY);
+							vr.name = t->Key;
+							jvmEmitInitVar(ctx, pHT, &tt0, &D, &vr);
+						}
+					}
+					t = t->next;
+				}
+			}
+		}
+
+		/* locali: valore iniziale (le variabili non assegnate valgono 0 / "" / array allocato) */
+		for (i = 0; i < seg.n; i++) {
+			HashTable D = {0};
+			VarRef vr;
+			if (seg.vars[i].isParam) continue;
+			if (!scopeFind(ctx, pScope, seg.vars[i].name, &D)) continue;
+			vr.kind = VK_LOCAL;
+			vr.slot = seg.vars[i].slot;
+			vr.type1 = seg.vars[i].type1;
+			vr.isArray = seg.vars[i].isArray;
+			vr.name = seg.vars[i].name;
+			jvmEmitInitVar(ctx, pHT, &tt0, &D, &vr);
+		}
+		tempTableFree(ctx, &tt0);
+	}
+
+	MakeBytecodeFromTAC(ctx, tac, from, to, pHT, pScope, &seg);
+
+	/* uscita di sicurezza se il corpo arriva alla fine senza 'return' */
+	if (!fd || fd->isVoid) {
+		jvmEmitU1(ctx, jvm_return, 0);
+	} else if (fd->retType == T_REAL) {
+		jvmEmitU1(ctx, jvm_dconst_0, +2);
+		jvmEmitU1(ctx, jvm_dreturn, -2);
+	} else if (fd->retType == T_STRING) {
+		jvmPushString(ctx, "", pHT);
+		jvmEmitU1(ctx, jvm_areturn, -1);
+	} else {
+		jvmEmitU1(ctx, jvm_iconst_0, +1);
+		jvmEmitU1(ctx, jvm_ireturn, -1);
+	}
+
+	jvmAddMethodRec(ctx, unit, nameIdx, descIdx);
+	segFree(&seg);
+}
+
+static void jvmWriteU2(CompilerContext *ctx, FILE *fp, U2 v)
+{
+	BYTE *buff;
+	U1 fb[8];
+	if (!isBigEndian(ctx)) {
+		ARRAY_TO_U2(buff, v);
+	}
+	fwrite(&v, sizeof(U2), 1, fp);
+}
+
+static void jvmWriteU4(CompilerContext *ctx, FILE *fp, U4 v)
+{
+	BYTE *buff;
+	U1 fb[8];
+	if (!isBigEndian(ctx)) {
+		ARRAY_TO_U4(buff, v);
+	}
+	fwrite(&v, sizeof(U4), 1, fp);
+}
+
+static void jvmWriteMethodRec(CompilerContext *ctx, FILE *fp, const MethodRec *m, U2 access)
+{
+	jvmWriteU2(ctx, fp, access);
+	jvmWriteU2(ctx, fp, m->nameIdx);
+	jvmWriteU2(ctx, fp, m->descIdx);
+	jvmWriteU2(ctx, fp, 1);            /* attributes_count */
+	jvmWriteU2(ctx, fp, 19);           /* "Code" */
+	jvmWriteU4(ctx, fp, (U4)(12 + m->codeLen));
+	jvmWriteU2(ctx, fp, m->maxStack);
+	jvmWriteU2(ctx, fp, m->maxLocals);
+	jvmWriteU4(ctx, fp, (U4)m->codeLen);
+	fwrite(m->code, (size_t)m->codeLen, 1, fp);
+	jvmWriteU2(ctx, fp, 0);            /* exception_table_length */
+	jvmWriteU2(ctx, fp, 0);            /* attributes_count */
+}
+
+static void jvmWriteClassBody(CompilerContext *ctx, FILE *fp, const JvmUnit *unit)
+{
+	int i;
+	jvmWriteU2(ctx, fp, ACC_SUPER);
+	jvmWriteU2(ctx, fp, 1);            /* this_class */
+	jvmWriteU2(ctx, fp, 2);            /* super_class */
+	jvmWriteU2(ctx, fp, 0);            /* interfaces_count */
+	jvmWriteU2(ctx, fp, (U2)unit->nFields);
+	for (i = 0; i < unit->nFields; i++) {
+		jvmWriteU2(ctx, fp, ACC_STATIC);
+		jvmWriteU2(ctx, fp, unit->fields[i].nameIdx);
+		jvmWriteU2(ctx, fp, unit->fields[i].descIdx);
+		jvmWriteU2(ctx, fp, 0);
+	}
+	jvmWriteU2(ctx, fp, (U2)(1 + unit->nMethods)); /* <init> + main + funzioni */
+	jvmWriteInitMethod(ctx, fp);
+	for (i = 0; i < unit->nMethods; i++)
+		jvmWriteMethodRec(ctx, fp, &unit->methods[i], (i == 0) ? (ACC_PUBLIC | ACC_STATIC) : ACC_STATIC);
+}
+
+static void jvmUnitFree(JvmUnit *unit)
+{
+	int i;
+	for (i = 0; i < unit->nFields; i++) { free(unit->fields[i].name); free(unit->fields[i].desc); }
+	free(unit->fields);
+	for (i = 0; i < unit->nMethods; i++) free(unit->methods[i].code);
+	free(unit->methods);
+}
+
 void MakeBytecodeMain(CompilerContext *ctx, nodeType *p, jvmHashTable **pHT, Scope *pScope)
 {
 	(void)ctx;
@@ -1590,6 +2282,7 @@ void jvmStart(CompilerContext *ctx, char *szInputFileName, nodeType **ppTree, Sc
 	jvmHashTable **pHT;
 	int x;
 	TACList tac;
+	JvmUnit unit;
 
 	MakeOutputFileName(ctx, szInputFileName, szOutputFileName, szFileNameWithoutExt, szExt);
 	strcpy(szSourceFile, szFileNameWithoutExt);
@@ -1605,6 +2298,7 @@ void jvmStart(CompilerContext *ctx, char *szInputFileName, nodeType **ppTree, Sc
 		return;
 	}
 
+	memset(&unit, 0, sizeof(unit));
 	pHT = (jvmHashTable**)calloc(JVM_HT_SIZE, sizeof(jvmHashTable*));
 	if (pHT == NULL) {
 		printf("Memoria non sufficiente.\n");
@@ -1625,11 +2319,33 @@ void jvmStart(CompilerContext *ctx, char *szInputFileName, nodeType **ppTree, Sc
 	jvmWriteHeader(ctx, fp);
 	ctx->g_IndexConstantPool = jvmMakeConstantPool(ctx, szSourceFile, szClassName);
 
-	/* 3) Inizializza variabili dichiarate/array ed emette bytecode dal TAC */
-	MakeBytecodeDeclInitMain(ctx, pHT, pScope);
-	MakeBytecodeFromTAC(ctx, &tac, pHT, pScope);
+	/* 3) Un metodo per il blocco principale e uno per ogni funzione */
+	unit.funcMode = (ctx->funcCount > 0);
+	{
+		int mainEnd = tac.count, k, j;
+		for (k = 0; k < tac.count; k++) {
+			if (tac.items[k].op == TAC_ENDFUNC && tac.items[k].res && strcmp(tac.items[k].res, "main") == 0) {
+				mainEnd = k;
+				break;
+			}
+		}
+		jvmGenSegment(ctx, &unit, pHT, &tac, 0, mainEnd, pScope, NULL, 21, 22);
 
-	jvmEmitU1(ctx, jvm_return, 0);
+		for (k = mainEnd + 1; k < tac.count; k++) {
+			if (tac.items[k].op == TAC_FUNC) {
+				int fi = funcFind(ctx, tac.items[k].res);
+				char desc[512];
+				U2 ni = 0, di = 0;
+				for (j = k + 1; j < tac.count && tac.items[j].op != TAC_ENDFUNC; j++) { }
+				if (fi >= 0) {
+					jvmMethodDesc(&ctx->funcs[fi], desc);
+					jvmMethodrefIdx(ctx, pHT, ctx->funcs[fi].name, desc, &ni, &di);
+					jvmGenSegment(ctx, &unit, pHT, &tac, k + 1, j, pScope, &ctx->funcs[fi], ni, di);
+				}
+				k = j;
+			}
+		}
+	}
 
 	tacFree(ctx, &tac);
 
@@ -1640,9 +2356,8 @@ void jvmStart(CompilerContext *ctx, char *szInputFileName, nodeType **ppTree, Sc
 	fwrite(&constant_pool_count, sizeof(U2), 1, fp);
 	fwrite(ctx->g_ArrayConstantPool, (size_t)ctx->g_IndexConstantPool, 1, fp);
 
-	jvmWriteInfo(ctx, fp);
-	jvmWriteInitMethod(ctx, fp);
-	jvmWriteMainMethod(ctx, fp, *ppTree, pHT);
+	jvmWriteClassBody(ctx, fp, &unit);
+	jvmUnitFree(&unit);
 
 	if (!isBigEndian(ctx)) {
 		ARRAY_TO_U2(buff, attributes_count);

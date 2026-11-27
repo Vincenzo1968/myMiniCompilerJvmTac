@@ -1386,13 +1386,7 @@ int main(int argc, char **argv)
 	
 	if ( ret && pTree )
 	{
-		if ( genJVM && ctx.funcCount > 0 )
-		{
-			/* TODO (fase 3): backend JVM per le funzioni */
-			printf("Errore: la generazione di codice JVM per i programmi con funzioni non e' ancora supportata (usare 'tac', 'asm' o l'interprete).\n");
-			ret = 0;
-		}
-		else if ( genTAC )
+		if ( genTAC )
 		{
 			// tacGenerate si occupa di init, build, print e free internamente
 			tacGenerate(&ctx, pTree, &ctx.g_Scope, optLevel);
