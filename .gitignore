@@ -40,6 +40,8 @@ vgcore.*
 *.asm
 *_exec
 
+# Eseguibili dei test
+/test_pthread_inproc
 prg_test/test_pthread_inproc
 prg_test/test_scope
 prg_test/test_scope_nested
