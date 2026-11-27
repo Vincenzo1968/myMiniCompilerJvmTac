@@ -106,45 +106,112 @@ Eqque qua: 55
 
 ### 2. Generate Three-Address Code (TAC) (`-O0` .. `-O3`)
 
-Comparing `-O1` and `-O2`/`-O3` on `prg_test/myprog_02.prg` (which contains a dead `if (1 > 2)` branch and commutative expressions `a * b` and `b * a`):
+Comparing `-O1` and `-O2`/`-O3` on `prg_test/test_all_optimizations.prg`:
 
 ```bash
-src/myCompiler prg_test/myprog_02.prg tac -O1
-```
+$ myCompiler prg_test/test_all_optimizations.prg tac
 
-```text
-print "Inserisci a: "
-read a
-print "Inserisci b: "
+t1 = 1 > 2
+ifFalse t1 goto L001
+c = 999
+goto L002
+L001:
+c = 7
+L002:
+print c
+print "\nPlease enter b: "
 read b
-t2 = a * b
-t3 = t2 + 1
-t4 = b * a
-t5 = t4 + 2
-print "Eqque qua:
-"
-print t3
-print t5
-```
+a = 10
+t2 = b > 5
+ifFalse t2 goto L003
+x = a
+goto L004
+L003:
+x = a
+L004:
+print x
+print "\n"
+i = 0
+s = 0
+L005:
+t3 = i < 4
+ifFalse t3 goto L006
+t4 = s + i
+s = t4
+t5 = i + 1
+i = t5
+goto L005
+L006:
+print s
+print "\n"
+$ myCompiler prg_test/test_all_optimizations.prg tac -O1
 
-With `-O2` (and `-O3`), Global CSE recognizes `b * a` as equivalent to `a * b` and reuses `t2`:
-
-```bash
-src/myCompiler prg_test/myprog_02.prg tac -O2
-```
-
-```text
-print "Inserisci a: "
-read a
-print "Inserisci b: "
+print 7
+print "\nPlease enter b: "
 read b
-t2 = a * b
-t3 = t2 + 1
-t5 = t2 + 2
-print "Eqque qua:
-"
-print t3
-print t5
+a = 10
+t2 = b > 5
+ifFalse t2 goto L003
+x = a
+goto L004
+L003:
+x = a
+L004:
+print x
+print "\n"
+i = 0
+s = 0
+L005:
+t3 = i < 4
+ifFalse t3 goto L006
+t4 = s + i
+s = t4
+t5 = i + 1
+i = t5
+goto L005
+L006:
+print s
+print "\n"
+$ myCompiler prg_test/test_all_optimizations.prg tac -O2
+
+print 7
+print "\nPlease enter b: "
+read b
+t2 = b > 5
+ifFalse t2 goto L003
+goto L004
+L003:
+L004:
+print 10
+print "\n"
+i = 0
+s = 0
+L005:
+t3 = i < 4
+ifFalse t3 goto L006
+t4 = s + i
+s = t4
+t5 = i + 1
+i = t5
+goto L005
+L006:
+print s
+print "\n"
+$ myCompiler prg_test/test_all_optimizations.prg tac -O3
+
+print 7
+print "\nPlease enter b: "
+read b
+t2 = b > 5
+ifFalse t2 goto L003
+goto L004
+L003:
+L004:
+print 10
+print "\n"
+print 6
+print "\n"
+$
 ```
 
 ### 3. Compile to JVM Bytecode (`.class`) and Run
