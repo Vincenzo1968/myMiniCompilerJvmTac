@@ -1,25 +1,29 @@
-/*    Copyright (C) 2026 Vincenzo Lo Cicero
+/*
+Copyright (C) 2026 Vincenzo Lo Cicero
+
+Author: Vincenzo Lo Cicero.
+e-mail: vincenzolocicero68@gmail.com
 
 This file is part of myMiniCompilerJvmTac.
 
-This program is free software: you can redistribute it and/or modify
+myMiniCompilerJvmTac is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
 the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
+(at your option) any side version.
 
-This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
+myMiniCompilerJvmTac is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty
+MERCHANTABILITY or FITNESS FOR PARTICULAR PURPOSE. See the
+GNU General Public License for details.
 
 You should have received a copy of the GNU General Public License
-along with this program.  If not, see <http://www.gnu.org/licenses/>.
+along with mypdfsearch. If not, see <http://www.gnu.org/licenses/>.
 */
 
 #define _POSIX_C_SOURCE 200809L
 
 /*
- * Supporto alle struct: "lowering" a livello di testo sorgente.
+ * Support for structs: "lowering" at the source-text level.
  *
  * Before lexical analysis, the source is rewritten so that every struct disappears:
  *
@@ -93,8 +97,8 @@ typedef struct {
 
 typedef struct {
 	char name[64];
-	char typ[16];      /* int, real, bool, string (se sid < 0) */
-	int sid;          /* struct annidata, oppure -1 */
+	char typ[16];      /* int, real, bool, string (if sid < 0) */
+	int sid;          /* struct nested, or -1 */
 	int ndims;
 	char dims[SL_MAXDIMS][16];
 } Field;
@@ -149,8 +153,8 @@ typedef struct {
 
 typedef struct {
 	int isLeaf;
-	int sid;              /* struct corrente (se !isLeaf) */
-	char name[256];       /* nome mangled (prefisso o foglia) */
+	int sid;              /* struct current (if !isLeaf) */
+	char name[256];       /* name mangled (prefix or leaf) */
 	int nidx;
 	char *idx[SL_MAXDIMS * 2];
 	int total;            /* indices required to access a single element */
@@ -276,7 +280,7 @@ static int tokenize(SL *sl)
 	return tokAdd(sl, K_EOF, i, i, line);
 }
 
-/* ---------------------------------------------------------------- tabelle */
+/* ---------------------------------------------------------------- tables */
 
 static int structFind(const SL *sl, const char *name)
 {
@@ -464,7 +468,7 @@ static int parseStructDef(SL *sl, int i)
 	return i + 1;
 }
 
-/* ---------------------------------------------------------------- scansione preliminare */
+/* ---------------------------------------------------------------- preliminary scan */
 
 static void funcAdd(SL *sl, const char *name, int retSid)
 {
@@ -512,7 +516,7 @@ static int prescan(SL *sl, int *removeFlags)
 	return 1;
 }
 
-/* ---------------------------------------------------------------- utilita' sui token */
+/* ---------------------------------------------------------------- token utility */
 
 /* index of the ')' or ']' token closing the one at i (which is '(' or '['); -1 if not found */
 static int matchClose(const SL *sl, int i)
@@ -564,7 +568,7 @@ static void pathFree(Path *p)
 }
 
 /* Parses a path starting from an identifier that is a struct variable.
-   Restituisce 0 in caso di errore (gia' segnalato). */
+   Returns 0 on error (already reported)). */
 static int parsePath(SL *sl, int i, int iend, Path *p)
 {
 	VarEnt *v = varLookup(sl, sl->toks[i].text);
@@ -698,10 +702,10 @@ static int expandWhole(SL *sl, const Path *p, char **names, int maxn, int forAss
 	return nl;
 }
 
-/* ---------------------------------------------------------------- chiamate */
+/* ---------------------------------------------------------------- calls */
 
 /* Rewrites call arguments: tok[open] = '(' ... tok[close] = ')'.
-   Le struct intere diventano l'elenco dei loro campi. */
+   Entire structs become the list of their fields. */
 static int rewriteArgs(SL *sl, int open, int close, Buf *out, const char *extraLeading)
 {
 	int a = open + 1, first = 1;
@@ -746,7 +750,7 @@ static int rewriteArgs(SL *sl, int open, int close, Buf *out, const char *extraL
 	return !sl->err;
 }
 
-/* ---------------------------------------------------------------- dichiarazioni */
+/* ---------------------------------------------------------------- statements */
 
 static void emitLeafDecl(Buf *out, const char *name, const Leaf *lf, char dims[][16], int nd)
 {
@@ -960,7 +964,7 @@ static int rewriteFuncHeader(SL *sl, int i, Buf *out)
 	return close + 1;
 }
 
-/* ---------------------------------------------------------------- riscrittura */
+/* ---------------------------------------------------------------- rewriting */
 
 static void emitTok(SL *sl, int i, Buf *out, int flat, int *first)
 {
@@ -1000,7 +1004,7 @@ static void rewriteRange(SL *sl, int i0, int i1, Buf *out, int flat)
 
 		if (t->kind != K_ID) { emitTok(sl, i, out, flat, &first); i++; continue; }
 
-		/* ---- blocchi e scope ---- */
+		/* ---- blocks and scope ---- */
 		if (!flat && strcmp(t->text, "begin") == 0) {
 			if (!slScopePush(sl)) { slError(sl, t->line, "Blocks nested too deeply.", NULL); return; }
 			if (sl->nscopes == 2) {
@@ -1037,7 +1041,7 @@ static void rewriteRange(SL *sl, int i0, int i1, Buf *out, int flat)
 			continue;
 		}
 
-		/* ---- dichiarazione di variabili struct:  Nome a, b; ---- */
+		/* ---- declaration of struct variables: Name a, b; ---- */
 		if (!flat && structFind(sl, t->text) >= 0 && isKind(sl, i + 1, K_ID) &&
 		    (isTok(sl, i + 2, ";") || isTok(sl, i + 2, ",") || isTok(sl, i + 2, "="))) {
 			int sid = structFind(sl, t->text), j = i + 1;
@@ -1328,7 +1332,7 @@ static void rewriteRange(SL *sl, int i0, int i1, Buf *out, int flat)
 	}
 }
 
-/* ---------------------------------------------------------------- punto d'ingresso */
+/* ---------------------------------------------------------------- start point */
 
 int structsLower(CompilerContext *ctx)
 {
@@ -1339,7 +1343,7 @@ int structsLower(CompilerContext *ctx)
 
 	if (!ctx->g_szInput) return 1;
 
-	/* percorso veloce: nessuna parola 'struct' */
+	/* fast track: no word 'struct' */
 	{
 		const char *p = ctx->g_szInput;
 		while ((p = strstr(p, "struct")) != NULL) {

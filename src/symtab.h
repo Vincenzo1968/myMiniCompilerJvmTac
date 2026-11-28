@@ -1,16 +1,17 @@
-/*    Copyright (C) 2026 Vincenzo Lo Cicero
+/*
+Copyright (C) 2026 Vincenzo Lo Cicero
 
 Author: Vincenzo Lo Cicero.
 e-mail: vincenzolocicero68@gmail.com
 
 This file is part of myMiniCompilerJvmTac.
 
-mypdfsearch is free software: you can redistribute it and/or modify
+myMiniCompilerJvmTac is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
 the Free Software Foundation, either version 3 of the License, or
 (at your option) any side version.
 
-mypdfsearch is distributed in the hope that it will be useful,
+myMiniCompilerJvmTac is distributed in the hope that it will be useful,
 but WITHOUT ANY WARRANTY; without even the implied warranty
 MERCHANTABILITY or FITNESS FOR PARTICULAR PURPOSE. See the
 GNU General Public License for details.
@@ -86,12 +87,12 @@ typedef struct tagHashTable
 	char bInizializzato;
 	char bDecl;
 	int frameIndex;
-	/* Nome univoco nell'intero programma (es. "x", "x.1", "x.2"...): e' quello
-	   usato da TAC, JVM e ASM, cosi' variabili omonime di scope diversi non
-	   collidono. Per le variabili dello scope globale coincide con Key. */
+	// A unique name within the entire program (e.g., "x", "x.1", "x.2"...): this is the name
+	// used by TAC, JVM, and ASM, ensuring that variables with the same name in different scopes
+	// do not collide. For variables in the global scope, it coincides with the Key.
 	char *uniqueName;
 	/* 1 if the variable is declared at global level (before the main block):
-	   i backend la tengono in memoria statica, visibile a tutte le funzioni. */
+	   the backends keep it in static memory, visible to all functions. */
 	char isGlobal;
 	struct tagHashTable *next;
 } HashTable;
@@ -112,13 +113,13 @@ void htPrintTAC(CompilerContext *ctx, HashTable **pHashTable);
 void scopeInit(CompilerContext *ctx, Scope *pScope);
 void scopePush(CompilerContext *ctx, Scope *pScope);
 int  scopePop(CompilerContext *ctx, Scope *pScope);
-/* Like scopePop, but does NOT destroy scope variables: moves them to the scope
-   radice (stack[0]) con chiave = uniqueName, cosi' TAC/JVM/ASM possono ancora
-   risolverle dopo il parsing. Usata solo dal parser su g_Scope. */
+// Like scopePop, but does NOT destroy scope variables: moves them to the scope
+// root (stack[0]) with key = uniqueName, so that TAC/JVM/ASM can still
+// resolve them after parsing. Used only by the parser on g_Scope.
 int  scopePopKeep(CompilerContext *ctx, Scope *pScope);
-/* Deep copy (sizes + zeroed storage) of an array definition: the interpreter
-   ne crea una nuova per ogni ingresso nel blocco che lo dichiara. Gli elementi stringa
-   partono NULL, quindi non serve copiarne il contenuto. */
+// Deep copy (sizes + zeroed storage) of an array definition: the interpreter
+// It creates a new one each time the block in which it is declared is entered. The string
+// elements start out as NULL, so there is no need to copy their contents.
 ArrayDef *arrayDefClone(const ArrayDef *src, enumTipo1 t1);
 void arrayDefFreeEmpty(ArrayDef *a);
 /* Assigns a unique name to the newly declared variable in the current scope. */

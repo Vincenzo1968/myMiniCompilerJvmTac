@@ -1,16 +1,17 @@
-/*    Copyright (C) 2026 Vincenzo Lo Cicero
+/*
+Copyright (C) 2026 Vincenzo Lo Cicero
 
 Author: Vincenzo Lo Cicero.
 e-mail: vincenzolocicero68@gmail.com
 
 This file is part of myMiniCompilerJvmTac.
 
-mypdfsearch is free software: you can redistribute it and/or modify
+myMiniCompilerJvmTac is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
 the Free Software Foundation, either version 3 of the License, or
 (at your option) any side version.
 
-mypdfsearch is distributed in the hope that it will be useful,
+myMiniCompilerJvmTac is distributed in the hope that it will be useful,
 but WITHOUT ANY WARRANTY; without even the implied warranty
 MERCHANTABILITY or FITNESS FOR PARTICULAR PURPOSE. See the
 GNU General Public License for details.
@@ -27,9 +28,7 @@ along with mypdfsearch. If not, see <http://www.gnu.org/licenses/>.
 #include "context.h"
 #include "endianess.h"
 
-/*
-ritorna 1 se la macchina è big-endian, 0 se little-endian
-*/
+// returns 1 if the machine is big-endian, 0 if little-endian
 char isBigEndian(CompilerContext *ctx)
 {
 	(void)ctx;

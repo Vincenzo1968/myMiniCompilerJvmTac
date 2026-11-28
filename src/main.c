@@ -1,16 +1,17 @@
-/*    Copyright (C) 2026 Vincenzo Lo Cicero
+/*
+Copyright (C) 2026 Vincenzo Lo Cicero
 
 Author: Vincenzo Lo Cicero.
 e-mail: vincenzolocicero68@gmail.com
 
 This file is part of myMiniCompilerJvmTac.
 
-mypdfsearch is free software: you can redistribute it and/or modify
+myMiniCompilerJvmTac is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
 the Free Software Foundation, either version 3 of the License, or
 (at your option) any side version.
 
-mypdfsearch is distributed in the hope that it will be useful,
+myMiniCompilerJvmTac is distributed in the hope that it will be useful,
 but WITHOUT ANY WARRANTY; without even the implied warranty
 MERCHANTABILITY or FITNESS FOR PARTICULAR PURPOSE. See the
 GNU General Public License for details.
@@ -19,17 +20,6 @@ You should have received a copy of the GNU General Public License
 along with mypdfsearch. If not, see <http://www.gnu.org/licenses/>.
 */
 
-/*
-Architettura :
-
-    Unica pipeline di compilazione: AST -> TAC (-O0..-O3) -> JVM (.class),
-    con -O3 attivo di default per il target jvm (e modificabile da riga
-    di comando con -O0..-O3).
-
-    Backend JVM aggiornato (src/jvm.c): allineato alle ottimizzazioni del TAC,
-    con calcolo corretto dello stack massimo, gestione dei temporanei/label,
-    supporto a ldc/ldc_w, confronti su interi/reali e array linearizzati.
-*/
 #define _POSIX_C_SOURCE 200809L
 
 #ifdef HAVE_CONFIG_H
@@ -334,14 +324,14 @@ static void interpDiscard(CompilerContext *ctx, nodeType *p)
 		free(r.strVal);
 }
 
-/* Livello dello scope globale dell'interprete: ctx_init fa scopeInit (livello 0, vuoto) e scopePush
-   (livello 1, dove interpInitGlobalScope inserisce le variabili globali). */
+/* Interpreter's global scope level: `ctx_init` performs `scopeInit` (level 0, empty) and `scopePush`
+(level 1, where `interpInitGlobalScope` inserts the global variables). */
 #define INTERP_GLOBAL_LEVEL 1
 
 /* Function call: arguments evaluated in the caller's scope, then a new frame that
-   vede solo lo scope globale e i propri parametri. I parametri 'ref' scalari sono passati
-   per copia-ritorno (valore finale riscritto nella variabile del chiamante); gli array
-   condividono il vettore del chiamante. */
+   It only sees the global scope and its own parameters. Scalar 'ref' parameters are passed
+   by copy-return (the final value is written back into the caller's variable); arrays
+   share the caller's vector. */
 static Valore interpCall(CompilerContext *ctx, nodeType *p)
 {
 	Valore zero;
@@ -430,7 +420,7 @@ static Valore interpCall(CompilerContext *ctx, nodeType *p)
 		scopeInsert(ctx, &ctx->interpScope, fp->name, fp->t0, fp->t1, T_VAR, v, 1, 0);
 	}
 
-	/* 3. corpo */
+	/* 3. body */
 	ctx->interpReturning = 0;
 	interpret(ctx, fd->body);
 
@@ -806,9 +796,10 @@ Valore interpret(CompilerContext *ctx, nodeType *p)
 					retVal = leftVal;
 
 					/* String coming from a constant or variable: the scope must own
-					   una copia, altrimenti lo stesso buffer verrebbe liberato sia da freeNode (AST o
-					   altra variabile) sia da htFree. Il risultato di un'espressione (es. concatenazione)
-					   e' gia' un buffer nuovo: lo prende lo scope. */
+					   a copy; otherwise, the same buffer would be deallocated both by `freeNode`
+					   (via an AST or another variable) and by `htFree`.
+					   The result of an expression (e.g., concatenation) is already a new buffer,
+					   which is then taken over by the scope. */
 					if ( p->opr.op[0]->type1 == T_STRING && !isFreshString(p->opr.op[1]) && retVal.strVal != NULL )
 					{
 						retVal.strVal = strdup(retVal.strVal);
@@ -1389,7 +1380,7 @@ int main(int argc, char **argv)
 	{
 		if ( genTAC )
 		{
-			// tacGenerate si occupa di init, build, print e free internamente
+			// tacGenerate it handles init, build, print, and free internally
 			tacGenerate(&ctx, pTree, &ctx.g_Scope, optLevel);
 		}
 		else if ( genJVM )

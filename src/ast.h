@@ -1,16 +1,17 @@
-/*    Copyright (C) 2026 Vincenzo Lo Cicero
+/*
+Copyright (C) 2026 Vincenzo Lo Cicero
 
 Author: Vincenzo Lo Cicero.
 e-mail: vincenzolocicero68@gmail.com
 
 This file is part of myMiniCompilerJvmTac.
 
-mypdfsearch is free software: you can redistribute it and/or modify
+myMiniCompilerJvmTac is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
 the Free Software Foundation, either version 3 of the License, or
 (at your option) any side version.
 
-mypdfsearch is distributed in the hope that it will be useful,
+myMiniCompilerJvmTac is distributed in the hope that it will be useful,
 but WITHOUT ANY WARRANTY; without even the implied warranty
 MERCHANTABILITY or FITNESS FOR PARTICULAR PURPOSE. See the
 GNU General Public License for details.
@@ -29,14 +30,14 @@ typedef struct CompilerContext CompilerContext;
 
 typedef enum { typeConst, typeId, typeOperator } nodeEnum;
 
-/* costanti */
+/* constants */
 typedef struct
 {
 	char lexeme[128]; // used only for numeric constants.
 	Valore value;
 } constNodeType;
 
-/* identificatori */
+/* identifiers */
 typedef struct
 {
 	char *name;
@@ -45,13 +46,13 @@ typedef struct
 	char bInizializzato;
 } idNodeType;
 
-/* operatori */
+/* operators */
 typedef struct
 {
-    int oper;                   /* operatore */
+    int oper;                   /* operator */
     int nops;  
-    int blockId;                /* numero di operandi */
-    struct nodeTypeTag *op[1];  /* operandi (espandibile) */
+    int blockId;                /* number of operands */
+    struct nodeTypeTag *op[1];  /* operands (expandable) */
 } operatorNodeType;
 
 typedef struct nodeTypeTag
@@ -61,13 +62,13 @@ typedef struct nodeTypeTag
 	enumTipo1 type1;			/* T_INTEGER, T_REAL, T_STRING, T_BOOLEAN */
 	enumTipo2 type2;			/* T_CONST, T_VAR */
 
-    /* union deve essere l'ultima voce in nodeType */
-    /* perché operNodeType può crescere dinamicamente */
+	// union must be the last entry in nodeType 
+	// because operNodeType can grow dynamically 
     union
 	{
-        constNodeType con;			/* costanti */
-        idNodeType id;				/* identificatori */
-        operatorNodeType opr;		/* operatori */
+        constNodeType con;			/* constants */
+        idNodeType id;				/* identifiers */
+        operatorNodeType opr;		/* operators */
     };
 } nodeType;
 

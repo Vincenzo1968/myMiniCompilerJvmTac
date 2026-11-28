@@ -1,16 +1,17 @@
-/*    Copyright (C) 2026 Vincenzo Lo Cicero
+/*
+Copyright (C) 2026 Vincenzo Lo Cicero
 
 Author: Vincenzo Lo Cicero.
 e-mail: vincenzolocicero68@gmail.com
 
 This file is part of myMiniCompilerJvmTac.
 
-mypdfsearch is free software: you can redistribute it and/or modify
+myMiniCompilerJvmTac is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
 the Free Software Foundation, either version 3 of the License, or
 (at your option) any side version.
 
-mypdfsearch is distributed in the hope that it will be useful,
+myMiniCompilerJvmTac is distributed in the hope that it will be useful,
 but WITHOUT ANY WARRANTY; without even the implied warranty
 MERCHANTABILITY or FITNESS FOR PARTICULAR PURPOSE. See the
 GNU General Public License for details.
@@ -67,12 +68,6 @@ along with mypdfsearch. If not, see <http://www.gnu.org/licenses/>.
 #define ARRAY_TO_F8(arr,v){ buff = (BYTE*)&v;\
 		FORMAT_QWORD(arr,0);\
 		v = *( (F8*)arr ); }
-
-
-
-
-
-
 
 static void jvmUpdateStack(CompilerContext *ctx, int delta)
 {
@@ -836,7 +831,7 @@ void jvmTypeCheck(CompilerContext *ctx, int t1, int t2)
 	}
 }
 
-/* Alloca ogni array come array 1D linearizzato di (sizes[0] * ... * sizes[n-1]) elementi,
+/* Allocates each array as a linearized 1D array of (sizes[0] * ... * sizes[n-1]) elements,
  * consistent with the linearized offset produced by tac.c */
 void MakeBytecodeDeclArrayMain(CompilerContext *ctx, jvmHashTable **pHT, HashTable *pDati)
 {
@@ -885,10 +880,11 @@ void MakeBytecodeDeclInitMain(CompilerContext *ctx, jvmHashTable **pHT, Scope *p
 		while (t != NULL) {
 			scopeFind(ctx, pScope, t->Key, &Dati);
 
-			/* Scalar initializers ("int x = 8;") are no longer emitted here:
-			   sono assegnazioni nell'AST e quindi arrivano dal TAC, al punto di
-			   dichiarazione. Qui restano solo le allocazioni degli array. */
-			if (t->Tipo0 == T_ARRAY) {
+			// Scalar initializers ("int x = 8;") are no longer emitted here:
+			// These are assignments within the AST, and thus they originate from the TAC,
+			// at the point of declaration. Only array allocations remain here.
+			if (t->Tipo0 == T_ARRAY)
+			{
 				MakeBytecodeDeclArrayMain(ctx, pHT, &Dati);
 			}
 
@@ -897,9 +893,9 @@ void MakeBytecodeDeclInitMain(CompilerContext *ctx, jvmHashTable **pHT, Scope *p
 	}
 }
 
-/* ---------------- Traduzione TAC -> Bytecode JVM ---------------- */
+/* ---------------- Translation TAC -> Bytecode JVM ---------------- */
 
-/* ---------------- Funzioni, globali e segmenti (fase 3) ---------------- */
+/* ---------------- Functions, globals, and segments (phase 3) ---------------- */
 
 enum { VK_LOCAL = 0, VK_STATIC, VK_REF };
 
@@ -1116,7 +1112,7 @@ static U2 jvmFieldrefIdx(CompilerContext *ctx, jvmHashTable **pHT, JvmUnit *unit
 }
 
 /* Methodref of a static method in the current class; also returns the indices
-   delle Utf8 di nome e descrittore (servono per la method_info). */
+   UTF-8 strings for the name and descriptor (used for `method_info`). */
 static U2 jvmMethodrefIdx(CompilerContext *ctx, jvmHashTable **pHT, const char *name, const char *desc,
                           U2 *pNameIdx, U2 *pDescIdx)
 {
@@ -1839,7 +1835,7 @@ static void MakeBytecodeFromTAC(CompilerContext *ctx, const TACList *tac, int fr
 			U2 methodRef = 60;
 			int argSlots = 1;
 
-			/* Se in->type1 specifica T_BOOLEAN ma l'operando era int (es. constant folding),
+			/* If in->type 1 specific T BOOLEAN but the operand was int (e.g. constant folding),
 			 * respects in->type1 to print true/false */
 			if (in->type1 == T_BOOLEAN && pType == T_INTEGER)
 				pType = T_BOOLEAN;
@@ -2080,7 +2076,7 @@ static void jvmGenSegment(CompilerContext *ctx, JvmUnit *unit, jvmHashTable **pH
 	ctx->g_cur_stack = 0;
 
 	if (!unit->funcMode) {
-		/* programma senza funzioni: comportamento storico */
+		/* program without functions: legacy behavior */
 		MakeBytecodeDeclInitMain(ctx, pHT, pScope);
 		MakeBytecodeFromTAC(ctx, tac, from, to, pHT, pScope, &seg);
 		jvmEmitU1(ctx, jvm_return, 0);
@@ -2242,7 +2238,7 @@ static void jvmWriteClassBody(CompilerContext *ctx, FILE *fp, const JvmUnit *uni
 		jvmWriteU2(ctx, fp, unit->fields[i].descIdx);
 		jvmWriteU2(ctx, fp, 0);
 	}
-	jvmWriteU2(ctx, fp, (U2)(1 + unit->nMethods)); /* <init> + main + funzioni */
+	jvmWriteU2(ctx, fp, (U2)(1 + unit->nMethods)); /* <init> + main + functions */
 	jvmWriteInitMethod(ctx, fp);
 	for (i = 0; i < unit->nMethods; i++)
 		jvmWriteMethodRec(ctx, fp, &unit->methods[i], (i == 0) ? (ACC_PUBLIC | ACC_STATIC) : ACC_STATIC);

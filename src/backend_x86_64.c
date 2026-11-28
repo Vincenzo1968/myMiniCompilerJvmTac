@@ -1,3 +1,25 @@
+/*
+Copyright (C) 2026 Vincenzo Lo Cicero
+
+Author: Vincenzo Lo Cicero.
+e-mail: vincenzolocicero68@gmail.com
+
+This file is part of myMiniCompilerJvmTac.
+
+myMiniCompilerJvmTac is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any side version.
+
+myMiniCompilerJvmTac is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty
+MERCHANTABILITY or FITNESS FOR PARTICULAR PURPOSE. See the
+GNU General Public License for details.
+
+You should have received a copy of the GNU General Public License
+along with mypdfsearch. If not, see <http://www.gnu.org/licenses/>.
+*/
+
 #define _POSIX_C_SOURCE 200809L
 #include <stdio.h>
 #include <stdlib.h>
@@ -183,7 +205,7 @@ static long long const_ivalue(const char *str)
 }
 
 /* Type of a TAC operand: literals from their syntax, variables and temporaries
-   dal tipo con cui sono stati registrati. */
+   from the type with which they were recorded. */
 static enumTipo1 operand_type(const char *s, VarTable *vt, enumTipo1 dflt)
 {
     if (!s) return dflt;
@@ -196,7 +218,7 @@ static enumTipo1 operand_type(const char *s, VarTable *vt, enumTipo1 dflt)
 }
 
 /* Registers a variable or temporary. For user variables, the type is the one
-   dichiarato (la symtab contiene i nomi univoci); le globali vanno in memoria statica. */
+   declared (the symtab contains the unique names); globals go into static memory. */
 static void register_operand(CompilerContext *ctx, Scope *pScope, const char *name, enumTipo1 dflt, VarTable *vt)
 {
     enumTipo1 t = dflt;
@@ -215,7 +237,7 @@ static void register_operand(CompilerContext *ctx, Scope *pScope, const char *na
 }
 
 /* Memory operand of a scalar variable: "[rbp + n]", "[rel g_x]", or "[r10]"
-   (parametro 'ref': prima si carica in r10 l'indirizzo). */
+   ('ref' parameter: the address is first loaded into r10). */
 static void mem_ref(FILE *out, VarTable *vt, const char *name, enumTipo1 type, char *buf, size_t n)
 {
     VarSlot *sl = find_slot(vt, name);
@@ -342,7 +364,7 @@ static void emit_load_int_reg(FILE *out, const char *operand, VarTable *vt, cons
 }
 
 /* Loads an operand into the destination type register (rax or xmm0), converting if needed:
-   int -> real con cvtsi2sd, real -> int/bool con troncamento (cvttsd2si), come l'interprete. */
+   int -> real with cvtsi2sd; real -> int/bool with truncation (cvttsd2si), just like the interpreter. */
 static void emit_load_as(CompilerContext *ctx, FILE *out, const char *operand, enumTipo1 dest,
                          VarTable *vt, StrConstTable *st)
 {
@@ -370,9 +392,9 @@ static void emit_store_operand(FILE *out, const char *dest, enumTipo1 type, VarT
 }
 
 /* Generates a function (fd != NULL) or the main block (fd == NULL) starting
-   dalle istruzioni TAC [start, end). Ogni funzione ha il proprio stack frame.
-   Convenzione di chiamata: argomenti impilati in ordine (il primo per primo, 8 byte
-   ciascuno), a chi chiama il compito di toglierli; risultato in rax (xmm0 se real). */
+   from the TAC instructions [start, end). Each function has its own stack frame. 
+   Calling convention: arguments pushed in order (the first one first, 8 bytes
+   each), with the caller responsible for removing them; result in rax (xmm0 if real). */
 static void gen_segment(CompilerContext *ctx, FILE *out, TACList *tac, int start, int end, Scope *pScope,
                         StrConstTable *st_, GlobalTable *gt, const FuncDef *fd)
 {
@@ -384,7 +406,7 @@ static void gen_segment(CompilerContext *ctx, FILE *out, TACList *tac, int start
     vt.current_offset = -8;
     vt.gt = gt;
 
-    /* argomenti: p0 all'indirizzo piu' alto, poi a scendere (rbp+8 = indirizzo di ritorno) */
+    /* arguments: p0 at the highest address, then descending (rbp+8 = return address) */
     if (fd) {
         for (int k = 0; k < fd->nparams; k++) {
             const FuncParam *fp = &fd->params[k];
@@ -394,7 +416,7 @@ static void gen_segment(CompilerContext *ctx, FILE *out, TACList *tac, int start
         }
     }
 
-    /* PASSAGGIO 1: costanti stringa, variabili e temporanei */
+    /* STEP 1: string constants, variables, and temporaries */
     for (int i = start; i < end; i++) {
         const TACInstr *in = &tac->items[i];
         if (in->dead) continue;
@@ -462,7 +484,7 @@ static void gen_segment(CompilerContext *ctx, FILE *out, TACList *tac, int start
         frame_size = ((frame_size / 16) + 1) * 16;
     }
 
-    /* PASSAGGIO 3: prologo */
+    /* STEP 3: prologue */
     if (fd)
         fprintf(out, "f_%s:\n", fd->name);
     else
@@ -816,7 +838,7 @@ void x86_64Generate(CompilerContext *ctx, TACList *tac, Scope *pScope, const cha
     memset(&gt, 0, sizeof(gt));
 
     /* Text is produced in a buffer: .data and .bss sections must be written first,
-       ma le costanti real e le variabili globali si scoprono mentre si traducono le istruzioni. */
+       but real constants and global variables are discovered while the instructions are being translated. */
     char *textBuf = NULL;
     size_t textLen = 0;
     FILE *out = open_memstream(&textBuf, &textLen);
@@ -854,7 +876,7 @@ void x86_64Generate(CompilerContext *ctx, TACList *tac, Scope *pScope, const cha
     fprintf(out, "section .note.GNU-stack noalloc noexec nowrite progbits\n");
     fclose(out);
 
-    /* Intestazione e sezioni dati */
+    /* Header and data sections */
     fprintf(fp, "global main\n");
     fprintf(fp, "extern printf\n");
     fprintf(fp, "extern scanf\n");

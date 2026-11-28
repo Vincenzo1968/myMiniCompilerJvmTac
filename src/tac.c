@@ -1,16 +1,17 @@
-/*    Copyright (C) 2026 Vincenzo Lo Cicero
+/*
+Copyright (C) 2026 Vincenzo Lo Cicero
 
 Author: Vincenzo Lo Cicero.
 e-mail: vincenzolocicero68@gmail.com
 
 This file is part of myMiniCompilerJvmTac.
 
-mypdfsearch is free software: you can redistribute it and/or modify
+myMiniCompilerJvmTac is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
 the Free Software Foundation, either version 3 of the License, or
 (at your option) any side version.
 
-mypdfsearch is distributed in the hope that it will be useful,
+myMiniCompilerJvmTac is distributed in the hope that it will be useful,
 but WITHOUT ANY WARRANTY; without even the implied warranty
 MERCHANTABILITY or FITNESS FOR PARTICULAR PURPOSE. See the
 GNU General Public License for details.
@@ -18,6 +19,7 @@ GNU General Public License for details.
 You should have received a copy of the GNU General Public License
 along with mypdfsearch. If not, see <http://www.gnu.org/licenses/>.
 */
+
 #define _POSIX_C_SOURCE 200809L
 
 #ifdef HAVE_CONFIG_H
@@ -102,7 +104,7 @@ void tacEmit(CompilerContext *ctx, TACList *list, TACOp op, const char *arg1, co
 }
 
 /* =========================================================================
- * PASSAGGIO 1: Ottimizzazione sull'AST (Constant Folding & Semplificazioni)
+ * STEP 1: Optimization on the AST (Constant Folding & Simplifications)
  * ========================================================================= */
 
 static int isZeroConst(CompilerContext *ctx, nodeType *n)
@@ -144,7 +146,7 @@ nodeType *tacOptimizeAST(CompilerContext *ctx, nodeType *p)
         p->opr.op[i] = tacOptimizeAST(ctx, p->opr.op[i]);
     }
 
-    /* Constant folding unario: -costante, !costante */
+    /* Constant folding unary: -constant, !constant */
     if (p->opr.oper == T_OP_UMINUS && p->opr.nops >= 1 &&
         p->opr.op[0] != NULL && p->opr.op[0]->type == typeConst) {
         nodeType *c = p->opr.op[0];
@@ -176,7 +178,7 @@ nodeType *tacOptimizeAST(CompilerContext *ctx, nodeType *p)
         return res;
     }
 
-    /* Constant folding binario aritmetico */
+    /* Constant folding binary arithmetic */
     if (p->opr.nops == 2 && p->opr.op[0] != NULL && p->opr.op[1] != NULL &&
         p->opr.op[0]->type == typeConst && p->opr.op[1]->type == typeConst) {
         nodeType *l = p->opr.op[0];
@@ -226,7 +228,7 @@ nodeType *tacOptimizeAST(CompilerContext *ctx, nodeType *p)
         }
     }
 
-    /* Semplificazioni algebriche */
+    /* Algebraic simplifications */
     if (p->opr.nops == 2 && p->opr.op[0] != NULL && p->opr.op[1] != NULL) {
         if (p->opr.oper == T_OP_PLUS) {
             if (isZeroConst(ctx, p->opr.op[1])) { nodeType *k = p->opr.op[0]; p->opr.op[0] = NULL; freeNode(ctx, p); return k; }
@@ -259,7 +261,7 @@ nodeType *tacOptimizeAST(CompilerContext *ctx, nodeType *p)
 }
 
 /* =========================================================================
- * PASSAGGIO 2: Traduzione AST -> TACList
+ * STEP 2: AST -> TACList translation
  * ========================================================================= */
 
 static char *emitTAC(CompilerContext *ctx, TACList *tac, Scope *pScope, nodeType *p);
@@ -370,7 +372,7 @@ static char *emitTAC(CompilerContext *ctx, TACList *tac, Scope *pScope, nodeType
             }
             fd = &ctx->funcs[fi];
             /* first evaluate all arguments by value, then emit param instructions
-               consecutivi: una chiamata annidata non si infila tra due 'param' */
+               consecutive: a nested call does not slip between two 'param' */
             for (i = 0; i < n && i < 32; i++) {
                 if (fd->params[i].t0 == T_ARRAY || fd->params[i].isRef)
                     continue;
@@ -557,7 +559,7 @@ static int cfgEliminateUnreachable(CompilerContext *ctx, TACList *tac, CFG *cfg)
 static int cfgGlobalLivenessDCE(CompilerContext *ctx, TACList *tac, const CFG *cfg);
 
 /* =========================================================================
- * PASSAGGIO 3: Ottimizzatore -O1 su TACList
+ * STEP 3: -O1 Optimizer on TACList
  * ========================================================================= */
 
 typedef struct {
@@ -704,7 +706,7 @@ void tacOptimizeO1(CompilerContext *ctx, TACList *tac)
         changed = 0;
         envClear(ctx, &env);
 
-        /* 1) Propagazione locale + Folding + Semplificazioni algebriche */
+        /* 1) Local propagation + Folding + Algebraic simplifications */
         for (i = 0; i < tac->count; i++) {
             TACInstr *in = &tac->items[i];
             double d1, d2;
@@ -737,7 +739,7 @@ void tacOptimizeO1(CompilerContext *ctx, TACList *tac)
             }
 
             /* a call may read and write globals and variables passed by
-               riferimento: nessuna informazione sui valori sopravvive */
+               reference: no information about the values ​​survives */
             if (in->op == TAC_CALL) {
                 envClear(ctx, &env);
                 if (in->res) envSet(ctx, &env, in->res, NULL);
@@ -766,7 +768,7 @@ void tacOptimizeO1(CompilerContext *ctx, TACList *tac)
                 }
             }
 
-            /* Constant folding su operatori binari aritmetici e relazionali */
+            /* Constant folding on arithmetic and relational binary operators */
             if ((in->op >= TAC_ADD && in->op <= TAC_NE) &&
                 isNumericLit(ctx, in->arg1, &d1, &i1) && isNumericLit(ctx, in->arg2, &d2, &i2)) {
                 char buf[64];
@@ -837,7 +839,7 @@ void tacOptimizeO1(CompilerContext *ctx, TACList *tac)
                 in->op = TAC_ASSIGN; changed = 1;
             }
 
-            /* Folding logico AND / OR */
+            /* Logical folding AND / OR */
             if ((in->op == TAC_AND || in->op == TAC_OR) &&
                 (isBoolLit(ctx, in->arg1, &b1) || (isNumericLit(ctx, in->arg1, &d1, &i1) && ((b1 = (d1 != 0.0)), 1))) &&
                 (isBoolLit(ctx, in->arg2, &b2) || (isNumericLit(ctx, in->arg2, &d2, &i2) && ((b2 = (d2 != 0.0)), 1)))) {
@@ -849,7 +851,7 @@ void tacOptimizeO1(CompilerContext *ctx, TACList *tac)
                 changed = 1;
             }
 
-            /* Folding unario NEG / NOT */
+            /* Unary folding NEG / NOT */
             if (in->op == TAC_NEG && isNumericLit(ctx, in->arg1, &d1, &i1)) {
                 char buf[64];
                 if (i1) sprintf(buf, "%d", -(int)d1);
@@ -865,7 +867,7 @@ void tacOptimizeO1(CompilerContext *ctx, TACList *tac)
                 changed = 1;
             }
 
-            /* Aggiorna mappa di propagazione */
+            /*Update propagation map */
             if (in->op == TAC_ASSIGN && in->res && in->arg1) {
                 if (strcmp(in->res, in->arg1) == 0) {
                     in->dead = 1;
@@ -878,7 +880,7 @@ void tacOptimizeO1(CompilerContext *ctx, TACList *tac)
             }
         }
 
-        /* 2) Dead Code Elimination: rimuove assegnamenti mai letti */
+        /* 2) Dead Code Elimination: removes unread assignments */
         for (i = 0; i < tac->count; i++) {
             TACInstr *in = &tac->items[i];
             if (in->dead) continue;
@@ -892,7 +894,7 @@ void tacOptimizeO1(CompilerContext *ctx, TACList *tac)
             }
         }
 
-        /* 3) Peephole: `goto Lx` subito prima di `Lx:` e label inutilizzate */
+        /* 3) Peephole: `goto Lx` immediately before `Lx:` and unused labels */
         for (i = 0; i < tac->count; i++) {
             if (tac->items[i].dead) continue;
             if (tac->items[i].op == TAC_GOTO) {
@@ -913,7 +915,7 @@ void tacOptimizeO1(CompilerContext *ctx, TACList *tac)
             }
         }
 
-        /* 4) CFG: eliminazione codice irraggiungibile e liveness DCE globale */
+        /* 4) CFG: elimination of unreachable code and global liveness-based dead code elimination (DCE) */
         tacCompact(ctx, tac);
         if (tac->count > 0) {
             CFG cfg;
@@ -929,8 +931,8 @@ void tacOptimizeO1(CompilerContext *ctx, TACList *tac)
 }
 
 /* Prints an operand; string literals display newlines, tabs, etc. as
-   sequenze di escape (\n, \t...) invece di spezzare la riga. Solo per la stampa:
-   gli operandi memorizzati nel TAC restano invariati e i backend li leggono come prima. */
+   escape sequences (\n, \t...) instead of breaking the line. For printing purposes only:
+   the operands stored in the TAC remain unchanged, and the backends read them just as before. */
 static void tacPrintOperand(const char *s)
 {
     if (!s) return;
@@ -1014,8 +1016,8 @@ static int tacHasCall(const TACList *t)
 }
 
 /* Optimizes a segment (main or function body) at the highest safe level:
-   - parametri 'ref': due parametri possono riferirsi alla stessa variabile -> nessuna ottimizzazione;
-   - parametri array o chiamate: alias / effetti collaterali invisibili ai passi globali -> al piu' -O1. */
+- 'ref' parameters: two parameters may refer to the same variable -> no optimization; 
+- array parameters or function calls: potential aliasing / side effects invisible to global analysis -> at most -O1. */
 static void tacOptimizeSegment(CompilerContext *ctx, TACList *seg, int optLevel, int hasRef, int hasArr)
 {
     if (hasRef) optLevel = 0;
@@ -1107,7 +1109,7 @@ void tacGenerate(CompilerContext *ctx, nodeType *pTree, Scope *pScope, int optLe
 }
 
 /* =========================================================================
- * PASSAGGIO 4: Ottimizzatore -O2 (Basic Blocks, CFG, CSE, Global Liveness)
+ * STEP 4: Optimizer -O2 (Basic Blocks, CFG, CSE, Global Liveness)
  * ========================================================================= */
 
 static void tacCompact(CompilerContext *ctx, TACList *tac)
@@ -1538,7 +1540,7 @@ static int cfgGlobalCSE(CompilerContext *ctx, TACList *tac, const CFG *cfg)
     return changed;
 }
 
-/* --- Global Live Variable Analysis (DCE tra rami if/else e cicli) --- */
+/* --- Global Live Variable Analysis (DCE among branches if/else and cicli) --- */
 
 static int isLiteralStr(CompilerContext *ctx, const char *s)
 {
@@ -2074,9 +2076,9 @@ void tacOptimizeO2(CompilerContext *ctx, TACList *tac)
 }
 
 /* =========================================================================
- * PASSAGGIO 5: Ottimizzatore -O3 (Strength Reduction, Jump Threading,
- *                                LICM su Dominatori, Loop Unrolling)
- * ========================================================================= */
+* STEP 5: Optimizer -O3 (Strength Reduction, Jump Threading,
+* LICM based on Dominators, Loop Unrolling)
+* ========================================================================= */
 
 static int tacStrengthReduction(CompilerContext *ctx, TACList *tac)
 {
@@ -2182,7 +2184,7 @@ static int cfgJumpThreading(CompilerContext *ctx, TACList *tac, const CFG *cfg)
     return changed;
 }
 
-/* --- Dominatori e Loop-Invariant Code Motion (LICM) --- */
+/* --- Dominators e Loop-Invariant Code Motion (LICM) --- */
 
 static unsigned char *cfgComputeDominators(CompilerContext *ctx, const CFG *cfg)
 {
@@ -2764,7 +2766,7 @@ static int tacTryUnrollFirstLoop(CompilerContext *ctx, TACList *tac)
             /* Condition true: unroll one iteration before `bH` */
             int hdrStart = cfg.blocks[bH].start;
             int bodyStart = hdrStart + 1;
-            int bodyEnd = cfg.blocks[bT].end - 1; /* esclude goto hdrLabel finale */
+            int bodyEnd = cfg.blocks[bT].end - 1; /* excludes the final goto hdrLabel */
             int bodyLen = bodyEnd - bodyStart + 1;
             TACInstr *peeled = (TACInstr *)calloc((size_t)(bodyLen > 0 ? bodyLen : 1), sizeof(TACInstr));
             CopyEnv lblMap;
@@ -2826,7 +2828,7 @@ static int tacLinearIVSR(CompilerContext *ctx, TACList *tac)
         if (end == -1) continue;
 
         /* Only "simple" innermost loops: no labels or unconditional jumps in the body
-           (altrimenti si scambierebbe l'induzione di un ciclo interno per quella di questo) */
+           (otherwise, the induction of an internal cycle might be mistaken for the induction of this one) */
         {
             int simple = 1;
             for (k = i + 1; k < end && simple; k++) {
@@ -2848,7 +2850,7 @@ static int tacLinearIVSR(CompilerContext *ctx, TACList *tac)
             if (in->op == TAC_ADD && in->arg1 && in->arg2) {
                 double d; int isInt;
                 if (isNumericLit(ctx, in->arg2, &d, &isInt)) {
-                    /* Verifica se l'istruzione successiva è: i = t7 */
+                    /* Check whether the next instruction is: i = t7 */
                     if (k + 1 < end && tac->items[k+1].op == TAC_ASSIGN && 
                         tac->items[k+1].arg1 && strcmp(tac->items[k+1].arg1, in->res) == 0 && 
                         tac->items[k+1].res && strcmp(tac->items[k+1].res, in->arg1) == 0) {
@@ -2906,7 +2908,7 @@ static int tacLinearIVSR(CompilerContext *ctx, TACList *tac)
                     i++; end++; k++; biv_update_idx++;
 
                     /* B. Replace t = biv * c with t = acc */
-                    in = &tac->items[k]; /* BUGFIX: RIFETCH FONDAMENTALE DOPO REALLOC! */
+                    in = &tac->items[k]; /* BUGFIX: ESSENTIAL RE-FETCH AFTER REALLOC! */
                     free(in->arg1); free(in->arg2);
                     in->op = TAC_ASSIGN;
                     in->arg1 = tacStrdup(ctx, acc);
@@ -2928,7 +2930,7 @@ static int tacLinearIVSR(CompilerContext *ctx, TACList *tac)
 
                     free(acc);
                     changed = 1;
-                    break; /* Una sola ottimizzazione per loop per semplicità */
+                    break; /* Only one optimization per loop, for the sake of simplicity*/
                 }
             }
         }

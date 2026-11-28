@@ -1,3 +1,24 @@
+/*
+Copyright (C) 2026 Vincenzo Lo Cicero
+
+Author: Vincenzo Lo Cicero.
+e-mail: vincenzolocicero68@gmail.com
+
+This file is part of myMiniCompilerJvmTac.
+
+myMiniCompilerJvmTac is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any side version.
+
+myMiniCompilerJvmTac is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty
+MERCHANTABILITY or FITNESS FOR PARTICULAR PURPOSE. See the
+GNU General Public License for details.
+
+You should have received a copy of the GNU General Public License
+along with mypdfsearch. If not, see <http://www.gnu.org/licenses/>.
+*/
 #define _POSIX_C_SOURCE 200809L
 #include <string.h>
 #include <stdlib.h>
@@ -14,12 +35,10 @@ void ctx_init(CompilerContext *ctx)
     scopeInit(ctx, &ctx->interpScope);
     scopePush(ctx, &ctx->interpScope);
 
-    /* Valori iniziali da main.c */
     ctx->g_t1 = T_INTEGER;
     ctx->g_label = 1;
     ctx->g_temp = 1;
 
-    /* Valori iniziali da jvm.c */
     ctx->g_ConstantPoolCount = 68;
     ctx->g_IndexConstantPool = 0;
     ctx->g_IndexBytecodeArray = 0;
@@ -29,7 +48,6 @@ void ctx_init(CompilerContext *ctx)
     ctx->g_code_length = 0;
     ctx->g_cur_stack = 0;
 
-    /* Valori iniziali da parser.c */
     ctx->g_isCodeBlock = 0;
     ctx->g_isStmtList = 0;
     ctx->g_isREAD = 0;
@@ -43,7 +61,6 @@ void ctx_init(CompilerContext *ctx)
     ctx->g_NextFrameIndex = 1;
     ctx->g_curFunc = -1;
 
-    /* Valori iniziali da scanner.c */
     ctx->g_szInput = NULL;
     ctx->g_pos = 0;
     ctx->g_line = 1;
@@ -132,7 +149,7 @@ void ctx_interp_cleanup(CompilerContext *ctx)
 
     scopeFree(ctx, &ctx->interpScope);
 
-    /* nodi di inizializzazione mai agganciati all'albero (errori di parsing) */
+    /* initialization nodes never attached to the tree (parsing errors) */
     for (i = 0; i < ctx->g_initCount; i++)
         freeNode(ctx, ctx->g_initNodes[i]);
     free(ctx->g_initNodes);

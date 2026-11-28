@@ -1,16 +1,17 @@
-/*    Copyright (C) 2026 Vincenzo Lo Cicero
+/*
+Copyright (C) 2026 Vincenzo Lo Cicero
 
 Author: Vincenzo Lo Cicero.
 e-mail: vincenzolocicero68@gmail.com
 
 This file is part of myMiniCompilerJvmTac.
 
-mypdfsearch is free software: you can redistribute it and/or modify
+myMiniCompilerJvmTac is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
 the Free Software Foundation, either version 3 of the License, or
 (at your option) any side version.
 
-mypdfsearch is distributed in the hope that it will be useful,
+myMiniCompilerJvmTac is distributed in the hope that it will be useful,
 but WITHOUT ANY WARRANTY; without even the implied warranty
 MERCHANTABILITY or FITNESS FOR PARTICULAR PURPOSE. See the
 GNU General Public License for details.
@@ -70,13 +71,55 @@ expr4 : T_INT_LITERAL
 		;
 */
 
-
-
-
-
-
-
-
+/*
+program    : top_list code_block ;
+top_list   : { struct_def | decl | func_decl } ;
+struct_def : 'struct' T_ID '{' { field } '}' ';' ;
+field      : type T_ID { ',' T_ID } ';'
+           | T_ID T_ID { ',' T_ID } ';'                       (* nested struct *)
+           | 'array' T_ID '[' T_INT_LITERAL ']' { '[' T_INT_LITERAL ']' } 'of' ( type | T_ID ) ';'
+           ;
+decl       : type var_list ';'
+           | T_ID T_ID { ',' T_ID } ';'                       (* struct variables *)
+           | 'array' T_ID '[' T_INT_LITERAL ']' { '[' T_INT_LITERAL ']' } 'of' ( type | T_ID ) ';'
+           ;
+func_decl  : ( type | 'void' ) T_ID '(' [ param_list ] ')' ( ';' | func_body ) ;
+param_list : param { ',' param } ;
+param      : [ 'ref' ] type T_ID
+           | 'array' T_ID '[' T_INT_LITERAL ']' { '[' T_INT_LITERAL ']' } 'of' type
+           ;
+func_body  : 'begin' { decl } stmt_list 'end' ;
+type       : 'int' | 'real' | 'bool' | 'string' ;
+var_list   : T_ID [ '=' expr ] { ',' T_ID [ '=' expr ] } ;
+code_block : 'begin' stmt_list 'end' ;
+stmt_list  : { stmt } ;
+stmt       : 'print' expr ';'
+           | 'read' expr ';'
+           | 'while' '(' expr ')' stmt
+           | 'do' stmt 'while' '(' expr ')'
+           | 'if' '(' expr ')' stmt [ 'else' stmt ]
+           | 'return' [ expr ] ';'
+           | 'begin' stmt_list 'end'
+           | T_ID '(' [ arg_list ] ')' ';'
+           | T_ID { '[' expr ']' } '=' expr ';'
+           ;
+arg_list   : expr { ',' expr } ;
+expr       : expr1 { ( '&' | '|' ) expr1 } ;
+expr1      : expr2 { relop expr2 } ;
+expr2      : expr3 { addop expr3 } ;
+expr3      : expr4 { mulop expr4 } ;
+expr4      : T_INT_LITERAL
+           | T_REAL_LITERAL
+           | T_STRING_LITERAL
+           | 'true'
+           | 'false'
+           | '(' expr ')'
+           | '-' expr
+           | '!' expr
+           | T_ID '(' [ arg_list ] ')'
+           | T_ID { '[' expr ']' }
+           ;
+*/
 
 /* Helper to create a wrapper copy of ArrayDef for an AST node */
 static int allocArrayDefWrapper(CompilerContext *ctx, const HashTable *pHT, Valore *pOutVal)
@@ -155,8 +198,8 @@ static int isStmtStart(CompilerContext *ctx, int t)
 }
 
 /* Handles the trailing ';' of a statement: if missing, checks current token
-   e' gia' l'inizio di una nuova istruzione o la fine di un blocco,
-   recupera senza mangiare il token successivo. */
+   it is already the start of a new statement or the end of a block;
+   retrieve the next token without consuming it. */
 static int expectStmtSemicolon(CompilerContext *ctx)
 {
     if ( match(ctx, T_SEMICOLON) )
@@ -177,9 +220,9 @@ static int expectStmtSemicolon(CompilerContext *ctx)
     return 0;
 }
 
-/* Gestisce ')' in intestazioni come if/while: se manca ma siamo gia'
-   su un possibile inizio di istruzione o 'begin', recupera senza
-   perdere il corpo dell'istruzione. */
+/* Handles a missing ')' in headers such as 'if'/'while': if it is absent but we are already
+   at the potential start of a statement or a 'begin' block, it recovers without
+   losing the body of the statement. */
 static int expectCondRParen(CompilerContext *ctx)
 {
     if ( match(ctx, T_CPAREN) )
@@ -246,14 +289,14 @@ int Parse(CompilerContext *ctx, char *szFileName, nodeType **pTree, int genTAC, 
     }
 
     /* Flushes the buffer up to EOF (never past it: after EOF the scanner
-       restituirebbe T_ERROR all'infinito). */
+       it would return T_ERROR indefinitely). */
     while ( ctx->g_Token.Type != T_EOF )
         GetNextToken(ctx, &ctx->g_Token);
 
     FreeInputbuffer(ctx);
 
     /* If program() failed, ensures at least one counted error:
-       evita ret=1 con stack vuoto (lettura di g_stack[-1]). */
+       Avoids ret=1 with an empty stack (reading from g_stack[-1]). */
     if ( !ret && ctx->g_numErrors == 0 )
         ctx->g_numErrors++;
 
@@ -267,7 +310,7 @@ int Parse(CompilerContext *ctx, char *szFileName, nodeType **pTree, int genTAC, 
         (*pTree) = NULL;
         while ( ctx->g_top >= 0 )
         {
-            freeNode(ctx, ctx->g_stack[ctx->g_top]);   // freeNode(NULL) e' sicuro 
+            freeNode(ctx, ctx->g_stack[ctx->g_top]);   // freeNode(NULL) it's safe 
             ctx->g_top--;                    // ALWAYS decrement, even if NULL 
         }
     }
@@ -451,7 +494,7 @@ int TypeCheck(CompilerContext *ctx, Valore *value, const Token *pToken)
 // program : decl_list code_block;
 
 /* ===================================================================== */
-/*  Funzioni                                                             */
+/*  Functions                                                            */
 /* ===================================================================== */
 
 #define MAX_FUNC_PARAMS 32
@@ -778,8 +821,8 @@ static int parseFuncDefinition(CompilerContext *ctx)
 }
 
 /* Call: T_ID '(' [arg {',' arg}] ')'. Leaves the T_FUNC_CALL node on top of g_stack.
-   op[0] = id con il nome (type1 = tipo di ritorno), op[1..] = argomenti.
-   Per un parametro 'ref' l'argomento e' un id scalare; per un array e' un id array senza indici. */
+op[0] = ID with the name (type1 = return type), op[1..] = arguments. 
+For a 'ref' parameter, the argument is a scalar ID; for an array, it is an array ID without indices. */
 static int parseCall(CompilerContext *ctx)
 {
 	char name[256];
@@ -1079,7 +1122,7 @@ int decl(CompilerContext *ctx)
 		//if ( scopeFind(ctx, &ctx->g_Scope, token.Value.vString, &hashTable) )
 		if ( isDeclaredInCurrentScope(ctx, &ctx->g_Scope, token.Value.vString, &hashTable) )
 		{
-			printf("Linea %d Colonna %d: Errore var_list. Identificatore '%s' già dichiarato.\n",
+			printf("Linea %d Colonna %d: Errore var_list. Identificatore '%s' giÃ  dichiarato.\n",
 					token.line, token.column, token.Value.vString);
 			ctx->g_numErrors++;
 			free(value.pArrayDef);
@@ -1344,9 +1387,10 @@ static void interpRecordDecl(CompilerContext *ctx,
 }
 
 /* A declaration initializer ("int x = 8;") becomes a normal AST node
-   di assegnazione nell'AST: cosi' finisce nel TAC al punto giusto (anche dentro
-   un ciclo) ed e' soggetto agli stessi passi di ottimizzazione, invece di essere
-   stampato a parse-time o letto dalla symtab dai singoli backend. */
+   as an assignment in the AST: this way, it ends up in the TAC at the
+   correct point (even within a loop) and is subject to the same
+   optimization steps, rather than being printed at parse-time or read
+   from the symbol table by the individual backends. */
 static void addDeclInitNode(CompilerContext *ctx, const char *name, enumTipo1 t1, Valore value)
 {
 	HashTable hashTable;
@@ -1414,7 +1458,7 @@ static void addDeclInitNode(CompilerContext *ctx, const char *name, enumTipo1 t1
 }
 
 /* Prepends assignments from declaration initializers to the newly parsed stmt_list (top of g_stack)
-   inizializzatori dichiarati da startIdx in poi. */
+   initializers starting from startIdx onwards. */
 static void attachDeclInits(CompilerContext *ctx, int startIdx)
 {
 	int k;
@@ -1462,7 +1506,7 @@ static int parse_var_item(CompilerContext *ctx)
 
 	if (isDeclaredInCurrentScope(ctx, &ctx->g_Scope, token.Value.vString, &hashTable))
 	{
-		printf("Linea %d Colonna %d: Errore var_list. Identificatore '%s' già dichiarato.\n",
+		printf("Line %d Column %d: Errore var_list. Identifier '%s' already declared.\n",
 		       token.line, token.column, token.Value.vString);
 		ctx->g_numErrors++;
 		return 0;
@@ -1512,8 +1556,7 @@ static int parse_var_item(CompilerContext *ctx)
 		}
 		else
 		{
-			printf("Linea %d Colonna %d: Errore var_list. In fase di dichiarazione è possibile assegnare solo valori costanti.\n",
-			       token.line, token.column);
+			printf("Line %d Column %d: var_list error. Only constant values â€‹â€‹may be assigned during declaration..\n", token.line, token.column);
 			ctx->g_numErrors++;
 			return 0;
 		}
@@ -1571,7 +1614,7 @@ int code_block(CompilerContext *ctx)
     myBlockId = interpBeginBlockRecord(ctx);
 
     /* outermost block (prevBlock == -1): also includes initializers
-       delle dichiarazioni globali, parsate prima di entrare qui. */
+       global declarations, parsed before entering here. */
     initStart = (prevBlock == -1) ? 0 : ctx->g_initCount;
 
     scopePush(ctx, &ctx->g_Scope);
@@ -1630,8 +1673,8 @@ int stmt_list(CompilerContext *ctx)
                 break;
 
             /* If stmt() consumed nothing (e.g., undeclared identifier
-               o atteso '='), consumiamo il token errato se non e' gia' un nuovo
-               stmtStart diverso da quello iniziale. */
+               or expected '='), we consume the incorrect token, provided it is not already a new
+               stmtStart different from the initial one. */
             if ( ctx->g_Token.line == startLine && ctx->g_Token.column == startColumn )
                 GetNextToken(ctx, &ctx->g_Token);
 
@@ -2112,11 +2155,11 @@ int stmt(CompilerContext *ctx)
 			}
 			else if ( left->type1 == T_REAL && right->type1 == T_INTEGER )
 			{
-				/* Promozione implicita int -> real consentita */
+				/* Implicit int -> real promotion allowed */
 			}
 			else if ( left->type1 == T_BOOLEAN && (right->type1 == T_INTEGER || right->type1 == T_REAL) )
 			{
-				/* Conversione implicita numerico -> bool consentita */
+				/* Implicit numeric-to-bool conversion allowed */
 			}
 			else
 			{
@@ -2160,7 +2203,7 @@ int stmt(CompilerContext *ctx)
 
 	default:
 		printf("Line %d Column %d: Statement error. Expected 'print'"
-				" o 'read' o 'while' o 'do' o 'if' o 'begin' o identificatore.\n",
+				" or 'read' or 'while' or 'do' or 'if' or 'begin' or identifier.\n",
 				ctx->g_Token.line, ctx->g_Token.column);
 		ctx->g_numErrors++;
 		return 0;

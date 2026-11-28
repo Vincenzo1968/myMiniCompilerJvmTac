@@ -1,16 +1,17 @@
-/*    Copyright (C) 2026 Vincenzo Lo Cicero
+/*
+Copyright (C) 2026 Vincenzo Lo Cicero
 
 Author: Vincenzo Lo Cicero.
 e-mail: vincenzolocicero68@gmail.com
 
 This file is part of myMiniCompilerJvmTac.
 
-mypdfsearch is free software: you can redistribute it and/or modify
+myMiniCompilerJvmTac is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
 the Free Software Foundation, either version 3 of the License, or
 (at your option) any side version.
 
-mypdfsearch is distributed in the hope that it will be useful,
+myMiniCompilerJvmTac is distributed in the hope that it will be useful,
 but WITHOUT ANY WARRANTY; without even the implied warranty
 MERCHANTABILITY or FITNESS FOR PARTICULAR PURPOSE. See the
 GNU General Public License for details.
@@ -32,7 +33,6 @@ along with mypdfsearch. If not, see <http://www.gnu.org/licenses/>.
 
 #include "context.h"
 #include "symtab.h"
-
 
 // -------------------------- HashTable -----------------------------------------
 
@@ -526,7 +526,7 @@ static int htIndexOf(const char *Key)
 }
 
 /* True if 'cand' is already used as a unique name by any variable,
-   sia negli scope ancora aperti sia in quelli gia' chiusi (spostati in stack[0]). */
+   both in the scopes still open and in those already closed (moved to stack[0]). */
 static int uniqueNameInUse(Scope *pScope, const char *cand)
 {
 	int x, k;
@@ -569,7 +569,7 @@ void scopeAssignUniqueName(CompilerContext *ctx, Scope *pScope, const char *Key)
 	t->isGlobal = (pScope->top == 0);
 
 	/* Root scope keeps original names (source names do not
-	   contengono mai '.', quindi "x.1" non puo' collidere con una variabile utente). */
+	   never contain '.', so "x.1" cannot collide with a user variable). */
 	if ( pScope->top > 0 )
 	{
 		/* Newly inserted node already has uniqueName == Key: exclude it

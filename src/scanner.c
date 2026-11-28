@@ -1,16 +1,17 @@
-/*    Copyright (C) 2026 Vincenzo Lo Cicero
+/*
+Copyright (C) 2026 Vincenzo Lo Cicero
 
 Author: Vincenzo Lo Cicero.
 e-mail: vincenzolocicero68@gmail.com
 
 This file is part of myMiniCompilerJvmTac.
 
-mypdfsearch is free software: you can redistribute it and/or modify
+myMiniCompilerJvmTac is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
 the Free Software Foundation, either version 3 of the License, or
 (at your option) any side version.
 
-mypdfsearch is distributed in the hope that it will be useful,
+myMiniCompilerJvmTac is distributed in the hope that it will be useful,
 but WITHOUT ANY WARRANTY; without even the implied warranty
 MERCHANTABILITY or FITNESS FOR PARTICULAR PURPOSE. See the
 GNU General Public License for details.
@@ -18,6 +19,7 @@ GNU General Public License for details.
 You should have received a copy of the GNU General Public License
 along with mypdfsearch. If not, see <http://www.gnu.org/licenses/>.
 */
+
 #define _POSIX_C_SOURCE 200809L
 
 #ifdef HAVE_CONFIG_H
@@ -30,10 +32,6 @@ along with mypdfsearch. If not, see <http://www.gnu.org/licenses/>.
 #include <malloc.h>
 #include "context.h"
 #include "scanner.h"
-
-
-
-
 
 int GetDepth(CompilerContext *ctx)
 {
@@ -749,7 +747,7 @@ void GetNextToken(CompilerContext *ctx, Token *pToken)
 			{
 				state = S19;
 			}
-			else if ( c == '*' ) // Commento fino a */
+			else if ( c == '*' ) // Comment up to */
 			{
 				state = S20;
 			}
@@ -842,8 +840,8 @@ void GetNextToken(CompilerContext *ctx, Token *pToken)
 				state = S20;
 			}
 			break;
-		} /* fine switch */
+		} /* end switch */
 
 		ctx->g_column++;
-	} /* fine while */
+	} /* end while */
 }
