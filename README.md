@@ -452,3 +452,21 @@ seg 13 1.500000
 ```
 
 Current limits: structs cannot be initialized in their declaration or compared as a whole; a struct with array fields is passed only with `ref` and cannot be returned; a struct-returning function is used only as `p = f(...);`; array elements cannot be passed by `ref`.
+
+### 9. Multi-file programs (`#include`)
+
+A program can be split into several files with the directive
+
+```
+#include "path/to/file.inc"
+```
+
+* The directive must be alone on its line (leading whitespace and a trailing `//` comment are allowed); anything else is a `Malformed #include directive` error.
+* The path is relative to the file that contains the directive (absolute paths are accepted).
+* Inclusion is textual and **once-only**: a file already included (even through a different relative path) is ignored the second time, so "header" files can be included from several places.
+* A circular inclusion (`a` includes `b` includes `a`) is an error, as are missing files and nesting deeper than 32 levels.
+* Since the language requires function definitions to come after the main `begin … end` block, the usual layout is a *header* file (structs, global declarations, prototypes) included at the top of the main file, and an *implementation* file (function definitions) included after the main block. See `prg_test/test_include.prg`, `test_inc_geom.inc`, `test_inc_geom_impl.inc`.
+* Error messages that carry a line number report the original location, e.g. `[sub/impl.inc] Line 3 Column 8: Statement error. ...`. For errors in the main file the file name is shown too.
+* Library files use the `.inc` extension so that the test scripts (which run every `prg_test/*.prg`) do not treat them as standalone programs; `tests/test_valgrind.sh` copies `prg_test/*.inc` next to the program it runs.
+
+The expansion happens before struct lowering and scanning, so all backends (interpreter, TAC, JVM, asm) and all optimization levels work unchanged.

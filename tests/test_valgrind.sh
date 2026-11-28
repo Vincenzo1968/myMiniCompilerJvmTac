@@ -150,6 +150,8 @@ for f in "${FILES[@]}"; do
                 "$OUTPUT_DIR/${base}.asm"
 
             cp -- "$f" "$RUN_PRG"
+            # library files for #include (*.inc) must sit next to the copied program
+            cp -f -- "$PRG_DIR"/*.inc "$OUTPUT_DIR"/ 2>/dev/null || true
 
             (
                 cd "$OUTPUT_DIR" || exit 1

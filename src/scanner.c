@@ -32,6 +32,8 @@ along with mypdfsearch. If not, see <http://www.gnu.org/licenses/>.
 #include <malloc.h>
 #include "context.h"
 #include "scanner.h"
+#include "include.h"
+#define printf diag_printf
 
 int GetDepth(CompilerContext *ctx)
 {

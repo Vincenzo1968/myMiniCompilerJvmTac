@@ -50,6 +50,8 @@ along with mypdfsearch. If not, see <http://www.gnu.org/licenses/>.
 
 #include "context.h"
 #include "structs.h"
+#include "include.h"
+#define printf diag_printf
 
 #define SL_MAXDIMS   8
 #define SL_MAXFIELDS 32

@@ -36,6 +36,8 @@ along with mypdfsearch. If not, see <http://www.gnu.org/licenses/>.
 #include "ast.h"
 #include "jvm.h"
 #include "structs.h"
+#include "include.h"
+#define printf diag_printf   /* messages containing "Line N" report the original file and line (see include.c) */
 
 /*
 program : decl_list code_block;
@@ -254,7 +256,7 @@ void Panic(CompilerContext *ctx)
 	}
 }
 
-int Parse(CompilerContext *ctx, char *szFileName, nodeType **pTree, int genTAC, int genJVM)
+static int ParseInner(CompilerContext *ctx, char *szFileName, nodeType **pTree, int genTAC, int genJVM, LineMap **pMap)
 {
     int ret;
 
@@ -264,6 +266,16 @@ int Parse(CompilerContext *ctx, char *szFileName, nodeType **pTree, int genTAC, 
 
     if ( !LeggiFile(ctx, szFileName) )
         return 0;
+
+    /* #include: expand the included files; diagnostics will map lines back to (file, line) */
+    if ( !includeExpand(ctx, szFileName, pMap) )
+    {
+        FreeInputbuffer(ctx);
+        printf("Errors: %d\nWarnings: %d\n", ctx->g_numErrors, ctx->g_numWarnings);
+        (*pTree) = NULL;
+        return 0;
+    }
+    diagSetLineMap(*pMap);
 
     /* structs are eliminated by rewriting the source (see structs.c) */
     if ( !structsLower(ctx) )
@@ -319,6 +331,15 @@ int Parse(CompilerContext *ctx, char *szFileName, nodeType **pTree, int genTAC, 
         (*pTree) = ctx->g_stack[ctx->g_top];
     }
     
+    return ret;
+}
+
+int Parse(CompilerContext *ctx, char *szFileName, nodeType **pTree, int genTAC, int genJVM)
+{
+    LineMap *map = NULL;
+    int ret = ParseInner(ctx, szFileName, pTree, genTAC, genJVM, &map);
+    diagSetLineMap(NULL);
+    lineMapFree(map);
     return ret;
 }
 

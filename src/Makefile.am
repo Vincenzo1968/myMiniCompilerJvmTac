@@ -3,6 +3,7 @@ myCompiler_SOURCES = \
     ast.c ast.h \
     context.c context.h version.h \
     endianess.c endianess.h \
+    include.c include.h \
     jvm.c jvm.h \
     main.c \
     parser.c parser.h \
